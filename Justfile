@@ -41,16 +41,32 @@ build_local:
     {{initialise}} "build_local"
     cargo build -p api
 
+
 alias d := docs
-# Generate the documentation (clean: 'c' will also clean out old doc files)
+# Creates and serves the documentation site (clean: 'c' to clean)
 docs clean="":
     #!/usr/bin/env bash
+    set -euxo pipefail
     {{initialise}} "docs"
-    if [ "{{clean}}" = "c" ]; then \
-        rm -rf target/doc; \
-        cargo clean; \
+
+    if [ "{{clean}}" = "c" ]; then
+        rm -rf target/doc
+        cargo clean
+        rm -rf handbook/src/code
     fi
-    cargo doc --no-deps --workspace --open
+
+    # Rebuild rustdoc with custom header (sidebar/back link)
+    RUSTDOCFLAGS="--html-in-header doc-header.html" \
+      cargo doc --no-deps --workspace
+
+    # Sync rustdoc into the book source; --no-times ensures mdBook notices updates
+    rsync -a --delete --no-times target/doc/ handbook/src/code/
+
+    # Optional: trigger mdBook's live-reload watcher
+    touch handbook/src/_reload.md || true
+
+    # Serve the handbook (blocks until stopped)
+    cd handbook && mdbook serve -o
 
 
 alias eb := enter-backend
@@ -75,7 +91,6 @@ pre-commit:
     #!/usr/bin/env bash
     {{initialise}} "pre-commit"
     pre-commit run --all-files
-
 
 
 alias sdc := show-dev-containers

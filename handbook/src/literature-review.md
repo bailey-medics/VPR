@@ -20,3 +20,7 @@
 ### Patient focused systems
 
 - Fasten Health On-Prem - [https://github.com/fastenhealth/fasten-onprem](https://github.com/fastenhealth/fasten-onprem)
+
+### Nuke Docs
+
+As the docs run on a cache, you will likely need to nuke the docs if you remove files. Just manually run `nuke docs cache (manual)` from GitHub Actions.
