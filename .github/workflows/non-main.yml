@@ -28,6 +28,11 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+          
+      - name: Verify Rust components
+        run: |
+          rustup component add rustfmt clippy
+          rustup component list --installed
 
       # Cache protoc installation
       - name: Cache protoc
