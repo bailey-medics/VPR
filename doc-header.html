@@ -1,0 +1,25 @@
+<style>
+  .sidebar .handbook-link {
+    display: block;
+    margin: 1rem 1.2rem;
+    font-weight: 600;
+    color: var(--fg-color, #fff);
+    text-decoration: none;
+  }
+  .sidebar .handbook-link:hover {
+    text-decoration: underline;
+  }
+</style>
+
+<script>
+  window.addEventListener("DOMContentLoaded", () => {
+    const sidebar = document.querySelector(".sidebar");
+    if (sidebar && !document.querySelector(".handbook-link")) {
+      const link = document.createElement("a");
+      link.href = "../../";
+      link.textContent = "Home";
+      link.className = "handbook-link";
+      sidebar.insertBefore(link, sidebar.firstChild);
+    }
+  });
+</script>

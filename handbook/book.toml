@@ -1,0 +1,10 @@
+[book]
+title = "VPR Handbook"
+authors = ["Mark Bailey"]
+language = "en"
+src = "src"
+
+[output.html]
+default-theme = "navy"
+preferred-dark-theme = "navy"
+additional-css = ["theme/css/custom.css"]

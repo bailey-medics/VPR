@@ -1,0 +1,21 @@
+/* mimic rustdoc header */
+.book-header {
+    background: #333;
+    color: #eee;
+    font-family: monospace;
+    font-size: 1rem;
+    border-bottom: 1px solid #555;
+}
+
+.book-title {
+    font-weight: 600;
+    letter-spacing: 0.03em;
+}
+
+.chapter li a {
+    color: #0a84ff;
+}
+
+body {
+    font-family: system-ui, sans-serif;
+}

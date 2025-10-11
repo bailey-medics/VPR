@@ -12,8 +12,8 @@ on:
 
 permissions:
   contents: read
-  pages: write        # needed for Pages deploy
-  id-token: write     # needed for OIDC auth
+  pages: write
+  id-token: write
 
 concurrency:
   group: pages
@@ -27,9 +27,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
 
-      # ---------- protoc cache/install (for prost-build etc.) ----------
+      # Pin rust toolchain (uses rust-toolchain.toml if present)
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rust-docs
+
+      - name: Show rust versions
+        run: |
+          rustc --version
+          cargo --version
+
+      # ---------- protoc cache/install ----------
       - name: Cache protoc
         id: cache-protoc
         uses: actions/cache@v4
@@ -54,7 +63,7 @@ jobs:
           echo "$HOME/protoc/bin" >> $GITHUB_PATH
           echo "PROTOC=$HOME/protoc/bin/protoc" >> $GITHUB_ENV
 
-      # ---------- Rust caches ----------
+      # ---------- Cache Rust build ----------
       - name: Cache Rust
         uses: actions/cache@v4
         with:
@@ -68,56 +77,68 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      # ---------- Build docs (workspace, no deps) ----------
-      - name: Build docs (workspace, no deps)
+      # ---------- Install mdBook ----------
+      - name: Install mdBook
+        run: cargo install mdbook --locked
+
+      # ---------- Build rustdoc + mdBook ----------
+      - name: Build rustdoc and mdBook
         env:
-          RUSTDOCFLAGS: "-Dwarnings --cfg docsrs --html-in-header doc-header.html"
-          CARGO_INCREMENTAL: "0"
-          CARGO_NET_RETRY: "10"
+          RUSTDOCFLAGS: "--html-in-header doc-header.html"
         run: |
           set -euxo pipefail
 
-          # Ensure no stale artefacts (old crate folders) get published
           rm -rf target/doc
 
-          # Optional tiny style tweak for rustdoc pages
-          cat > doc-header.html <<'HTML'
+          # Create default doc-header.html if missing
+          [ -f doc-header.html ] || cat > doc-header.html <<'HTML'
           <style>
             .rustdoc-toggle > summary { font-weight: 600; }
             .search-input { border-radius: 6px; }
           </style>
+          <script>
+          window.addEventListener("DOMContentLoaded", () => {
+              const sidebar = document.querySelector(".sidebar");
+              if (sidebar && !document.querySelector(".handbook-link")) {
+                  const link = document.createElement("a");
+                  link.href = "../../index.html";
+                  link.textContent = "↩ Back to Handbook";
+                  link.className = "handbook-link";
+                  sidebar.insertBefore(link, sidebar.firstChild);
+              }
+          });
+          </script>
           HTML
 
           echo "Using protoc: $(which protoc) ($(protoc --version || true))"
 
-          # Match your local command exactly: build ENTIRE workspace
-          cargo doc --no-deps --all-features --workspace --jobs 2
+          # Build rustdoc for entire workspace
+          cargo doc --no-deps --workspace --jobs 2
 
-          # Keep rustdoc's workspace pages (including crates.html),
-          # but replace the root index with a redirect to the vpr crate.
-          # This makes the Pages "View deployment" link (…/VPR/) land on …/VPR/vpr/
-          cat > target/doc/index.html <<'HTML'
-          <!doctype html>
-          <meta charset="utf-8">
-          <meta http-equiv="refresh" content="0; url=./vpr/">
-          <meta name="robots" content="noindex">
-          <link rel="canonical" href="./vpr/">
-          <title>Redirecting…</title>
-          <noscript>
-            <p>This page has moved to <a href="./vpr/">VPR docs</a>.</p>
-          </noscript>
-          <script>location.replace("./vpr/");</script>
-          HTML
+          # Build mdBook
+          mdbook build handbook
 
-          # Sanity: crates list should still exist at target/doc/crates.html
-          test -f target/doc/crates.html
+          # Sync rustdoc into book under /code/
+          rm -rf handbook/book/code
+          rsync -a --delete --no-times target/doc/ handbook/book/code/
 
-      # ---------- Deploy (upload the whole target/doc) ----------
+          # Fix crate listing page if rustdoc used 'all.html'
+          if [ ! -f handbook/book/code/crates.html ] && [ -f handbook/book/code/all.html ]; then
+            cat > handbook/book/code/crates.html <<'HTML'
+            <!doctype html><meta charset="utf-8">
+            <meta http-equiv="refresh" content="0; url=./all.html">
+            <title>Redirecting…</title>
+            <noscript><p>See <a href="./all.html">all crates</a>.</p></noscript>
+            <script>location.replace("./all.html");</script>
+            HTML
+          fi
+
+      # ---------- Deploy to GitHub Pages ----------
       - uses: actions/configure-pages@v5
 
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: target/doc
+          path: handbook/book
 
   deploy:
     needs: build-and-deploy-docs
