@@ -93,7 +93,6 @@ pre-commit:
     pre-commit run --all-files
 
 
-
 alias sdc := show-dev-containers
 # Show the running dev containers
 show-dev-containers:
