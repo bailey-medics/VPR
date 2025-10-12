@@ -13,12 +13,6 @@ Install pre-commit hooks
 pre-commit install
 ```
 
-Install rust formatting and linting tools
-
-```bash
-rustup component add rustfmt clippy
-```
-
 install rust locally if you want to test on local machine
 
 ```bash

@@ -77,9 +77,18 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      # ---------- Install mdBook ----------
+      # ---------- Cache mdBook binary (separate, small, versioned) ----------
+      - name: Cache mdBook
+        id: cache-mdbook
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/mdbook
+          key: mdbook-${{ runner.os }}-v0.4.52
+
+      # Install mdBook only if cache is cold
       - name: Install mdBook
-        run: cargo install mdbook --locked
+        if: steps.cache-mdbook.outputs.cache-hit != 'true'
+        run: cargo install mdbook --version 0.4.52 --locked
 
       # ---------- Build rustdoc + mdBook ----------
       - name: Build rustdoc and mdBook
@@ -101,7 +110,7 @@ jobs:
               const sidebar = document.querySelector(".sidebar");
               if (sidebar && !document.querySelector(".handbook-link")) {
                   const link = document.createElement("a");
-                  link.href = "../../index.html";
+                  link.href = "../../index.html";  // back to mdBook home
                   link.textContent = "↩ Back to Handbook";
                   link.className = "handbook-link";
                   sidebar.insertBefore(link, sidebar.firstChild);
@@ -130,7 +139,7 @@ jobs:
             <title>Redirecting…</title>
             <noscript><p>See <a href="./all.html">all crates</a>.</p></noscript>
             <script>location.replace("./all.html");</script>
-          HTML
+            HTML
           fi
 
       # ---------- Deploy to GitHub Pages ----------
