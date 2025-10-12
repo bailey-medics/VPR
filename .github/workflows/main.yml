@@ -130,7 +130,7 @@ jobs:
             <title>Redirecting…</title>
             <noscript><p>See <a href="./all.html">all crates</a>.</p></noscript>
             <script>location.replace("./all.html");</script>
-            HTML
+          HTML
           fi
 
       # ---------- Deploy to GitHub Pages ----------
