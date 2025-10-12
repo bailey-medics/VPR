@@ -33,11 +33,6 @@ jobs:
         with:
           components: rust-docs
 
-      - name: Show rust versions
-        run: |
-          rustc --version
-          cargo --version
-
       # ---------- protoc cache/install ----------
       - name: Cache protoc
         id: cache-protoc
@@ -118,8 +113,6 @@ jobs:
           });
           </script>
           HTML
-
-          echo "Using protoc: $(which protoc) ($(protoc --version || true))"
 
           # Build rustdoc for entire workspace
           cargo doc --no-deps --workspace --jobs 2
