@@ -52,7 +52,7 @@ docs clean="":
     if [ "{{clean}}" = "c" ]; then
         rm -rf target/doc
         cargo clean
-        rm -rf handbook/src/code
+        rm -rf docs/src/code
     fi
 
     # Rebuild rustdoc with custom header (sidebar/back link)
@@ -60,13 +60,13 @@ docs clean="":
       cargo doc --no-deps --workspace
 
     # Sync rustdoc into the book source; --no-times ensures mdBook notices updates
-    rsync -a --delete --no-times target/doc/ handbook/src/code/
+    rsync -a --delete --no-times target/doc/ docs/src/code/
 
     # Optional: trigger mdBook's live-reload watcher
-    touch handbook/src/_reload.md || true
+    touch docs/src/_reload.md || true
 
-    # Serve the handbook (blocks until stopped)
-    cd handbook && mdbook serve -o
+    # Serve the docs (blocks until stopped)
+    cd docs && mdbook serve -o
 
 
 alias eb := enter-backend

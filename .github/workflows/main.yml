@@ -103,11 +103,11 @@ jobs:
           <script>
           window.addEventListener("DOMContentLoaded", () => {
               const sidebar = document.querySelector(".sidebar");
-              if (sidebar && !document.querySelector(".handbook-link")) {
+              if (sidebar && !document.querySelector(".docs-link")) {
                   const link = document.createElement("a");
                   link.href = "../../index.html";  // back to mdBook home
-                  link.textContent = "↩ Back to Handbook";
-                  link.className = "handbook-link";
+                  link.textContent = "↩ Back to docs";
+                  link.className = "docs-link";
                   sidebar.insertBefore(link, sidebar.firstChild);
               }
           });
@@ -118,15 +118,15 @@ jobs:
           cargo doc --no-deps --workspace --jobs 2
 
           # Build mdBook
-          mdbook build handbook
+          mdbook build docs
 
           # Sync rustdoc into book under /code/
-          rm -rf handbook/book/code
-          rsync -a --delete --no-times target/doc/ handbook/book/code/
+          rm -rf docs/book/code
+          rsync -a --delete --no-times target/doc/ docs/book/code/
 
           # Fix crate listing page if rustdoc used 'all.html'
-          if [ ! -f handbook/book/code/crates.html ] && [ -f handbook/book/code/all.html ]; then
-            cat > handbook/book/code/crates.html <<'HTML'
+          if [ ! -f docs/book/code/crates.html ] && [ -f docs/book/code/all.html ]; then
+            cat > docs/book/code/crates.html <<'HTML'
             <!doctype html><meta charset="utf-8">
             <meta http-equiv="refresh" content="0; url=./all.html">
             <title>Redirecting…</title>
@@ -140,7 +140,7 @@ jobs:
 
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: handbook/book
+          path: docs/book
 
   deploy:
     needs: build-and-deploy-docs
