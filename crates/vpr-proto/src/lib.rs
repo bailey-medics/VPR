@@ -4,4 +4,6 @@ pub mod pb {
     tonic::include_proto!("vpr.v1");
 }
 
+pub const FILE_DESCRIPTOR_SET: &[u8] = tonic::include_file_descriptor_set!("proto_descriptor");
+
 pub use pb::*;

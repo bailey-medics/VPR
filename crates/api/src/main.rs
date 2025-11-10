@@ -1,8 +1,10 @@
 use std::net::SocketAddr;
 use tonic::transport::Server;
+use tonic_reflection::server::Builder;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use api::{pb::vpr_server::VprServer, VprService};
+use vpr_proto::FILE_DESCRIPTOR_SET;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -18,10 +20,20 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Starting VPR gRPC on {}", addr);
 
     let svc = VprService;
-    Server::builder()
-        .add_service(VprServer::new(svc))
-        .serve(addr)
-        .await?;
+    let mut server_builder = Server::builder().add_service(VprServer::new(svc));
+
+    if std::env::var("VPR_ENABLE_REFLECTION").unwrap_or_else(|_| "false".to_string()) == "true" {
+        let reflection_service = Builder::configure()
+            .register_encoded_file_descriptor_set(FILE_DESCRIPTOR_SET)
+            .build_v1()
+            .unwrap();
+        server_builder = server_builder.add_service(reflection_service);
+        tracing::info!("gRPC server reflection enabled");
+    } else {
+        tracing::info!("gRPC server reflection disabled");
+    }
+
+    server_builder.serve(addr).await?;
 
     Ok(())
 }

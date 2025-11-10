@@ -106,11 +106,6 @@ alias sd := start-dev
 start-dev build="":
     #!/usr/bin/env bash
     {{initialise}} "start-dev"
-
-    echo "Access the frontend at: http://$(ipconfig getifaddr en0)"
-
-    # just dds
-
     if [ "{{build}}" = "b" ]; then \
         docker compose -f compose.dev.yml down
         docker volume rm -f [replace]frontend_node_modules >/dev/null 2>&1 || true

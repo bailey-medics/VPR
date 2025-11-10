@@ -26,9 +26,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .into());
     };
 
+    let out_dir = std::env::var("OUT_DIR")?;
     tonic_build::configure()
         .build_server(true)
         .build_client(false)
+        .file_descriptor_set_path(std::path::Path::new(&out_dir).join("proto_descriptor.bin"))
         .compile_protos(
             std::slice::from_ref(&proto_file),
             &[proto_include_root.as_path()],
