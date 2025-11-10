@@ -30,17 +30,45 @@ Kumari et al. ([2024](#kumari-2024)) describe HealthRec-Chain, a system designed
 
 ## Patient focused systems
 
-- Fasten Health On-Prem - [https://github.com/fastenhealth/fasten-onprem](https://github.com/fastenhealth/fasten-onprem)
+Fasten-OnPrem, is an open-source, self-hosted application for personal or family electronic medical records that aims to bring disparate data from many clinics, labs, and insurers into one place under the individual’s control. The record system was built by Kulantuga and Szilagyi ([2025](#kulantuga-2025)) and sponsored by Fasten Health. Fasten-OnPrem supports key standards such as FHIR and OAuth2 so users can link their existing records rather than manually scanning everything. The system is designed for non-clinical settings (families rather than hospitals), but demonstrates how file-based, patient-owned aggregation of health records can work in practice—emphasising portability, transparency and user control rather than heavy institutional infrastructure.
 
 ## Healthcare Data Standards
 
-- openEHR, HL7 V2, FHIR, CDA
-- How structured, JSON-compatible formats are evolving
+This section surveys structural and exchange standards commonly used to represent and move electronic patient records.
+
+### Structural models
+
+#### openEHR
+
+A specification for modelling clinical content using archetypes and templates. It separates clinical knowledge from data persistence and can be serialised as JSON or XML. It includes constructs for composition, context and audit history.
+
+#### HL7 CDA
+
+A document-centric model for clinical correspondence and reports. CDA defines a structured container with narrative text and coded elements, typically exchanged as XML.
+
+### Exchange and APIs
+
+#### HL7 v2
+
+A widely deployed messaging standard for admissions, transfers, results and orders. It is compact and event-driven, and remains prevalent in secondary care integrations.
+
+#### HL7 FHIR
+
+A resource-based standard designed for web APIs. It serialises naturally to JSON or XML, supports profiles to constrain use, and provides resources for provenance, consent and audit. FHIR is now the dominant choice for modern interfaces and patient-facing apps.
+
+#### IHE Profiles
+
+Integration profiles such as XDS and MHD specify how documents and resources are published, discovered and retrieved across organisations, building on CDA and FHIR.
 
 ## Open Source in Healthcare
 
-- Benefits of transparency, reusability, and decentralised innovation
-- Case studies from the NHS and international projects
+The literature describes open source as a credible approach in digital health when paired with clear governance and resourcing. Reported benefits include transparency of code and data models, which supports independent security assessment, clinical safety review and reproducibility. Reuse is a second theme: open components can be adapted to local workflows, shortening time to deliver standard capabilities such as FHIR APIs, document rendering and integration gateways. Several studies note that open interfaces create incentives for interoperability by lowering switching costs across vendors and sites. Cost is presented more cautiously. Licence fees may fall, particularly for infrastructure, yet staffing, integration and long-term support remain material and require realistic budgets.
+
+Sustainability depends on governance. Successful programmes set explicit licensing strategies, contribution guidelines and release cadences, and treat clinical safety artefacts as first-class versioned assets alongside source code. Open projects do not remove the need for security engineering. Threat modelling, coordinated vulnerability disclosure, continuous testing and dependency management are still required, and are often easier to scrutinise when build pipelines are public.
+
+Case studies illustrate these points in practice. OpenEyes shows that a specialty EPR can be developed in the open and operated across several NHS Trusts with formal safety processes. OpenSAFELY demonstrates that transparent code and specifications can coexist with strict controls on patient data, enabling reproducible analytics at scale. OpenPrescribing provides public methods and code for prescribing analyses, supporting peer scrutiny and iterative improvement. Internationally, OpenMRS and GNU Health show long-running community models for longitudinal records and public health, while the openEHR community maintains shared archetypes and templates that allow vendors to converge on common clinical content.
+
+Risks are also highlighted. Fragmentation can occur if forks diverge without stewardship, hidden costs can surface during integration and migration, and security can be misunderstood if openness is taken as a substitute for active assurance. The reported mitigations are straightforward but non-trivial: maintainers who curate contributions, product ownership with clinical sponsorship, published roadmaps, funded support arrangements and independent security testing. Overall, the evidence supports open source as a practical route to transparency, reuse and safer interoperability, provided it is treated as a long-term programme with disciplined governance rather than a short-term cost-saving exercise.
 
 ---
 
@@ -61,6 +89,9 @@ Burstein, A. (2020a). 'Improving Health Care with Plain-Text Medical Records and
 
 <span id="burstein-2020b"></span>  
 Burstein, A. (2020b). 'mdr-git'. Github repository. Available at: [https://github.com/amitaibu/mdr-git](https://github.com/amitaibu/mdr-git) (Accessed: 5 Nov. 2025).
+
+<span id="kulantuga-2025"></span>
+Kulantuga, J. and Szilagyi, A (2025). 'fasten-onprem', GitHub repository. Available at: [https://github.com/fastenhealth/fasten-onprem](https://github.com/fastenhealth/fasten-onprem) (Accessed: 10 Nov. 2025).
 
 <span id="kumari-2024"></span>
 Kumari, D., Parmar, A.S., Goyal, H.S., Mishra, K. and Panda S. (2024). 'HealthRec-Chain: Patient-centric blockchain enabled IPFS for privacy preserving scalable health data', *Computer Networks*, 241, p. 110223, doi: [https://doi.org/10.1016/j.comnet.2024.110223](https://doi.org/10.1016/j.comnet.2024.110223).

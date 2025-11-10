@@ -33,7 +33,7 @@ cargo build
 
 As the docs run on a cache, you will likely need to nuke the docs if you remove files. Just manually run `nuke docs cache (manual)` from GitHub Actions.
 
-# Documentation
+## Documentation
 
 postgres single entry is 22.45 ops/sec git is 8.11 ops / sec
 
