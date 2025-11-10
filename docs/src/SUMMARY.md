@@ -1,8 +1,8 @@
 # Summary
 
 - [Home](./index.md)
-- [Literature review](./literature-review.md)
-- [Documentation](./documentation.md)
+- [VPR overview](./vpr-overview.md)
+- [Literature Review](./literature-review.md)
 - [Development](./development.md)
 - [Specifications](./specifications.md)
 - [To Do](./todo.md)

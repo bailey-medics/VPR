@@ -11,6 +11,7 @@ services:
     environment:
       - VPR_ADDR=0.0.0.0:50051
       - RUST_LOG=vpr=debug,info
+      - VPR_ENABLE_REFLECTION=true
     volumes:
       # Mount source for development (for live reload)
       # Mount the repository so cargo-watch sees the workspace

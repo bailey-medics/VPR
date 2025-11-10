@@ -1,30 +1,7 @@
-# VPR - Versioned Patient Repository
+# Versioned Patient Repository (VPR)
 
-![Rust](https://img.shields.io/badge/rust-%23000000.svg?style=for-the-badge&logo=rust&logoColor=white)
-![gRPC](https://img.shields.io/badge/gRPC-4285F4?style=for-the-badge&logo=google&logoColor=white)
+Welcome to the Versioned Patient Repository (VPR) documentation!
 
-Install pre-commit hooks
+The VPR uses files rather than traditional databases to store patient data. On top of this, version control via Git is used to track changes to patient records over time, providing a robust and auditable history of all modifications.
 
-```bash
-pre-commit install
-```
-
-install rust locally if you want to test on local machine
-
-```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
-
-start a new terminal to be able to use rust
-
-Install protobuf compiler
-
-```bash
-brew install protobuf
-```
-
-Build
-
-```bash
-cargo build
-```
+Please view the [VPR overview](./vpr-overview.md) if you would like to read a detailed overview of the reasoning behind the design and build of the VPR.
