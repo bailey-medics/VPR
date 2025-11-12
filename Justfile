@@ -15,6 +15,7 @@ initialise:= 'set -euxo pipefail
 _terminal-description message=" ":
     echo -ne "\033]0;{{message}}\007"
 
+
 alias aj := abbreviate-just
 # Set up the description for terminal windows
 abbreviate-just:
@@ -102,7 +103,7 @@ show-dev-containers:
 
 
 alias sd := start-dev
-# Start the dev app (build: 'b' will also build the images)
+# Start the dev app (build: 'b' - build images)
 start-dev build="":
     #!/usr/bin/env bash
     {{initialise}} "start-dev"
@@ -116,6 +117,7 @@ start-dev build="":
         docker compose -f compose.dev.yml up; \
     fi
 
+
 alias sp := start-prod
 # Start the dev app (build: 'b' will also build the images)
 start-prod build="":
@@ -126,6 +128,7 @@ start-prod build="":
     else \
         docker compose -f compose.yml -f compose.prod.yml up; \
     fi
+
 
 alias sc := stop
 # Stop the containers
