@@ -96,3 +96,5 @@ cargo build --features org
   - Hashed Message Authentication Code (mathematical fingerprint of the original data)
 - Quarantine vault
   - Quarantine bytes
+
+> tombstone locally, escrow the content in a restricted space, and leave a non-revealing hash pointer for audit.

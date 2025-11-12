@@ -1,7 +1,7 @@
 # Summary
 
 - [Home](./index.md)
-- [VPR overview](./vpr-overview.md)
+- [Overview](./overview.md)
 - [Literature Review](./literature-review.md)
 - [Development](./development.md)
 - [Specifications](./specifications.md)
