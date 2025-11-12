@@ -1,7 +1,6 @@
 [workspace]
 members = [
 	"crates/api",
-	"crates/vpr",
 	"crates/vpr-temp",
 	"crates/vpr-proto",
 ]
