@@ -1,10 +1,10 @@
 [package]
-name = "vpr-proto"
+name = "api-proto"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "vpr_proto"
+name = "api_proto"
 path = "src/lib.rs"
 
 [build-dependencies]

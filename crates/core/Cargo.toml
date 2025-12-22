@@ -1,14 +1,14 @@
 [package]
-name = "vpr-temp"
+name = "core"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "vpr_temp"
+name = "core"
 path = "src/lib.rs"
 
 [dependencies]
-vpr-proto = { path = "../vpr-proto" }
+api-proto = { path = "../api-proto" }
 tonic = { version = "0.12" }
 uuid = { version = "1", features = ["v4"] }
 serde = { version = "1.0", features = ["derive"] }

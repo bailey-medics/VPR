@@ -1,8 +1,8 @@
 use tonic::{Request, Response, Status};
 
-// Use the shared vpr-proto crate for generated protobuf types.
-pub use vpr_proto::pb;
-use vpr_proto::pb::{vpr_server::Vpr, CreatePatientReq, CreatePatientRes, HealthRes, Patient};
+// Use the shared api-proto crate for generated protobuf types.
+pub use api_proto::pb;
+use api_proto::pb::{vpr_server::Vpr, CreatePatientReq, CreatePatientRes, HealthRes, Patient};
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};

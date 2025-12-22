@@ -40,7 +40,7 @@ alias bl := build_local
 build_local:
     #!/usr/bin/env bash
     {{initialise}} "build_local"
-    cargo build -p api
+    cargo build -p api-grpc
 
 
 alias d := docs
@@ -83,7 +83,7 @@ alias g := gui
 gui:
     #!/usr/bin/env bash
     {{initialise}} "gui"
-    grpcui -proto crates/api/proto/vpr/v1/vpr.proto -plaintext localhost:50051
+    grpcui -proto crates/api-proto/vpr.proto -plaintext localhost:50051
 
 
 alias pc := pre-commit
