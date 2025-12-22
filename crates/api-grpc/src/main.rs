@@ -4,7 +4,7 @@ use tonic_reflection::server::Builder;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use api::{pb::vpr_server::VprServer, VprService};
-use vpr_proto::FILE_DESCRIPTOR_SET;
+use api_proto::FILE_DESCRIPTOR_SET;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

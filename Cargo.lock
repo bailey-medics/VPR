@@ -42,11 +42,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
 
 [[package]]
-name = "api"
+name = "api-grpc"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "api-proto",
  "chrono",
+ "core",
  "prost",
  "prost-types",
  "serde",
@@ -57,8 +59,16 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
- "vpr-proto",
- "vpr-temp",
+]
+
+[[package]]
+name = "api-proto"
+version = "0.1.0"
+dependencies = [
+ "prost",
+ "prost-build",
+ "tonic",
+ "tonic-build",
 ]
 
 [[package]]
@@ -220,6 +230,19 @@ dependencies = [
  "serde",
  "wasm-bindgen",
  "windows-link",
+]
+
+[[package]]
+name = "core"
+version = "0.1.0"
+dependencies = [
+ "api-proto",
+ "chrono",
+ "serde",
+ "serde_json",
+ "tonic",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -1281,40 +1304,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
-name = "vpr-proto"
-version = "0.1.0"
-dependencies = [
- "prost",
- "prost-build",
- "tonic",
- "tonic-build",
-]
-
-[[package]]
 name = "vpr-run"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "api",
+ "api-grpc",
  "prost-build",
  "tokio",
  "tonic",
  "tonic-build",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "vpr-temp"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "serde",
- "serde_json",
- "tonic",
- "tracing",
- "uuid",
- "vpr-proto",
 ]
 
 [[package]]
