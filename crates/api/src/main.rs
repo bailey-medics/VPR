@@ -17,7 +17,7 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|_| "0.0.0.0:50051".into())
         .parse()?;
 
-    tracing::info!("Starting VPR gRPC on {}", addr);
+    tracing::info!("-- Starting VPR gRPC on {}", addr);
 
     let svc = VprService;
     let mut server_builder = Server::builder().add_service(VprServer::new(svc));

@@ -1,4 +1,5 @@
 FROM rust:1.90.0-alpine3.22
+
 WORKDIR /app
 
 # Install system dependencies needed for cargo-watch compilation and protobuf
@@ -11,7 +12,9 @@ RUN cargo install cargo-watch
 # We don't copy build.rs (it moved into crates/vpr); copy workspace manifest and
 # the per-crate Cargo.toml files so cargo can resolve dependencies.
 COPY Cargo.toml Cargo.lock ./
+COPY rust-toolchain.toml ./
 COPY crates ./crates/
+
 
 # Create minimal dummy source for the crates so we can cache dependencies by
 # building the api package. The real source will be mounted during development.

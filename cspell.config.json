@@ -1,7 +1,13 @@
 {
   "version": "0.2",
   "language": "en-GB",
-  "ignorePaths": ["Cargo.toml", "Cargo.lock", "target/**"],
+  "ignorePaths": [
+    "Cargo.toml",
+    "Cargo.lock",
+    "target/**",
+    "Justfile",
+    "**/Justfile"
+  ],
   "words": [
     "Adnane",
     "Ahmad",

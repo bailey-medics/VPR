@@ -8,6 +8,16 @@ Docker
 
 Rust
 
+## gRPC
+
+via tonic
+
+To start the grpcui viewer, just run:
+
+```bash
+j g
+```
+
 ## Linting
 
 Rust Clippy
