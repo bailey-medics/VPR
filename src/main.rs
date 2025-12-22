@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 use tonic::transport::Server;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use api::{pb::vpr_server::VprServer, VprService};
+use api::{VprService, pb::vpr_server::VprServer};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -15,7 +15,7 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|_| "0.0.0.0:50051".into())
         .parse()?;
 
-    tracing::info!("Starting VPR gRPC on {}", addr);
+    tracing::info!("++ Starting VPR gRPC on {}", addr);
 
     let svc = VprService;
     Server::builder()

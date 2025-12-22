@@ -1,13 +1,7 @@
 {
   // Rust-specific settings
   "rust-analyzer.check.command": "clippy",
-  "rust-analyzer.check.extraArgs": [
-    "--all-targets",
-    "--all-features",
-    "--",
-    "-D",
-    "warnings"
-  ],
+  "rust-analyzer.check.extraArgs": ["--all-features", "--", "-D", "warnings"],
   "rust-analyzer.rustfmt.extraArgs": ["--config-path", "rustfmt.toml"],
 
   // Format on save

@@ -29,7 +29,7 @@ services:
       - vpr-network
     restart: unless-stopped
     # Ensure cargo runs the api binary explicitly (workspace has two binaries)
-    command: ["/bin/sh", "-c", "cargo watch -x 'run -p api --bin vpr-api'"]
+    command: ["/bin/sh", "-c", "cargo watch -x 'run'"]
     healthcheck:
       test: ["CMD-SHELL", "grpcurl -plaintext localhost:50051 list || exit 1"]
       interval: 30s
