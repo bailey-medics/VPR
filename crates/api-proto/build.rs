@@ -7,6 +7,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     tonic_build::configure()
         .build_server(true)
         .build_client(false)
+        .type_attribute(
+            ".",
+            "#[derive(serde::Serialize, serde::Deserialize, utoipa::ToSchema)]",
+        )
         .file_descriptor_set_path(
             std::path::Path::new(&std::env::var("OUT_DIR")?).join("proto_descriptor.bin"),
         )

@@ -6,7 +6,7 @@ description = "VPR gRPC API crate"
 license = "MIT"
 
 [lib]
-name = "api"
+name = "api_grpc"
 path = "src/lib.rs"
 
 [[bin]]

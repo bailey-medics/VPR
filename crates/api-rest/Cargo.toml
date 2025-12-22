@@ -1,0 +1,29 @@
+[package]
+name = "api-rest"
+version = "0.1.0"
+edition = "2021"
+description = "VPR REST API crate"
+license = "MIT"
+
+[lib]
+name = "api_rest"
+path = "src/lib.rs"
+
+[[bin]]
+name = "vpr-api-rest"
+path = "src/main.rs"
+
+[dependencies]
+api-proto = { path = "../api-proto" }
+axum = { version = "0.7", features = ["macros"] }
+core = { path = "../core" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tonic = "0.12"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+utoipa = { version = "4", features = ["axum_extras"] }
+utoipa-swagger-ui = "7"
