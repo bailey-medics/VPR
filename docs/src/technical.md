@@ -18,6 +18,12 @@ To start the grpcui viewer, just run:
 j g
 ```
 
+## REST API
+
+```text
+http://localhost:3000/swagger-ui/
+```
+
 ## Linting
 
 Rust Clippy

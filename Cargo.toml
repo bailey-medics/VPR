@@ -2,6 +2,7 @@
 members = [
 	"crates/api-grpc",
 	"crates/api-proto",
+	"crates/api-rest",
 	"crates/core",
 ]
 resolver = "2"
@@ -15,11 +16,18 @@ default-run = "vpr-run"
 
 [dependencies]
 api-grpc = { path = "crates/api-grpc" }
-tonic = { version = "0.12" }
+axum = "0.7"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tonic = "0.12"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1"
+utoipa = { version = "4", features = ["axum_extras"] }
+utoipa-swagger-ui = { version = "7", features = ["axum", "reqwest"] }
 
 [build-dependencies]
 tonic-build = "0.12"
