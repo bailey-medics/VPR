@@ -7,4 +7,6 @@
 - [Specifications](./specifications.md)
 - [To Do](./todo.md)
 - [Technical](./technical.md)
+- [CLI](./cli.md)
 - [Code docs](./code/vpr_temp/index.html)
+- [Thanks to](./thanks-to.md)
