@@ -3,7 +3,7 @@
 
 set -e
 
-echo "🔍 Running Clippy linter..."
+echo "Running Clippy linter..."
 cargo clippy --all-targets --all-features -- -D warnings
 
 echo "✅ Linting complete!"

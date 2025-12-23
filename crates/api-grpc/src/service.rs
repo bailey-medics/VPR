@@ -71,7 +71,10 @@ impl Vpr for VprService {
     /// create and store the patient record.
     ///
     /// # Arguments
-    /// * `req` - CreatePatientReq containing first_name and last_name
+    /// * `req` - CreatePatientReq containing first_name, last_name, author_name, and author_email
+    ///
+    /// # Required Headers
+    /// * `x-api-key` - Valid API key for authentication
     ///
     /// # Returns
     /// * `Ok(Response<CreatePatientRes>)` - Patient creation result with ID and metadata
@@ -89,10 +92,12 @@ impl Vpr for VprService {
         auth::validate_api_key(api_key)?;
 
         let req = req.into_inner();
-        match self
-            .patient_service
-            .create_patient(req.first_name, req.last_name)
-        {
+        match self.patient_service.create_patient(
+            req.first_name,
+            req.last_name,
+            req.author_name,
+            req.author_email,
+        ) {
             Ok(resp) => Ok(Response::new(resp)),
             Err(e) => Err(Status::internal(format!("Failed to create patient: {}", e))),
         }
