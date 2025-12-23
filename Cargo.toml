@@ -1,7 +1,7 @@
 [workspace]
 members = [
 	"crates/api-grpc",
-	"crates/api-proto",
+	"crates/api-shared",
 	"crates/api-rest",
 	"crates/core",
 ]

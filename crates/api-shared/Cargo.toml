@@ -1,10 +1,10 @@
 [package]
-name = "api-proto"
+name = "api-shared"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "api_proto"
+name = "api_shared"
 path = "src/lib.rs"
 
 [build-dependencies]

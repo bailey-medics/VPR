@@ -11,8 +11,8 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
-use api_proto::pb;
-use api_proto::pb::vpr_server::Vpr;
+use api_shared::pb;
+use api_shared::pb::vpr_server::Vpr;
 use core::VprService;
 
 #[derive(Clone)]

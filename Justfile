@@ -83,7 +83,7 @@ alias g := gui
 gui:
     #!/usr/bin/env bash
     {{initialise}} "gui"
-    grpcui -proto crates/api-proto/vpr.proto -plaintext localhost:50051
+    grpcui -proto crates/api-shared/vpr.proto -plaintext localhost:50051
 
 
 alias pc := pre-commit
