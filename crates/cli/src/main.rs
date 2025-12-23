@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use vpr_core::{pb, PatientService};
+use vpr_core::PatientService;
 
 #[derive(Parser)]
 #[command(name = "vpr")]
