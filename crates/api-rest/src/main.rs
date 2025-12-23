@@ -12,16 +12,15 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 use api_shared::pb;
-use api_shared::pb::vpr_server::Vpr;
-use core::VprService;
+use vpr_core::PatientService;
 
 /// Application state for the REST API server
 ///
 /// Contains shared state that needs to be accessible to all request handlers,
-/// including the VPR service instance for processing patient operations.
+/// including the PatientService instance for data operations.
 #[derive(Clone)]
 struct AppState {
-    service: Arc<VprService>,
+    service: Arc<PatientService>,
 }
 
 #[derive(OpenApi)]
@@ -62,7 +61,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("-- Starting VPR REST API on {}", addr);
 
     let state = AppState {
-        service: Arc::new(VprService),
+        service: Arc::new(PatientService::new()),
     };
 
     let app = Router::new()
@@ -113,8 +112,8 @@ async fn health(State(_state): State<AppState>) -> Json<pb::HealthRes> {
 )]
 /// List all patients in the system
 ///
-/// Retrieves a list of all patients by calling the underlying gRPC service.
-/// This provides a REST interface to the same patient listing functionality.
+/// Retrieves a list of all patients by calling the underlying patient service.
+/// This provides a REST interface to the patient listing functionality.
 ///
 /// # Returns
 /// * `Ok(Json<pb::ListPatientsRes>)` - List of patients with their IDs and names
@@ -123,11 +122,8 @@ async fn health(State(_state): State<AppState>) -> Json<pb::HealthRes> {
 async fn list_patients(
     State(state): State<AppState>,
 ) -> Result<Json<pb::ListPatientsRes>, (StatusCode, &'static str)> {
-    let service = &state.service;
-    match service.list_patients(tonic::Request::new(())).await {
-        Ok(resp) => Ok(Json(resp.into_inner())),
-        Err(_) => Err((StatusCode::INTERNAL_SERVER_ERROR, "Internal error")),
-    }
+    let patients = state.service.list_patients();
+    Ok(Json(pb::ListPatientsRes { patients }))
 }
 
 #[utoipa::path(
@@ -142,8 +138,8 @@ async fn list_patients(
 )]
 /// Create a new patient record
 ///
-/// Creates a new patient by calling the underlying gRPC service.
-/// This provides a REST interface to the same patient creation functionality.
+/// Creates a new patient by calling the underlying patient service.
+/// This provides a REST interface to the patient creation functionality.
 ///
 /// # Parameters
 /// * `req` - Patient creation request containing first_name and last_name
@@ -156,9 +152,8 @@ async fn create_patient(
     State(state): State<AppState>,
     Json(req): Json<pb::CreatePatientReq>,
 ) -> Result<Json<pb::CreatePatientRes>, (StatusCode, &'static str)> {
-    let service = &state.service;
-    match service.create_patient(tonic::Request::new(req)).await {
-        Ok(resp) => Ok(Json(resp.into_inner())),
+    match state.service.create_patient(req.first_name, req.last_name) {
+        Ok(resp) => Ok(Json(resp)),
         Err(e) => {
             tracing::error!("Create patient error: {:?}", e);
             Err((StatusCode::INTERNAL_SERVER_ERROR, "Internal error"))

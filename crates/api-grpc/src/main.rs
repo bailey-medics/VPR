@@ -1,35 +1,10 @@
 use std::net::SocketAddr;
 use tonic::transport::Server;
-use tonic::{Request, Status};
 use tonic_reflection::server::Builder;
-use tower::ServiceBuilder;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use api_grpc::{pb::vpr_server::VprServer, VprService};
-use api_shared::{auth, FILE_DESCRIPTOR_SET};
-
-/// Authentication interceptor for gRPC requests
-///
-/// Validates the x-api-key header in incoming gRPC requests.
-/// The API key is compared against the configured API_KEY environment variable.
-///
-/// # Parameters
-/// * `req` - The incoming gRPC request
-///
-/// # Returns
-/// * `Ok(Request<()>)` - Request with authentication validated
-/// * `Err(Status)` - Authentication failed (missing or invalid API key)
-fn auth_interceptor(req: Request<()>) -> Result<Request<()>, Status> {
-    let api_key = req
-        .metadata()
-        .get("x-api-key")
-        .and_then(|v| v.to_str().ok())
-        .ok_or_else(|| Status::unauthenticated("Missing x-api-key header"))?;
-
-    auth::validate_api_key(api_key)?;
-
-    Ok(req)
-}
+use api_grpc::{auth_interceptor, pb::vpr_server::VprServer, VprService};
+use api_shared::FILE_DESCRIPTOR_SET;
 
 /// Main entry point for the VPR gRPC server
 ///
@@ -59,11 +34,9 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("-- Starting VPR gRPC on {}", addr);
 
-    let svc = VprService;
-    let layer = ServiceBuilder::new().layer_fn(auth_interceptor);
-    let mut server_builder = Server::builder()
-        .layer(layer)
-        .add_service(VprServer::new(svc));
+    let svc = VprService::default();
+    let mut server_builder =
+        Server::builder().add_service(VprServer::with_interceptor(svc, auth_interceptor));
 
     if std::env::var("VPR_ENABLE_REFLECTION").unwrap_or_else(|_| "false".to_string()) == "true" {
         let reflection_service = Builder::configure()
