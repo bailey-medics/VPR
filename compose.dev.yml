@@ -17,8 +17,6 @@ services:
       # Mount source for development (for live reload)
       # Mount the repository so cargo-watch sees the workspace
       - ./:/app:delegated
-      # Ensure protos are available (repo-root proto is used by both crates)
-      - ./proto:/app/proto:ro
       
       # Preserve target directory to cache compiled dependencies
       - "cargo-cache:/app/target"
