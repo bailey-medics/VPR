@@ -39,10 +39,34 @@ pub type PatientResult<T> = std::result::Result<T, PatientError>;
 pub struct PatientService;
 
 impl PatientService {
+    /// Creates a new instance of PatientService.
+    ///
+    /// # Returns
+    /// A new `PatientService` instance ready to handle patient operations.
     pub fn new() -> Self {
         Self
     }
 
+    /// Creates a new patient record with the given name information.
+    ///
+    /// This method performs the following operations:
+    /// 1. Validates that both first and last names are non-empty
+    /// 2. Generates a unique UUID for the patient
+    /// 3. Creates a sharded directory structure under `PATIENT_DATA_DIR`
+    /// 4. Stores patient demographics as JSON in `demographics.json`
+    ///
+    /// # Arguments
+    /// * `first_name` - The patient's first name (will be trimmed)
+    /// * `last_name` - The patient's last name (will be trimmed)
+    ///
+    /// # Returns
+    /// * `Ok(CreatePatientRes)` - Contains the filename and patient data on success
+    /// * `Err(PatientError)` - If validation fails or file operations error
+    ///
+    /// # Storage Format
+    /// Patients are stored in a sharded directory structure:
+    /// `<PATIENT_DATA_DIR>/<s1>/<s2>/<32hex-uuid>/demographics.json`
+    /// where s1/s2 are the first 4 hex characters of the UUID.
     pub fn create_patient(
         &self,
         first_name: String,
@@ -102,6 +126,18 @@ impl PatientService {
         Ok(resp)
     }
 
+    /// Lists all patient records from the file system.
+    ///
+    /// This method traverses the sharded directory structure under `PATIENT_DATA_DIR`
+    /// and reads all `demographics.json` files to reconstruct patient records.
+    ///
+    /// # Returns
+    /// A `Vec<pb::Patient>` containing all found patient records. If any individual
+    /// patient file cannot be parsed, it will be logged as a warning and skipped.
+    ///
+    /// # Directory Structure
+    /// Expects patients stored in: `<PATIENT_DATA_DIR>/<s1>/<s2>/<32hex-uuid>/demographics.json`
+    /// where s1/s2 are the first 4 hex characters of the UUID.
     pub fn list_patients(&self) -> Vec<pb::Patient> {
         let base = std::env::var("PATIENT_DATA_DIR").unwrap_or_else(|_| "/patient_data".into());
         let data_dir = Path::new(&base);

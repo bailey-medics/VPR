@@ -15,6 +15,10 @@ use api_shared::pb;
 use api_shared::pb::vpr_server::Vpr;
 use core::VprService;
 
+/// Application state for the REST API server
+///
+/// Contains shared state that needs to be accessible to all request handlers,
+/// including the VPR service instance for processing patient operations.
 #[derive(Clone)]
 struct AppState {
     service: Arc<VprService>,
@@ -32,6 +36,17 @@ struct AppState {
 )]
 struct ApiDoc;
 
+/// Main entry point for the VPR REST API server
+///
+/// Starts the REST API server on the configured address (default: 0.0.0.0:3000).
+/// Provides HTTP endpoints for patient operations with OpenAPI/Swagger documentation.
+///
+/// # Environment Variables
+/// - `VPR_REST_ADDR`: Server address (default: "0.0.0.0:3000")
+///
+/// # Returns
+/// * `Ok(())` - If server starts and runs successfully
+/// * `Err(anyhow::Error)` - If server startup or runtime fails
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::registry()
@@ -73,6 +88,13 @@ async fn main() -> anyhow::Result<()> {
         (status = 200, description = "Health check response", body = pb::HealthRes)
     )
 )]
+/// Health check endpoint for the REST API
+///
+/// Returns the current health status of the VPR REST API service.
+/// This endpoint is used for monitoring and load balancer health checks.
+///
+/// # Returns
+/// * `Json<pb::HealthRes>` - Health status response containing service status
 #[axum::debug_handler]
 async fn health(State(_state): State<AppState>) -> Json<pb::HealthRes> {
     Json(pb::HealthRes {
@@ -89,6 +111,14 @@ async fn health(State(_state): State<AppState>) -> Json<pb::HealthRes> {
         (status = 500, description = "Internal server error")
     )
 )]
+/// List all patients in the system
+///
+/// Retrieves a list of all patients by calling the underlying gRPC service.
+/// This provides a REST interface to the same patient listing functionality.
+///
+/// # Returns
+/// * `Ok(Json<pb::ListPatientsRes>)` - List of patients with their IDs and names
+/// * `Err((StatusCode, &str))` - Internal server error if listing fails
 #[axum::debug_handler]
 async fn list_patients(
     State(state): State<AppState>,
@@ -110,6 +140,17 @@ async fn list_patients(
         (status = 500, description = "Internal server error")
     )
 )]
+/// Create a new patient record
+///
+/// Creates a new patient by calling the underlying gRPC service.
+/// This provides a REST interface to the same patient creation functionality.
+///
+/// # Parameters
+/// * `req` - Patient creation request containing first_name and last_name
+///
+/// # Returns
+/// * `Ok(Json<pb::CreatePatientRes>)` - Created patient with generated UUID
+/// * `Err((StatusCode, &str))` - Internal server error if creation fails
 #[axum::debug_handler]
 async fn create_patient(
     State(state): State<AppState>,
