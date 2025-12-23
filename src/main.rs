@@ -6,37 +6,46 @@ use axum::{
     routing::{get, post},
 };
 use std::net::SocketAddr;
-use std::sync::Arc;
 use tonic::transport::Server;
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
-use api_grpc::{
-    VprService,
-    pb::vpr_server::{Vpr, VprServer},
-};
+use api_grpc::{VprService, auth_interceptor};
+use api_shared::HealthService;
+use api_shared::pb;
+use api_shared::pb::vpr_server::VprServer;
+use vpr_core::PatientService;
 
-type HealthRes = api_grpc::pb::HealthRes;
-type ListPatientsRes = api_grpc::pb::ListPatientsRes;
-type CreatePatientRes = api_grpc::pb::CreatePatientRes;
-type CreatePatientReq = api_grpc::pb::CreatePatientReq;
+type HealthRes = pb::HealthRes;
+type ListPatientsRes = pb::ListPatientsRes;
+type CreatePatientRes = pb::CreatePatientRes;
+type CreatePatientReq = pb::CreatePatientReq;
+type Patient = pb::Patient;
 
 #[derive(Clone)]
 struct AppState {
-    service: Arc<VprService>,
+    patient_service: PatientService,
 }
 
 #[derive(OpenApi)]
 #[openapi(
     paths(health, list_patients, create_patient),
-    components(schemas(HealthRes, ListPatientsRes, CreatePatientRes, CreatePatientReq))
+    components(schemas(
+        HealthRes,
+        ListPatientsRes,
+        CreatePatientRes,
+        CreatePatientReq,
+        Patient
+    ))
 )]
 struct ApiDoc;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    dotenvy::dotenv().ok();
+
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::from_default_env().add_directive("vpr=info".parse()?))
         .with(tracing_subscriber::fmt::layer())
@@ -50,17 +59,18 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("++ Starting VPR gRPC on {}", grpc_addr);
     tracing::info!("++ Starting VPR REST on {}", rest_addr);
 
-    let svc = Arc::new(VprService);
+    let patient_service = PatientService::new();
 
     // Start REST server
-    let rest_svc = Arc::clone(&svc);
     let rest_app = Router::new()
         .route("/health", get(health))
         .route("/patients", get(list_patients))
         .route("/patients", post(create_patient))
         .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .layer(CorsLayer::permissive())
-        .with_state(AppState { service: rest_svc });
+        .with_state(AppState {
+            patient_service: patient_service.clone(),
+        });
 
     let rest_server = tokio::spawn(async move {
         let listener = tokio::net::TcpListener::bind(&rest_addr).await.unwrap();
@@ -69,7 +79,10 @@ async fn main() -> anyhow::Result<()> {
 
     // Start gRPC server
     let grpc_server = Server::builder()
-        .add_service(VprServer::new((*svc).clone()))
+        .add_service(VprServer::with_interceptor(
+            VprService::default(),
+            auth_interceptor,
+        ))
         .serve(grpc_addr);
 
     // Run both
@@ -88,10 +101,7 @@ async fn main() -> anyhow::Result<()> {
     )
 )]
 async fn health(State(_state): State<AppState>) -> Json<HealthRes> {
-    Json(api_grpc::pb::HealthRes {
-        ok: true,
-        message: "VPR is alive".into(),
-    })
+    Json(HealthService::check_health())
 }
 
 #[utoipa::path(
@@ -105,11 +115,8 @@ async fn health(State(_state): State<AppState>) -> Json<HealthRes> {
 async fn list_patients(
     State(state): State<AppState>,
 ) -> Result<Json<ListPatientsRes>, (StatusCode, &'static str)> {
-    let service = &state.service;
-    match service.list_patients(tonic::Request::new(())).await {
-        Ok(resp) => Ok(Json(resp.into_inner())),
-        Err(_) => Err((StatusCode::INTERNAL_SERVER_ERROR, "Internal error")),
-    }
+    let patients = state.patient_service.list_patients();
+    Ok(Json(ListPatientsRes { patients }))
 }
 
 #[utoipa::path(
@@ -126,9 +133,11 @@ async fn create_patient(
     State(state): State<AppState>,
     Json(req): Json<CreatePatientReq>,
 ) -> Result<Json<CreatePatientRes>, (StatusCode, &'static str)> {
-    let service = &state.service;
-    match service.create_patient(tonic::Request::new(req)).await {
-        Ok(resp) => Ok(Json(resp.into_inner())),
+    match state
+        .patient_service
+        .create_patient(req.first_name, req.last_name)
+    {
+        Ok(resp) => Ok(Json(resp)),
         Err(e) => {
             tracing::error!("Create patient error: {:?}", e);
             Err((StatusCode::INTERNAL_SERVER_ERROR, "Internal error"))

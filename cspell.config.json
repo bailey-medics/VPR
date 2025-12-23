@@ -102,10 +102,6 @@
     {
       "languageId": "markdown",
       "includeRegExpList": [".*"]
-    },
-    {
-      "languageId": "just",
-      "includeRegExpList": ["string", "comment"]
     }
   ]
 }
