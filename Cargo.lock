@@ -46,7 +46,7 @@ name = "api-grpc"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "api-proto",
+ "api-shared",
  "chrono",
  "core",
  "prost",
@@ -62,23 +62,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "api-proto"
-version = "0.1.0"
-dependencies = [
- "prost",
- "prost-build",
- "serde",
- "tonic",
- "tonic-build",
- "utoipa",
-]
-
-[[package]]
 name = "api-rest"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "api-proto",
+ "api-shared",
  "axum",
  "core",
  "serde",
@@ -91,6 +79,18 @@ dependencies = [
  "tracing-subscriber",
  "utoipa",
  "utoipa-swagger-ui",
+]
+
+[[package]]
+name = "api-shared"
+version = "0.1.0"
+dependencies = [
+ "prost",
+ "prost-build",
+ "serde",
+ "tonic",
+ "tonic-build",
+ "utoipa",
 ]
 
 [[package]]
@@ -302,7 +302,7 @@ dependencies = [
 name = "core"
 version = "0.1.0"
 dependencies = [
- "api-proto",
+ "api-shared",
  "chrono",
  "serde",
  "serde_json",

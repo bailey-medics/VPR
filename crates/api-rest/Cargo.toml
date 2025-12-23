@@ -14,7 +14,7 @@ name = "vpr-api-rest"
 path = "src/main.rs"
 
 [dependencies]
-api-proto = { path = "../api-proto" }
+api-shared = { path = "../api-shared" }
 anyhow = "1"
 axum = { version = "0.7", features = ["macros"] }
 core = { path = "../core" }
