@@ -47,7 +47,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("-- Starting VPR REST API on {}", addr);
 
     let state = AppState {
-        service: Arc::new(VprService::default()),
+        service: Arc::new(VprService),
     };
 
     let app = Router::new()
