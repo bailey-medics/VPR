@@ -5,7 +5,6 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use serde::Deserialize;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
