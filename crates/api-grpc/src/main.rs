@@ -8,6 +8,17 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use api_grpc::{pb::vpr_server::VprServer, VprService};
 use api_shared::{auth, FILE_DESCRIPTOR_SET};
 
+/// Authentication interceptor for gRPC requests
+///
+/// Validates the x-api-key header in incoming gRPC requests.
+/// The API key is compared against the configured API_KEY environment variable.
+///
+/// # Parameters
+/// * `req` - The incoming gRPC request
+///
+/// # Returns
+/// * `Ok(Request<()>)` - Request with authentication validated
+/// * `Err(Status)` - Authentication failed (missing or invalid API key)
 fn auth_interceptor(req: Request<()>) -> Result<Request<()>, Status> {
     let api_key = req
         .metadata()
@@ -20,6 +31,19 @@ fn auth_interceptor(req: Request<()>) -> Result<Request<()>, Status> {
     Ok(req)
 }
 
+/// Main entry point for the VPR gRPC server
+///
+/// Starts the gRPC server on the configured address (default: 0.0.0.0:50051).
+/// Includes authentication interceptor and optional gRPC reflection for debugging.
+///
+/// # Environment Variables
+/// - `VPR_ADDR`: Server address (default: "0.0.0.0:50051")
+/// - `VPR_ENABLE_REFLECTION`: Enable gRPC reflection (default: "false")
+/// - `API_KEY`: API key for authentication
+///
+/// # Returns
+/// * `Ok(())` - If server starts and runs successfully
+/// * `Err(anyhow::Error)` - If server startup or runtime fails
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();

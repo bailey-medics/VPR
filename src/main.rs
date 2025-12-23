@@ -24,6 +24,10 @@ type CreatePatientRes = pb::CreatePatientRes;
 type CreatePatientReq = pb::CreatePatientReq;
 type Patient = pb::Patient;
 
+/// Application state shared across REST API handlers
+///
+/// Contains the services needed by the REST API endpoints.
+/// Currently holds a PatientService instance for data operations.
 #[derive(Clone)]
 struct AppState {
     patient_service: PatientService,
@@ -42,6 +46,24 @@ struct AppState {
 )]
 struct ApiDoc;
 
+/// Main entry point for the VPR application
+///
+/// Starts both gRPC and REST servers concurrently:
+/// - gRPC server on port 50051 (configurable via VPR_ADDR)
+/// - REST server on port 3000 (configurable via VPR_REST_ADDR)
+///
+/// The gRPC server requires authentication via x-api-key header.
+/// The REST server provides open access to patient operations.
+///
+/// # Environment Variables
+/// - `VPR_ADDR`: gRPC server address (default: "0.0.0.0:50051")
+/// - `VPR_REST_ADDR`: REST server address (default: "0.0.0.0:3000")
+/// - `PATIENT_DATA_DIR`: Directory for patient data storage (default: "/patient_data")
+/// - `API_KEY`: API key for gRPC authentication
+///
+/// # Returns
+/// * `Ok(())` - If servers start and run successfully
+/// * `Err(anyhow::Error)` - If server startup or runtime fails
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
@@ -100,6 +122,13 @@ async fn main() -> anyhow::Result<()> {
         (status = 200, description = "Health check response", body = HealthRes)
     )
 )]
+/// Health check endpoint for the REST API
+///
+/// Returns the current health status of the VPR service.
+/// This endpoint is used for monitoring and load balancer health checks.
+///
+/// # Returns
+/// * `Json<HealthRes>` - Health status response containing service status
 async fn health(State(_state): State<AppState>) -> Json<HealthRes> {
     Json(HealthService::check_health())
 }
@@ -112,6 +141,14 @@ async fn health(State(_state): State<AppState>) -> Json<HealthRes> {
         (status = 500, description = "Internal server error")
     )
 )]
+/// List all patients in the system
+///
+/// Retrieves a list of all patients stored in the patient data directory.
+/// Patients are stored in a sharded directory structure for efficient access.
+///
+/// # Returns
+/// * `Ok(Json<ListPatientsRes>)` - List of patients with their IDs and names
+/// * `Err((StatusCode, &str))` - Internal server error if listing fails
 async fn list_patients(
     State(state): State<AppState>,
 ) -> Result<Json<ListPatientsRes>, (StatusCode, &'static str)> {
@@ -129,6 +166,18 @@ async fn list_patients(
         (status = 500, description = "Internal server error")
     )
 )]
+/// Create a new patient record
+///
+/// Creates a new patient with the provided first and last name.
+/// The patient data is stored as JSON in a sharded directory structure
+/// under the configured patient data directory.
+///
+/// # Parameters
+/// * `req` - Patient creation request containing first_name and last_name
+///
+/// # Returns
+/// * `Ok(Json<CreatePatientRes>)` - Created patient with generated UUID
+/// * `Err((StatusCode, &str))` - Bad request or internal server error
 async fn create_patient(
     State(state): State<AppState>,
     Json(req): Json<CreatePatientReq>,
