@@ -5,7 +5,6 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use serde::Deserialize;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -48,7 +47,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("-- Starting VPR REST API on {}", addr);
 
     let state = AppState {
-        service: Arc::new(VprService::default()),
+        service: Arc::new(VprService),
     };
 
     let app = Router::new()
