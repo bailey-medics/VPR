@@ -13,6 +13,7 @@
     "Ahmad",
     "analyzer",
     "Antwi",
+    "axum",
     "bigserial",
     "Burgun",
     "cfgs",
@@ -89,6 +90,7 @@
     "tlsv",
     "Tunables",
     "Utoipa",
+    "vars",
     "Venkaresan"
   ],
   "ignoreWords": ["Exampletown"],
