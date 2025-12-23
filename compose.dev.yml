@@ -29,8 +29,10 @@ services:
     networks:
       - vpr-network
     restart: unless-stopped
-    # Ensure cargo runs the default binary (runs both gRPC and REST)
-    command: ["/bin/sh", "-c", "cargo watch -x 'run'"]
+    # Use this if you do not want to rebuilt the CLI on every change (make sure to comment out the other command)
+    # command: ["/bin/sh", "-c", "cargo watch -x 'run'"]
+    # Ensure cargo runs the default binary (runs both gRPC and REST) and watches CLI for auto-rebuild
+    command: ["/bin/sh", "-c", "cargo watch -x 'run' & cargo watch --watch crates -p vpr-cli -x 'install --path crates/cli --bin vpr --force' & wait"]
     healthcheck:
       test: ["CMD-SHELL", "grpcurl -plaintext -H 'x-api-key: ${API_KEY}' localhost:50051 list && curl -f http://localhost:3000/health || exit 1"]
       interval: 30s

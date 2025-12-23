@@ -18,11 +18,9 @@ COPY crates ./crates/
 
 # Create minimal dummy source for the crates so we can cache dependencies by
 # building the api package. The real source will be mounted during development.
-RUN mkdir -p crates/api-grpc/src crates/core/src \
+RUN mkdir -p crates/api-grpc/src \
  && echo 'fn main(){}' > crates/api-grpc/src/main.rs \
- && echo 'pub fn dummy() {}' > crates/api-grpc/src/lib.rs \
- && echo 'fn main(){}' > crates/core/src/main.rs \
- && echo 'pub fn dummy() {}' > crates/core/src/lib.rs
+ && echo 'pub fn dummy() {}' > crates/api-grpc/src/lib.rs
 # Ensure the workspace-level package (vpr-run) has a dummy binary while caching
 RUN mkdir -p src && echo 'fn main() {}' > src/main.rs
 
