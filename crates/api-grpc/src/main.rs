@@ -1,13 +1,29 @@
 use std::net::SocketAddr;
 use tonic::transport::Server;
+use tonic::{Request, Status};
 use tonic_reflection::server::Builder;
+use tower::ServiceBuilder;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use api_grpc::{pb::vpr_server::VprServer, VprService};
-use api_shared::FILE_DESCRIPTOR_SET;
+use api_shared::{auth, FILE_DESCRIPTOR_SET};
+
+fn auth_interceptor(req: Request<()>) -> Result<Request<()>, Status> {
+    let api_key = req
+        .metadata()
+        .get("x-api-key")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| Status::unauthenticated("Missing x-api-key header"))?;
+
+    auth::validate_api_key(api_key)?;
+
+    Ok(req)
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    dotenvy::dotenv().ok();
+
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::from_default_env().add_directive("vpr=info".parse()?))
         .with(tracing_subscriber::fmt::layer())
@@ -20,7 +36,10 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("-- Starting VPR gRPC on {}", addr);
 
     let svc = VprService;
-    let mut server_builder = Server::builder().add_service(VprServer::new(svc));
+    let layer = ServiceBuilder::new().layer_fn(auth_interceptor);
+    let mut server_builder = Server::builder()
+        .layer(layer)
+        .add_service(VprServer::new(svc));
 
     if std::env::var("VPR_ENABLE_REFLECTION").unwrap_or_else(|_| "false".to_string()) == "true" {
         let reflection_service = Builder::configure()

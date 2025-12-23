@@ -22,3 +22,5 @@ target
 
 logs/
 patient_data/
+
+.env

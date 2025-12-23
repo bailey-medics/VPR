@@ -9,16 +9,18 @@ These notes are for automated coding agents and should be short, concrete, and c
 Overview
 - Purpose: VPR is a file-based patient record system with Git-like versioning, built as a Rust Cargo workspace. It provides dual gRPC and REST APIs for health checks and patient creation. The system stores patient data as JSON files in a sharded directory structure under `patient_data/`.
 - Key crates:
-  - `crates/core` — Core service logic implementing the VPR gRPC service (see `crates/core/src/lib.rs`).
-  - `crates/api-shared` — Protobuf definitions and generation (canonical proto at `crates/api-shared/vpr.proto`).
-  - `crates/api-grpc` — gRPC server setup and re-exports (entry via `src/main.rs`).
-  - `crates/api-rest` — REST API components (integrated into main binary).
+  - `crates/core` (vpr-core) — **PURE DATA OPERATIONS ONLY**: File/folder management, patient data CRUD, Git-like versioning. **NO API concerns** (authentication, HTTP/gRPC servers, service interfaces).
+  - `crates/api-shared` — Shared utilities and definitions for both APIs: Protobuf types, HealthService, authentication utilities.
+  - `crates/api-grpc` — gRPC-specific implementation: VprService, authentication interceptors, tonic integration.
+  - `crates/api-rest` — REST-specific implementation: HTTP endpoints, OpenAPI/Swagger, axum integration.
 - Main binary: `vpr-run` (defined in root `Cargo.toml`), runs both gRPC (port 50051) and REST (port 3000) servers concurrently using tokio::join.
 
 Important files to reference
 - `src/main.rs` — Main binary that starts both gRPC and REST servers, with OpenAPI/Swagger UI.
-- `crates/core/src/lib.rs` — Implements `VprService` with patient creation (sharded JSON storage) and listing (directory traversal).
+- `crates/core/src/lib.rs` — **PURE DATA OPERATIONS**: PatientService for file/folder operations (sharded JSON storage, directory traversal). **NO API CODE**.
+- `crates/api-grpc/src/service.rs` — gRPC service implementation (VprService) with authentication, using PatientService from core.
 - `crates/api-shared/vpr.proto` — Canonical protobuf definitions for VPR service.
+- `crates/api-shared/src/health.rs` — Shared HealthService used by both gRPC and REST APIs.
 - `Justfile` — Developer commands: `just start-dev` (Docker dev), `just docs` (mdBook site), `just pre-commit`.
 - `compose.dev.yml` — Development Docker setup with cargo-watch live reload and healthcheck (`grpcurl -plaintext localhost:50051 list && curl -f http://localhost:3000/health`).
 - `scripts/check-all.sh` — Quality checks: `cargo fmt --check`, `cargo clippy -D warnings`, `cargo check`, `cargo test`.
@@ -33,12 +35,17 @@ Build and test workflows (concrete)
 
 Conventions and patterns to follow
 - Protobufs: Canonical proto in `crates/api-shared/vpr.proto`; generated Rust in `api_shared::pb` via build script.
-- Service wiring: `crates/api-grpc` re-exports `VprService` from `core`; main.rs uses `api_grpc::VprService`.
+- Service wiring: `crates/api-grpc` implements `VprService` using `PatientService` from `core`; main.rs uses `api_grpc::VprService`.
 - Patient storage: Sharded under `PATIENT_DATA_DIR` (env var, defaults to `/patient_data`): `<s1>/<s2>/<32hex-uuid>/demographics.json` where s1/s2 are first 4 hex chars.
 - APIs: Dual gRPC/REST with identical functionality; REST uses axum, utoipa for OpenAPI.
 - Logging: `tracing` with `RUST_LOG` env var (e.g., `vpr=debug`).
 - Error handling: tonic `Status` for gRPC, axum `StatusCode` for REST; internal errors logged with `tracing::error!`.
 - File I/O: Direct `std::fs` operations with `serde_json` for patient data; no database layer yet.
+- **Architecture boundaries**: 
+  - `core`: ONLY file/folder/git operations (PatientService, data persistence)
+  - `api-shared`: Shared API utilities (HealthService, auth, protobuf types)
+  - `api-grpc`: gRPC-specific concerns (service implementation, interceptors)
+  - `api-rest`: REST-specific concerns (HTTP endpoints, JSON handling)
 
 Change policy and safety
 - Prefer minimal, well-scoped PRs updating single crates or modules.
@@ -46,6 +53,10 @@ Change policy and safety
 - When changing protos: Update `crates/api-shared/vpr.proto`, regenerate with `cargo build`.
 - Patient data paths: Hardcoded sharding logic in `core`; avoid changing without testing directory traversal in `list_patients`.
 - Environment config: Use env vars like `VPR_ADDR`, `PATIENT_DATA_DIR`; defaults in code.
+- **Architecture boundaries**: 
+  - Never add API concerns (auth, HTTP/gRPC) to `crates/core` - keep it pure data operations
+  - Shared API functionality goes in `crates/api-shared`, not individual API crates
+  - API-specific code stays in respective `api-grpc` or `api-rest` crates
 
 Examples (copyable snippets)
 - Start dev servers: `just start-dev b` (builds and runs Docker containers).

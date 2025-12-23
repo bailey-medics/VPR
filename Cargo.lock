@@ -48,7 +48,7 @@ dependencies = [
  "anyhow",
  "api-shared",
  "chrono",
- "core",
+ "dotenvy",
  "prost",
  "prost-types",
  "serde",
@@ -59,6 +59,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "vpr-core",
 ]
 
 [[package]]
@@ -68,7 +69,6 @@ dependencies = [
  "anyhow",
  "api-shared",
  "axum",
- "core",
  "serde",
  "serde_json",
  "tokio",
@@ -79,6 +79,7 @@ dependencies = [
  "tracing-subscriber",
  "utoipa",
  "utoipa-swagger-ui",
+ "vpr-core",
 ]
 
 [[package]]
@@ -299,19 +300,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "core"
-version = "0.1.0"
-dependencies = [
- "api-shared",
- "chrono",
- "serde",
- "serde_json",
- "tonic",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "core-foundation-sys"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -382,6 +370,12 @@ dependencies = [
  "quote",
  "syn 2.0.106",
 ]
+
+[[package]]
+name = "dotenvy"
+version = "0.15.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 
 [[package]]
 name = "either"
@@ -2232,12 +2226,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
+name = "vpr-core"
+version = "0.1.0"
+dependencies = [
+ "api-shared",
+ "chrono",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tonic",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "vpr-run"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "api-grpc",
+ "api-shared",
  "axum",
+ "chrono",
+ "dotenvy",
+ "http-body-util",
+ "hyper",
  "prost-build",
  "serde",
  "serde_json",
@@ -2250,6 +2263,8 @@ dependencies = [
  "tracing-subscriber",
  "utoipa",
  "utoipa-swagger-ui",
+ "uuid",
+ "vpr-core",
 ]
 
 [[package]]

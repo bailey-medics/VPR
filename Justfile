@@ -83,7 +83,11 @@ alias g := gui
 gui:
     #!/usr/bin/env bash
     {{initialise}} "gui"
-    grpcui -proto crates/api-shared/vpr.proto -plaintext localhost:50051
+    # Load API_KEY from .env file
+    if [ -f .env ]; then
+        export $(grep -v '^#' .env | xargs)
+    fi
+    grpcui -proto crates/api-shared/vpr.proto -plaintext -H "x-api-key: ${API_KEY}" localhost:50051
 
 
 alias pc := pre-commit

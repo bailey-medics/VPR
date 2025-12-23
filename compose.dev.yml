@@ -9,6 +9,8 @@ services:
     ports:
       - "50051:50051"
       - "3000:3000"
+    env_file:
+      - .env
     environment:
       - VPR_ADDR=0.0.0.0:50051
       - RUST_LOG=vpr=debug,info
@@ -30,7 +32,7 @@ services:
     # Ensure cargo runs the default binary (runs both gRPC and REST)
     command: ["/bin/sh", "-c", "cargo watch -x 'run'"]
     healthcheck:
-      test: ["CMD-SHELL", "grpcurl -plaintext localhost:50051 list && curl -f http://localhost:3000/health || exit 1"]
+      test: ["CMD-SHELL", "grpcurl -plaintext -H 'x-api-key: ${API_KEY}' localhost:50051 list && curl -f http://localhost:3000/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

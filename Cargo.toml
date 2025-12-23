@@ -16,7 +16,10 @@ default-run = "vpr-run"
 
 [dependencies]
 api-grpc = { path = "crates/api-grpc" }
+api-shared = { path = "crates/api-shared" }
+vpr-core = { path = "crates/core" }
 axum = "0.7"
+chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
@@ -26,8 +29,12 @@ tower-http = { version = "0.5", features = ["cors"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1"
+dotenvy = "0.15"
+hyper = "1.0"
+http-body-util = "0.1"
 utoipa = { version = "4", features = ["axum_extras"] }
 utoipa-swagger-ui = { version = "7", features = ["axum", "reqwest"] }
+uuid = { version = "1", features = ["v4"] }
 
 [build-dependencies]
 tonic-build = "0.12"
