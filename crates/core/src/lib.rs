@@ -30,6 +30,20 @@ pub enum PatientError {
     FileWrite(std::io::Error),
     #[error("failed to serialize patient: {0}")]
     Serialization(serde_json::Error),
+    #[error("failed to initialize git repository: {0}")]
+    GitInit(git2::Error),
+    #[error("failed to access git index: {0}")]
+    GitIndex(git2::Error),
+    #[error("failed to add file to git index: {0}")]
+    GitAdd(git2::Error),
+    #[error("failed to write git tree: {0}")]
+    GitWriteTree(git2::Error),
+    #[error("failed to find git tree: {0}")]
+    GitFindTree(git2::Error),
+    #[error("failed to create git signature: {0}")]
+    GitSignature(git2::Error),
+    #[error("failed to create initial git commit: {0}")]
+    GitCommit(git2::Error),
 }
 
 pub type PatientResult<T> = std::result::Result<T, PatientError>;
@@ -54,23 +68,28 @@ impl PatientService {
     /// 2. Generates a unique UUID for the patient
     /// 3. Creates a sharded directory structure under `PATIENT_DATA_DIR`
     /// 4. Stores patient demographics as JSON in `demographics.json`
+    /// 5. Initializes a Git repository and creates an initial commit
     ///
     /// # Arguments
     /// * `first_name` - The patient's first name (will be trimmed)
     /// * `last_name` - The patient's last name (will be trimmed)
+    /// * `author_name` - Name of the person creating the record (required)
+    /// * `author_email` - Email of the person creating the record (required)
     ///
     /// # Returns
     /// * `Ok(CreatePatientRes)` - Contains the filename and patient data on success
-    /// * `Err(PatientError)` - If validation fails or file operations error
+    /// * `Err(PatientError)` - If validation fails or file/git operations error
     ///
     /// # Storage Format
-    /// Patients are stored in a sharded directory structure:
-    /// `<PATIENT_DATA_DIR>/<s1>/<s2>/<32hex-uuid>/demographics.json`
+    /// Patients are stored in a sharded directory structure with Git versioning:
+    /// `<PATIENT_DATA_DIR>/<s1>/<s2>/<32hex-uuid>/.git/` and `demographics.json`
     /// where s1/s2 are the first 4 hex characters of the UUID.
     pub fn create_patient(
         &self,
         first_name: String,
         last_name: String,
+        author_name: String,
+        author_email: String,
     ) -> PatientResult<pb::CreatePatientRes> {
         let first = first_name.trim();
         let last = last_name.trim();
@@ -112,6 +131,30 @@ impl PatientService {
         let filename = patient_dir.join("demographics.json");
         let json = serde_json::to_string_pretty(&patient).map_err(PatientError::Serialization)?;
         fs::write(&filename, json).map_err(PatientError::FileWrite)?;
+
+        // Initialize Git repository for the patient
+        let repo = git2::Repository::init(&patient_dir).map_err(PatientError::GitInit)?;
+
+        // Create initial commit with demographics.json
+        let mut index = repo.index().map_err(PatientError::GitIndex)?;
+        index
+            .add_path(std::path::Path::new("demographics.json"))
+            .map_err(PatientError::GitAdd)?;
+
+        let tree_id = index.write_tree().map_err(PatientError::GitWriteTree)?;
+        let tree = repo.find_tree(tree_id).map_err(PatientError::GitFindTree)?;
+
+        let sig = git2::Signature::now(&author_name, &author_email)
+            .map_err(PatientError::GitSignature)?;
+        repo.commit(
+            Some("HEAD"),
+            &sig,
+            &sig,
+            "Initial patient record",
+            &tree,
+            &[],
+        )
+        .map_err(PatientError::GitCommit)?;
 
         let resp = pb::CreatePatientRes {
             filename: filename.display().to_string(),

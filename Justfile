@@ -75,7 +75,7 @@ alias eb := enter-backend
 enter-backend:
     #!/usr/bin/env bash
     {{initialise}} "enter-backend"
-    docker exec -it quill_backend /bin/sh
+    docker exec -it vpr-dev /bin/sh
 
 
 alias g := gui
@@ -140,7 +140,7 @@ _start-docker-daemon:
         open -a Docker
         
         # Wait for Docker daemon to start (with timeout)
-        echo "⏳ Waiting for Docker daemon to start..."
+        echo "Waiting for Docker daemon to start..."
         for i in {1..60}; do
             if docker info >/dev/null 2>&1; then
                 echo "Docker daemon is now running (took ${i} seconds)"

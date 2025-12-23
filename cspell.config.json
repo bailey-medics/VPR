@@ -6,7 +6,8 @@
     "Cargo.lock",
     "target/**",
     "Justfile",
-    "**/Justfile"
+    "**/Justfile",
+    "Dockerfile"
   ],
   "words": [
     "Adnane",

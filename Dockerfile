@@ -3,7 +3,7 @@ FROM rust:1.90.0-alpine3.22
 WORKDIR /app
 
 # Install system dependencies needed for cargo-watch compilation and protobuf
-RUN apk add --no-cache musl-dev gcc protobuf-dev
+RUN apk add --no-cache musl-dev gcc protobuf-dev openssl-dev openssl-libs-static zlib-static libssh2-static
 
 # Install cargo-watch for hot reloading
 RUN cargo install cargo-watch
@@ -30,10 +30,14 @@ RUN mkdir -p src && echo 'fn main() {}' > src/main.rs
 RUN cargo build --release -p api-grpc
 RUN rm -rf target/release/deps/api* target/release/api target/release/libapi*
 
+# Install the vpr CLI binary globally
+RUN cargo install --path crates/cli --bin vpr
+
 # Don't copy real source - it will be mounted as volume
 
 # Expose the gRPC port
 EXPOSE 50051
+EXPOSE 3000
 
 # Use cargo watch for development
 # Dependencies will be cached in the mounted target volume

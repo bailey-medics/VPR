@@ -173,7 +173,7 @@ async fn list_patients(
 /// under the configured patient data directory.
 ///
 /// # Parameters
-/// * `req` - Patient creation request containing first_name and last_name
+/// * `req` - Patient creation request containing first_name, last_name, author_name, and author_email
 ///
 /// # Returns
 /// * `Ok(Json<CreatePatientRes>)` - Created patient with generated UUID
@@ -182,10 +182,12 @@ async fn create_patient(
     State(state): State<AppState>,
     Json(req): Json<CreatePatientReq>,
 ) -> Result<Json<CreatePatientRes>, (StatusCode, &'static str)> {
-    match state
-        .patient_service
-        .create_patient(req.first_name, req.last_name)
-    {
+    match state.patient_service.create_patient(
+        req.first_name,
+        req.last_name,
+        req.author_name,
+        req.author_email,
+    ) {
         Ok(resp) => Ok(Json(resp)),
         Err(e) => {
             tracing::error!("Create patient error: {:?}", e);

@@ -3,7 +3,7 @@
 
 set -e
 
-echo "🔧 Formatting Rust code..."
+echo "Formatting Rust code..."
 cargo fmt --all
 
 echo "✅ Code formatting complete!"

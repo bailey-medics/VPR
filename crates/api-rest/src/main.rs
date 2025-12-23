@@ -142,7 +142,7 @@ async fn list_patients(
 /// This provides a REST interface to the patient creation functionality.
 ///
 /// # Parameters
-/// * `req` - Patient creation request containing first_name and last_name
+/// * `req` - Patient creation request containing first_name, last_name, author_name, and author_email
 ///
 /// # Returns
 /// * `Ok(Json<pb::CreatePatientRes>)` - Created patient with generated UUID
@@ -152,7 +152,12 @@ async fn create_patient(
     State(state): State<AppState>,
     Json(req): Json<pb::CreatePatientReq>,
 ) -> Result<Json<pb::CreatePatientRes>, (StatusCode, &'static str)> {
-    match state.service.create_patient(req.first_name, req.last_name) {
+    match state.service.create_patient(
+        req.first_name,
+        req.last_name,
+        req.author_name,
+        req.author_email,
+    ) {
         Ok(resp) => Ok(Json(resp)),
         Err(e) => {
             tracing::error!("Create patient error: {:?}", e);
