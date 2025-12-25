@@ -2,10 +2,9 @@
 // can continue to reference `api::service::pb`.
 pub use api_shared::pb;
 
-use api_shared::auth;
-use api_shared::HealthService;
+use api_shared::{auth, HealthService};
 use tonic::{Request, Response, Status};
-use vpr_core::PatientService;
+use vpr_core::{Author, PatientService};
 
 /// Authentication interceptor for gRPC requests
 ///
@@ -92,14 +91,33 @@ impl Vpr for VprService {
         auth::validate_api_key(api_key)?;
 
         let req = req.into_inner();
-        match self.patient_service.create_patient(
-            req.first_name,
-            req.last_name,
-            req.author_name,
-            req.author_email,
-        ) {
-            Ok(resp) => Ok(Response::new(resp)),
-            Err(e) => Err(Status::internal(format!("Failed to create patient: {}", e))),
+        let author = Author {
+            name: req.author_name,
+            email: req.author_email,
+            signature: if req.author_signature.is_empty() {
+                None
+            } else {
+                Some(req.author_signature)
+            },
+        };
+        match self.patient_service.initialise_clinical(author) {
+            Ok(uuid) => {
+                let resp = pb::CreatePatientRes {
+                    filename: "".to_string(), // No filename for initialise
+                    patient: Some(pb::Patient {
+                        id: uuid,
+                        first_name: "".to_string(),
+                        last_name: "".to_string(),
+                        created_at: "".to_string(), // Could set to now, but empty for now
+                        national_id: "".to_string(),
+                    }),
+                };
+                Ok(Response::new(resp))
+            }
+            Err(e) => Err(Status::internal(format!(
+                "Failed to initialise clinical: {}",
+                e
+            ))),
         }
     }
 

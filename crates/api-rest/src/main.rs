@@ -12,7 +12,7 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 use api_shared::pb;
-use vpr_core::PatientService;
+use vpr_core::{Author, PatientService};
 
 /// Application state for the REST API server
 ///
@@ -142,25 +142,41 @@ async fn list_patients(
 /// This provides a REST interface to the patient creation functionality.
 ///
 /// # Parameters
-/// * `req` - Patient creation request containing first_name, last_name, author_name, and author_email
+/// * `req` - Empty request for initialising clinical
 ///
 /// # Returns
-/// * `Ok(Json<pb::CreatePatientRes>)` - Created patient with generated UUID
-/// * `Err((StatusCode, &str))` - Internal server error if creation fails
+/// * `Ok(Json<pb::CreatePatientRes>)` - Initialised clinical with generated UUID
+/// * `Err((StatusCode, &str))` - Internal server error if initialisation fails
 #[axum::debug_handler]
 async fn create_patient(
     State(state): State<AppState>,
     Json(req): Json<pb::CreatePatientReq>,
 ) -> Result<Json<pb::CreatePatientRes>, (StatusCode, &'static str)> {
-    match state.service.create_patient(
-        req.first_name,
-        req.last_name,
-        req.author_name,
-        req.author_email,
-    ) {
-        Ok(resp) => Ok(Json(resp)),
+    let author = Author {
+        name: req.author_name,
+        email: req.author_email,
+        signature: if req.author_signature.is_empty() {
+            None
+        } else {
+            Some(req.author_signature)
+        },
+    };
+    match state.service.initialise_clinical(author) {
+        Ok(uuid) => {
+            let resp = pb::CreatePatientRes {
+                filename: "".to_string(),
+                patient: Some(pb::Patient {
+                    id: uuid,
+                    first_name: "".to_string(),
+                    last_name: "".to_string(),
+                    created_at: "".to_string(),
+                    national_id: "".to_string(),
+                }),
+            };
+            Ok(Json(resp))
+        }
         Err(e) => {
-            tracing::error!("Create patient error: {:?}", e);
+            tracing::error!("Initialise clinical error: {:?}", e);
             Err((StatusCode::INTERNAL_SERVER_ERROR, "Internal error"))
         }
     }

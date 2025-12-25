@@ -10,6 +10,8 @@ message CreatePatientReq {
   string last_name = 2;
   string author_name = 3;
   string author_email = 4;
+  string author_signature = 6;
+  string national_id = 5;
 }
 
 message Patient {
@@ -17,6 +19,7 @@ message Patient {
   string first_name = 2;
   string last_name = 3;
   string created_at = 4; // RFC3339
+  string national_id = 5;
 }
 
 message CreatePatientRes {

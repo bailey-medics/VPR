@@ -1,5 +1,7 @@
 # Technical
 
+See [Design Decisions](design-decisions.md) for more information on architecture and design choices.
+
 ## Containers
 
 Docker
