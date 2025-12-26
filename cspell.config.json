@@ -20,6 +20,7 @@
     "cfgs",
     "Choo",
     "chrono",
+    "cleanup",
     "clippy",
     "color",
     "compile_protos",

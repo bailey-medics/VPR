@@ -12,9 +12,7 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 use api_shared::pb;
-use vpr_core::{
-    clinical::ClinicalService, demographics::DemographicsService, Author, PatientService,
-};
+use vpr_core::{clinical::ClinicalService, demographics::DemographicsService, Author};
 
 /// Application state for the REST API server
 ///
@@ -22,7 +20,6 @@ use vpr_core::{
 /// including the PatientService instance for data operations.
 #[derive(Clone)]
 struct AppState {
-    service: Arc<PatientService>,
     demographics_service: Arc<DemographicsService>,
 }
 
@@ -64,7 +61,6 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("-- Starting VPR REST API on {}", addr);
 
     let state = AppState {
-        service: Arc::new(PatientService::new()),
         demographics_service: Arc::new(DemographicsService),
     };
 
@@ -153,7 +149,7 @@ async fn list_patients(
 /// * `Err((StatusCode, &str))` - Internal server error if initialisation fails
 #[axum::debug_handler]
 async fn create_patient(
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
     Json(req): Json<pb::CreatePatientReq>,
 ) -> Result<Json<pb::CreatePatientRes>, (StatusCode, &'static str)> {
     let author = Author {

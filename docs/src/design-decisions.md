@@ -9,3 +9,9 @@ Ref: [https://specifications.openehr.org/releases/1.0.1/html/architecture/overvi
 FHIR for demographics
 
 openEHR for clinical data
+
+## Testing
+
+When testing VPR’s file creation and repository logic, it is best to use real temporary directories rather than mocked filesystems. Because file creation and structure are central to VPR’s design, tests should verify that directories, Git repositories, and configuration files are created exactly as they will be in production. Using crates such as tempfile or assert_fs allows tests to write into isolated, automatically cleaned-up folders, ensuring realism without cluttering the developer’s system. This approach validates not only path logic but also permissions, file naming, and serialisation behaviour—details that mocks often overlook. In short, VPR’s tests should interact with the filesystem genuinely but safely, using temporary sandboxes to confirm that the system builds and cleans up its data as intended.
+
+VPR uses the tempfile crate for testing file creation and repository logic. The crate provides automatically managed temporary files and directories that are securely created in the system’s temp folder and deleted when the test ends. Because VPR’s core functionality involves creating and managing filesystem structures, these tests must interact with real files rather than mocks. Using tempfile::TempDir allows us to test against the actual operating system, validating path resolution, permissions, serialisation, and cleanup behaviour without leaving residual data on the developer’s machine. This ensures our tests remain both realistic and self-contained, accurately reflecting production behaviour while maintaining a clean and reproducible testing environment.
