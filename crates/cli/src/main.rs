@@ -6,12 +6,8 @@
 
 use clap::{Parser, Subcommand};
 use vpr_core::{
-    clinical::initialise_clinical, clinical::link_to_demographics,
-    demographics::initialise_demographics, demographics::update_demographics,
-    shared::initialise_full_record, Author, PatientService,
+    clinical::ClinicalService, demographics::DemographicsService, Author, PatientService,
 };
-
-/// Command line interface for the VPR patient record system.
 ///
 /// This struct defines the CLI structure using clap for parsing command line arguments.
 #[derive(Parser)]
@@ -28,8 +24,6 @@ struct Cli {
 /// on patient records, from initialization to updates and queries.
 #[derive(Subcommand)]
 enum Commands {
-    /// Say hi
-    Hi,
     /// List all patients
     List,
     /// Initialise demographics
@@ -107,11 +101,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Commands::Hi) => {
-            println!("hi");
-        }
         Some(Commands::List) => {
-            let service = PatientService::new();
+            let service = DemographicsService;
             let patients = service.list_patients();
             if patients.is_empty() {
                 println!("No patients found.");
@@ -134,7 +125,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 email,
                 signature,
             };
-            match initialise_demographics(author) {
+            let demographics_service = DemographicsService;
+            match demographics_service.initialise(author) {
                 Ok(uuid) => println!("Initialised demographics with UUID: {}", uuid),
                 Err(e) => eprintln!("Error initialising demographics: {}", e),
             }
@@ -149,7 +141,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 email,
                 signature,
             };
-            match initialise_clinical(author) {
+            let clinical_service = ClinicalService;
+            match clinical_service.initialise(author) {
                 Ok(uuid) => println!("Initialised clinical with UUID: {}", uuid),
                 Err(e) => eprintln!("Error initialising clinical: {}", e),
             }
@@ -158,10 +151,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             clinical_uuid,
             demographics_uuid,
             namespace,
-        }) => match link_to_demographics(&clinical_uuid, &demographics_uuid, namespace) {
-            Ok(()) => println!("Wrote EHR status for clinical UUID: {}", clinical_uuid),
-            Err(e) => eprintln!("Error writing EHR status: {}", e),
-        },
+        }) => {
+            let clinical_service = ClinicalService;
+            match clinical_service.link_to_demographics(
+                &clinical_uuid,
+                &demographics_uuid,
+                namespace,
+            ) {
+                Ok(()) => println!("Wrote EHR status for clinical UUID: {}", clinical_uuid),
+                Err(e) => eprintln!("Error writing EHR status: {}", e),
+            }
+        }
         Some(Commands::UpdateDemographics {
             demographics_uuid,
             given_names,
@@ -172,8 +172,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .split(',')
                 .map(|s| s.trim().to_string())
                 .collect();
-            match update_demographics(&demographics_uuid, given_names_vec, &last_name, &birth_date)
-            {
+            let demographics_service = DemographicsService;
+            match demographics_service.update(
+                &demographics_uuid,
+                given_names_vec,
+                &last_name,
+                &birth_date,
+            ) {
                 Ok(()) => println!("Updated demographics for UUID: {}", demographics_uuid),
                 Err(e) => eprintln!("Error updating demographics: {}", e),
             }
@@ -196,8 +201,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .split(',')
                 .map(|s| s.trim().to_string())
                 .collect();
-            match initialise_full_record(author, given_names_vec, last_name, birth_date, namespace)
-            {
+            let service = PatientService::new();
+            match service.initialise_full_record(
+                author,
+                given_names_vec,
+                last_name,
+                birth_date,
+                namespace,
+            ) {
                 Ok(record) => println!(
                     "Initialised full record - Demographics UUID: {}, Clinical UUID: {}",
                     record.demographics_uuid, record.clinical_uuid

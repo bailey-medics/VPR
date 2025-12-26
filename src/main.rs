@@ -16,7 +16,7 @@ use api_grpc::{VprService, auth_interceptor};
 use api_shared::HealthService;
 use api_shared::pb;
 use api_shared::pb::vpr_server::VprServer;
-use vpr_core::{Author, PatientService};
+use vpr_core::{Author, clinical::ClinicalService, demographics::DemographicsService};
 
 type HealthRes = pb::HealthRes;
 type ListPatientsRes = pb::ListPatientsRes;
@@ -30,7 +30,7 @@ type Patient = pb::Patient;
 /// Currently holds a PatientService instance for data operations.
 #[derive(Clone)]
 struct AppState {
-    patient_service: PatientService,
+    demographics_service: DemographicsService,
 }
 
 #[derive(OpenApi)]
@@ -81,8 +81,6 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("++ Starting VPR gRPC on {}", grpc_addr);
     tracing::info!("++ Starting VPR REST on {}", rest_addr);
 
-    let patient_service = PatientService::new();
-
     // Start REST server
     let rest_app = Router::new()
         .route("/health", get(health))
@@ -91,7 +89,7 @@ async fn main() -> anyhow::Result<()> {
         .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .layer(CorsLayer::permissive())
         .with_state(AppState {
-            patient_service: patient_service.clone(),
+            demographics_service: DemographicsService,
         });
 
     let rest_server = tokio::spawn(async move {
@@ -152,7 +150,7 @@ async fn health(State(_state): State<AppState>) -> Json<HealthRes> {
 async fn list_patients(
     State(state): State<AppState>,
 ) -> Result<Json<ListPatientsRes>, (StatusCode, &'static str)> {
-    let patients = state.patient_service.list_patients();
+    let patients = state.demographics_service.list_patients();
     Ok(Json(ListPatientsRes { patients }))
 }
 
@@ -179,7 +177,7 @@ async fn list_patients(
 /// * `Ok(Json<CreatePatientRes>)` - Initialised clinical with generated UUID
 /// * `Err((StatusCode, &str))` - Internal server error
 async fn create_patient(
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
     Json(req): Json<CreatePatientReq>,
 ) -> Result<Json<CreatePatientRes>, (StatusCode, &'static str)> {
     let author = Author {
@@ -191,7 +189,8 @@ async fn create_patient(
             Some(req.author_signature)
         },
     };
-    match state.patient_service.initialise_clinical(author) {
+    let clinical_service = ClinicalService;
+    match clinical_service.initialise(author) {
         Ok(uuid) => {
             let resp = CreatePatientRes {
                 filename: "".to_string(),

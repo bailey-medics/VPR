@@ -12,7 +12,9 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 use api_shared::pb;
-use vpr_core::{Author, PatientService};
+use vpr_core::{
+    clinical::ClinicalService, demographics::DemographicsService, Author, PatientService,
+};
 
 /// Application state for the REST API server
 ///
@@ -21,6 +23,7 @@ use vpr_core::{Author, PatientService};
 #[derive(Clone)]
 struct AppState {
     service: Arc<PatientService>,
+    demographics_service: Arc<DemographicsService>,
 }
 
 #[derive(OpenApi)]
@@ -62,6 +65,7 @@ async fn main() -> anyhow::Result<()> {
 
     let state = AppState {
         service: Arc::new(PatientService::new()),
+        demographics_service: Arc::new(DemographicsService),
     };
 
     let app = Router::new()
@@ -122,7 +126,7 @@ async fn health(State(_state): State<AppState>) -> Json<pb::HealthRes> {
 async fn list_patients(
     State(state): State<AppState>,
 ) -> Result<Json<pb::ListPatientsRes>, (StatusCode, &'static str)> {
-    let patients = state.service.list_patients();
+    let patients = state.demographics_service.list_patients();
     Ok(Json(pb::ListPatientsRes { patients }))
 }
 
@@ -161,7 +165,8 @@ async fn create_patient(
             Some(req.author_signature)
         },
     };
-    match state.service.initialise_clinical(author) {
+    let clinical_service = ClinicalService;
+    match clinical_service.initialise(author) {
         Ok(uuid) => {
             let resp = pb::CreatePatientRes {
                 filename: "".to_string(),

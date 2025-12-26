@@ -4,7 +4,7 @@ pub use api_shared::pb;
 
 use api_shared::{auth, HealthService};
 use tonic::{Request, Response, Status};
-use vpr_core::{Author, PatientService};
+use vpr_core::{clinical::ClinicalService, demographics::DemographicsService, Author};
 
 /// Authentication interceptor for gRPC requests
 ///
@@ -42,7 +42,7 @@ use api_shared::pb::{vpr_server::Vpr, CreatePatientReq, CreatePatientRes, Health
 /// authentication.
 #[derive(Default, Clone)]
 pub struct VprService {
-    patient_service: PatientService,
+    demographics_service: DemographicsService,
 }
 
 #[tonic::async_trait]
@@ -100,7 +100,8 @@ impl Vpr for VprService {
                 Some(req.author_signature)
             },
         };
-        match self.patient_service.initialise_clinical(author) {
+        let clinical_service = ClinicalService;
+        match clinical_service.initialise(author) {
             Ok(uuid) => {
                 let resp = pb::CreatePatientRes {
                     filename: "".to_string(), // No filename for initialise
@@ -144,7 +145,7 @@ impl Vpr for VprService {
             .ok_or_else(|| Status::unauthenticated("Missing x-api-key header"))?;
         auth::validate_api_key(api_key)?;
 
-        let patients = self.patient_service.list_patients();
+        let patients = self.demographics_service.list_patients();
         Ok(Response::new(pb::ListPatientsRes { patients }))
     }
 }
