@@ -1,3 +1,10 @@
+//! Patient clinical records management.
+//!
+//! This module handles the initialization and management of clinical records
+//! for patients. It includes creating clinical entries with timestamps,
+//! initializing Git repositories for version control, and writing EHR status
+//! information in YAML format.
+
 use crate::Author;
 use chrono::Utc;
 use git2;
@@ -9,12 +16,16 @@ use uuid::Uuid;
 
 use crate::{PatientError, PatientResult};
 
+/// Represents a clinical record for a patient.
+/// Contains metadata such as creation timestamp and placeholders for clinical data.
 #[derive(Serialize, Deserialize)]
 struct Clinical {
     created_at: String,
     // Add other clinical fields as needed, e.g., notes, etc.
 }
 
+/// Represents the EHR status information in openEHR format.
+/// This struct models the EHR status archetype for patient records.
 #[derive(Serialize, Deserialize)]
 struct EhrStatus {
     archetype_node_id: String,
@@ -24,16 +35,19 @@ struct EhrStatus {
     subject: Subject,
 }
 
+/// Represents a name value in the EHR status.
 #[derive(Serialize, Deserialize)]
 struct Name {
     value: String,
 }
 
+/// Represents the subject of the EHR status, linking to the patient.
 #[derive(Serialize, Deserialize)]
 struct Subject {
     external_ref: ExternalRef,
 }
 
+/// Represents an external reference to the patient in the EHR system.
 #[derive(Serialize, Deserialize)]
 struct ExternalRef {
     namespace: String,
@@ -42,6 +56,24 @@ struct ExternalRef {
     id: String,
 }
 
+/// Initializes a new clinical record for a patient.
+///
+/// This function creates a new clinical entry with a unique UUID, stores it
+/// in a JSON file within a sharded directory structure, and initializes a
+/// Git repository for version control.
+///
+/// # Arguments
+///
+/// * `author` - The author information for the initial Git commit.
+///
+/// # Returns
+///
+/// Returns the UUID of the newly created clinical record as a string.
+///
+/// # Errors
+///
+/// Returns a `PatientError` if any step in the initialization fails, such as
+/// directory creation, file writing, or Git operations.
 pub fn initialise_clinical(author: Author) -> PatientResult<String> {
     // Determine storage directory from environment
     let base = std::env::var("PATIENT_DATA_DIR").unwrap_or_else(|_| "/patient_data".into());
@@ -99,7 +131,26 @@ pub fn initialise_clinical(author: Author) -> PatientResult<String> {
     Ok(id)
 }
 
-pub fn write_ehr_status(
+/// Links the clinical record to the patient's demographics.
+///
+/// This function creates an EHR status YAML file linking the clinical record
+/// to the patient's demographics via external references.
+///
+/// # Arguments
+///
+/// * `clinical_uuid` - The UUID of the clinical record.
+/// * `demographics_uuid` - The UUID of the associated patient demographics.
+/// * `namespace` - Optional namespace for the external reference; defaults to
+///   the VPR_NAMESPACE environment variable or "vpr.dev.1".
+///
+/// # Returns
+///
+/// Returns `Ok(())` on success.
+///
+/// # Errors
+///
+/// Returns a `PatientError` if serialization or file writing fails.
+pub fn link_to_demographics(
     clinical_uuid: &str,
     demographics_uuid: &str,
     namespace: Option<String>,

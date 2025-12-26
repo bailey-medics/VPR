@@ -66,6 +66,11 @@ pub struct PatientService;
 
 pub mod clinical;
 
+pub mod shared;
+
+// Re-export commonly used types
+pub use shared::FullRecord;
+
 impl PatientService {
     /// Creates a new instance of PatientService.
     ///

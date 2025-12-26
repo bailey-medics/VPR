@@ -1,3 +1,11 @@
+//! Patient demographics management.
+//!
+//! This module provides functionality for initializing and updating patient
+//! demographic information. It handles the creation of new patient records
+//! with unique identifiers, storage in a sharded directory structure, and
+//! version control using Git. Demographic updates include name and birth date
+//! modifications.
+
 use crate::Author;
 use git2;
 use serde::{Deserialize, Serialize};
@@ -7,6 +15,8 @@ use uuid::Uuid;
 
 use crate::{PatientError, PatientResult};
 
+/// Represents a patient record in FHIR-like format.
+/// This struct contains basic demographic information for a patient.
 #[derive(Serialize, Deserialize)]
 struct Patient {
     resource_type: String,
@@ -15,6 +25,8 @@ struct Patient {
     birth_date: String,
 }
 
+/// Represents a name component of a patient.
+/// Contains the use type, family name, and given names.
 #[derive(Serialize, Deserialize)]
 struct Name {
     #[serde(rename = "use")]
@@ -23,6 +35,24 @@ struct Name {
     given: Vec<String>,
 }
 
+/// Initializes a new patient demographics record.
+///
+/// This function creates a new patient with a unique UUID, stores the initial
+/// demographics in a JSON file within a sharded directory structure, and
+/// initializes a Git repository for version control.
+///
+/// # Arguments
+///
+/// * `author` - The author information for the initial Git commit.
+///
+/// # Returns
+///
+/// Returns the UUID of the newly created patient as a string.
+///
+/// # Errors
+///
+/// Returns a `PatientError` if any step in the initialization fails, such as
+/// directory creation, file writing, or Git operations.
 pub fn initialise_demographics(author: Author) -> PatientResult<String> {
     // Determine storage directory from environment
     let base = std::env::var("PATIENT_DATA_DIR").unwrap_or_else(|_| "/patient_data".into());
@@ -83,6 +113,26 @@ pub fn initialise_demographics(author: Author) -> PatientResult<String> {
     Ok(id)
 }
 
+/// Updates the demographics of an existing patient.
+///
+/// This function reads the existing patient JSON file, updates the name and
+/// birth date fields, and writes the changes back to the file.
+///
+/// # Arguments
+///
+/// * `demographics_uuid` - The UUID of the patient to update.
+/// * `given_names` - A vector of given names for the patient.
+/// * `last_name` - The family/last name of the patient.
+/// * `birth_date` - The birth date of the patient as a string.
+///
+/// # Returns
+///
+/// Returns `Ok(())` on success.
+///
+/// # Errors
+///
+/// Returns a `PatientError` if reading, deserializing, serializing, or writing
+/// the file fails.
 pub fn update_demographics(
     demographics_uuid: &str,
     given_names: Vec<String>,
