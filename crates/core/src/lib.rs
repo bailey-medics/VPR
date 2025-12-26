@@ -34,8 +34,14 @@ pub enum PatientError {
     PatientDirCreation(std::io::Error),
     #[error("failed to write patient file: {0}")]
     FileWrite(std::io::Error),
+    #[error("failed to read patient file: {0}")]
+    FileRead(std::io::Error),
     #[error("failed to serialize patient: {0}")]
     Serialization(serde_json::Error),
+    #[error("failed to deserialize patient: {0}")]
+    Deserialization(serde_json::Error),
+    #[error("failed to serialize YAML: {0}")]
+    YamlSerialization(serde_yaml::Error),
     #[error("failed to initialize git repository: {0}")]
     GitInit(git2::Error),
     #[error("failed to access git index: {0}")]

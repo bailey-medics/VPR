@@ -1,6 +1,8 @@
 use clap::{Parser, Subcommand};
 use vpr_core::{
-    clinical::initialise_clinical, demographics::initialise_demographics, Author, PatientService,
+    clinical::initialise_clinical, clinical::write_ehr_status,
+    demographics::initialise_demographics, demographics::update_demographics, Author,
+    PatientService,
 };
 
 #[derive(Parser)]
@@ -20,10 +22,8 @@ enum Commands {
     /// Initialise demographics
     InitialiseDemographics {
         /// Author name for Git commit
-        #[arg(long)]
         name: String,
         /// Author email for Git commit
-        #[arg(long)]
         email: String,
         /// Author signature (optional)
         #[arg(long)]
@@ -32,14 +32,33 @@ enum Commands {
     /// Initialise clinical
     InitialiseClinical {
         /// Author name for Git commit
-        #[arg(long)]
         name: String,
         /// Author email for Git commit
-        #[arg(long)]
         email: String,
         /// Author signature (optional)
         #[arg(long)]
         signature: Option<String>,
+    },
+    /// Write EHR status
+    WriteEhrStatus {
+        /// Clinical repository UUID
+        clinical_uuid: String,
+        /// Demographics UUID
+        demographics_uuid: String,
+        /// Organisation domain (optional)
+        #[arg(long)]
+        namespace: Option<String>,
+    },
+    /// Update demographics
+    UpdateDemographics {
+        /// Demographics UUID
+        demographics_uuid: String,
+        /// Given names (comma-separated)
+        given_names: String,
+        /// Last name
+        last_name: String,
+        /// Date of birth (YYYY-MM-DD)
+        birth_date: String,
     },
 }
 
@@ -92,6 +111,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             match initialise_clinical(author) {
                 Ok(uuid) => println!("Initialised clinical with UUID: {}", uuid),
                 Err(e) => eprintln!("Error initialising clinical: {}", e),
+            }
+        }
+        Some(Commands::WriteEhrStatus {
+            clinical_uuid,
+            demographics_uuid,
+            namespace,
+        }) => match write_ehr_status(&clinical_uuid, &demographics_uuid, namespace) {
+            Ok(()) => println!("Wrote EHR status for clinical UUID: {}", clinical_uuid),
+            Err(e) => eprintln!("Error writing EHR status: {}", e),
+        },
+        Some(Commands::UpdateDemographics {
+            demographics_uuid,
+            given_names,
+            last_name,
+            birth_date,
+        }) => {
+            let given_names_vec: Vec<String> = given_names
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .collect();
+            match update_demographics(&demographics_uuid, given_names_vec, &last_name, &birth_date)
+            {
+                Ok(()) => println!("Updated demographics for UUID: {}", demographics_uuid),
+                Err(e) => eprintln!("Error updating demographics: {}", e),
             }
         }
         None => {
