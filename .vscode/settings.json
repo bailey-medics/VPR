@@ -30,5 +30,7 @@
   // Terminal settings
   "terminal.integrated.env.osx": {
     "PATH": "${env:HOME}/.cargo/bin:${env:PATH}"
-  }
+  },
+
+  "git.autoRepositoryDetection": false
 }
