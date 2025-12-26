@@ -1,10 +1,19 @@
+//! VPR Command Line Interface
+//!
+//! This module provides a CLI for interacting with the VPR patient record system.
+//! It allows users to initialize patient demographics and clinical records,
+//! update demographics, link clinical records to demographics, and list patients.
+
 use clap::{Parser, Subcommand};
 use vpr_core::{
-    clinical::initialise_clinical, clinical::write_ehr_status,
-    demographics::initialise_demographics, demographics::update_demographics, Author,
-    PatientService,
+    clinical::initialise_clinical, clinical::link_to_demographics,
+    demographics::initialise_demographics, demographics::update_demographics,
+    shared::initialise_full_record, Author, PatientService,
 };
 
+/// Command line interface for the VPR patient record system.
+///
+/// This struct defines the CLI structure using clap for parsing command line arguments.
 #[derive(Parser)]
 #[command(name = "vpr")]
 #[command(about = "VPR patient record system CLI")]
@@ -13,6 +22,10 @@ struct Cli {
     command: Option<Commands>,
 }
 
+/// Available CLI commands for the VPR system.
+///
+/// Each variant represents a different operation that can be performed
+/// on patient records, from initialization to updates and queries.
 #[derive(Subcommand)]
 enum Commands {
     /// Say hi
@@ -60,8 +73,36 @@ enum Commands {
         /// Date of birth (YYYY-MM-DD)
         birth_date: String,
     },
+    /// Initialise full record (demographics + clinical)
+    InitialiseFullRecord {
+        /// Author name for Git commit
+        name: String,
+        /// Author email for Git commit
+        email: String,
+        /// Author signature (optional)
+        #[arg(long)]
+        signature: Option<String>,
+        /// Given names (comma-separated)
+        given_names: String,
+        /// Last name
+        last_name: String,
+        /// Date of birth (YYYY-MM-DD)
+        birth_date: String,
+        /// Organisation domain (optional)
+        #[arg(long)]
+        namespace: Option<String>,
+    },
 }
 
+/// Main entry point for the VPR CLI.
+///
+/// Parses command line arguments and executes the appropriate command.
+/// Handles initialization of demographics and clinical records, updates,
+/// linking operations, and patient listing.
+///
+/// # Returns
+///
+/// Returns `Ok(())` on successful execution, or an error if something fails.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
@@ -117,7 +158,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             clinical_uuid,
             demographics_uuid,
             namespace,
-        }) => match write_ehr_status(&clinical_uuid, &demographics_uuid, namespace) {
+        }) => match link_to_demographics(&clinical_uuid, &demographics_uuid, namespace) {
             Ok(()) => println!("Wrote EHR status for clinical UUID: {}", clinical_uuid),
             Err(e) => eprintln!("Error writing EHR status: {}", e),
         },
@@ -135,6 +176,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             {
                 Ok(()) => println!("Updated demographics for UUID: {}", demographics_uuid),
                 Err(e) => eprintln!("Error updating demographics: {}", e),
+            }
+        }
+        Some(Commands::InitialiseFullRecord {
+            name,
+            email,
+            signature,
+            given_names,
+            last_name,
+            birth_date,
+            namespace,
+        }) => {
+            let author = Author {
+                name,
+                email,
+                signature,
+            };
+            let given_names_vec: Vec<String> = given_names
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .collect();
+            match initialise_full_record(author, given_names_vec, last_name, birth_date, namespace)
+            {
+                Ok(record) => println!(
+                    "Initialised full record - Demographics UUID: {}, Clinical UUID: {}",
+                    record.demographics_uuid, record.clinical_uuid
+                ),
+                Err(e) => eprintln!("Error initialising full record: {}", e),
             }
         }
         None => {
