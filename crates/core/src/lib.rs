@@ -14,9 +14,6 @@ pub mod demographics;
 // Use the shared api-shared crate for generated protobuf types.
 pub use api_shared::pb;
 
-use std::fs;
-use std::path::Path;
-
 #[derive(Clone, Debug)]
 pub struct Author {
     pub name: String,
@@ -60,16 +57,20 @@ pub enum PatientError {
 
 pub type PatientResult<T> = std::result::Result<T, PatientError>;
 
+/// Represents a complete patient record with both demographics and clinical components.
+#[derive(Debug)]
+pub struct FullRecord {
+    /// The UUID of the demographics record.
+    pub demographics_uuid: String,
+    /// The UUID of the clinical record.
+    pub clinical_uuid: String,
+}
+
 /// Pure patient data operations - no API concerns
 #[derive(Default, Clone)]
 pub struct PatientService;
 
 pub mod clinical;
-
-pub mod shared;
-
-// Re-export commonly used types
-pub use shared::FullRecord;
 
 impl PatientService {
     /// Creates a new instance of PatientService.
@@ -80,97 +81,51 @@ impl PatientService {
         Self
     }
 
-    pub fn initialise_clinical(&self, author: Author) -> PatientResult<String> {
-        clinical::initialise_clinical(author)
-    }
-
-    /// Lists all patient records from the file system.
+    /// Initializes a complete patient record with demographics and clinical components.
     ///
-    /// This method traverses the sharded directory structure under `PATIENT_DATA_DIR`
-    /// and reads all `demographics.json` files to reconstruct patient records.
+    /// This function creates both a demographics repository and a clinical repository,
+    /// links them together, and populates the demographics with the provided patient information.
+    ///
+    /// # Arguments
+    ///
+    /// * `author` - The author information for Git commits.
+    /// * `given_names` - A vector of the patient's given names.
+    /// * `last_name` - The patient's family/last name.
+    /// * `birth_date` - The patient's date of birth as a string (e.g., "YYYY-MM-DD").
+    /// * `namespace` - Optional namespace for the clinical-demographics link.
     ///
     /// # Returns
-    /// A `Vec<pb::Patient>` containing all found patient records. If any individual
-    /// patient file cannot be parsed, it will be logged as a warning and skipped.
     ///
-    /// # Directory Structure
-    /// Expects patients stored in: `<PATIENT_DATA_DIR>/<s1>/<s2>/<32hex-uuid>/demographics.json`
-    /// where s1/s2 are the first 4 hex characters of the UUID.
-    pub fn list_patients(&self) -> Vec<pb::Patient> {
-        let base = std::env::var("PATIENT_DATA_DIR").unwrap_or_else(|_| "/patient_data".into());
-        let data_dir = Path::new(&base);
+    /// Returns a `FullRecord` containing both UUIDs on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `PatientError` if any step in the initialization fails.
+    pub fn initialise_full_record(
+        &self,
+        author: Author,
+        given_names: Vec<String>,
+        last_name: String,
+        birth_date: String,
+        namespace: Option<String>,
+    ) -> PatientResult<FullRecord> {
+        let demographics_service = crate::demographics::DemographicsService;
+        // Initialize demographics
+        let demographics_uuid = demographics_service.initialise(author.clone())?;
 
-        let mut patients = Vec::new();
+        // Update demographics with patient information
+        demographics_service.update(&demographics_uuid, given_names, &last_name, &birth_date)?;
 
-        let s1_iter = match fs::read_dir(data_dir) {
-            Ok(it) => it,
-            Err(_) => return patients,
-        };
-        for s1 in s1_iter.flatten() {
-            let s1_path = s1.path();
-            if !s1_path.is_dir() {
-                continue;
-            }
+        // Initialize clinical
+        let clinical_service = crate::clinical::ClinicalService;
+        let clinical_uuid = clinical_service.initialise(author)?;
 
-            let s2_iter = match fs::read_dir(&s1_path) {
-                Ok(it) => it,
-                Err(_) => continue,
-            };
+        // Link clinical to demographics
+        clinical_service.link_to_demographics(&clinical_uuid, &demographics_uuid, namespace)?;
 
-            for s2 in s2_iter.flatten() {
-                let s2_path = s2.path();
-                if !s2_path.is_dir() {
-                    continue;
-                }
-
-                let id_iter = match fs::read_dir(&s2_path) {
-                    Ok(it) => it,
-                    Err(_) => continue,
-                };
-
-                for id_ent in id_iter.flatten() {
-                    let id_path = id_ent.path();
-                    if !id_path.is_dir() {
-                        continue;
-                    }
-
-                    let demo_path = id_path.join("demographics.json");
-                    if !demo_path.is_file() {
-                        continue;
-                    }
-
-                    if let Ok(contents) = fs::read_to_string(&demo_path) {
-                        #[derive(serde::Deserialize)]
-                        struct StoredPatient {
-                            first_name: String,
-                            last_name: String,
-                            created_at: String,
-                            #[serde(default)]
-                            national_id: Option<String>,
-                        }
-
-                        if let Ok(sp) = serde_json::from_str::<StoredPatient>(&contents) {
-                            let id = id_path
-                                .file_name()
-                                .and_then(|os| os.to_str())
-                                .unwrap_or("")
-                                .to_string();
-
-                            patients.push(pb::Patient {
-                                id,
-                                first_name: sp.first_name,
-                                last_name: sp.last_name,
-                                created_at: sp.created_at,
-                                national_id: sp.national_id.unwrap_or_default(),
-                            });
-                        } else {
-                            tracing::warn!("failed to parse demographics: {}", demo_path.display());
-                        }
-                    }
-                }
-            }
-        }
-
-        patients
+        Ok(FullRecord {
+            demographics_uuid,
+            clinical_uuid,
+        })
     }
 }
