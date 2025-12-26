@@ -197,3 +197,70 @@ impl ClinicalService {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::env;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_initialise_creates_clinical_record() {
+        // Create a temporary directory for testing
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let temp_path = temp_dir.path().to_str().unwrap();
+
+        // Set PATIENT_DATA_DIR to the temp directory
+        env::set_var("PATIENT_DATA_DIR", temp_path);
+
+        // Create a test author
+        let author = Author {
+            name: "Test Author".to_string(),
+            email: "test@example.com".to_string(),
+            signature: None,
+        };
+
+        // Initialize clinical service
+        let service = ClinicalService;
+
+        // Call initialise
+        let result = service.initialise(author);
+        assert!(result.is_ok(), "initialise should succeed");
+
+        let clinical_uuid = result.unwrap();
+        assert_eq!(clinical_uuid.len(), 32, "UUID should be 32 characters");
+
+        // Verify directory structure exists
+        let clinical_dir = temp_dir.path().join("clinical");
+        assert!(clinical_dir.exists(), "clinical directory should exist");
+
+        // Extract sharding directories from UUID
+        let id_lower = clinical_uuid.to_lowercase();
+        let s1 = &id_lower[0..2];
+        let s2 = &id_lower[2..4];
+        let patient_dir = clinical_dir.join(s1).join(s2).join(&id_lower);
+        assert!(patient_dir.exists(), "patient directory should exist");
+
+        // Verify clinical.json exists and has correct content
+        let clinical_file = patient_dir.join("clinical.json");
+        assert!(clinical_file.exists(), "clinical.json should exist");
+
+        let content = fs::read_to_string(&clinical_file).expect("Failed to read clinical.json");
+        let clinical: Clinical =
+            serde_json::from_str(&content).expect("Failed to parse clinical.json");
+
+        assert!(
+            !clinical.created_at.is_empty(),
+            "created_at should not be empty"
+        );
+
+        // Verify Git repository exists and has initial commit
+        let repo = git2::Repository::open(&patient_dir).expect("Failed to open Git repo");
+        let head = repo.head().expect("Failed to get HEAD");
+        let commit = head.peel_to_commit().expect("Failed to get commit");
+        assert_eq!(commit.message().unwrap(), "Initial clinical record");
+
+        // Clean up environment variable
+        env::remove_var("PATIENT_DATA_DIR");
+    }
+}
