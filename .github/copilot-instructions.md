@@ -16,7 +16,7 @@ Overview
 - Main binary: `vpr-run` (defined in root `Cargo.toml`), runs both gRPC (port 50051) and REST (port 3000) servers concurrently using tokio::join.
 
 Important files to reference
-- `src/main.rs` — Main binary that starts both gRPC and REST servers, with OpenAPI/Swagger UI.
+- `src/main.rs` — Main binary that performs startup validation (e.g., checks for patient_data folder existence), creates runtime constants (e.g., PATIENT_DATA_PATH), and starts both gRPC (port 50051) and REST (port 3000) servers concurrently using tokio::join.
 - `crates/core/src/lib.rs` — **PURE DATA OPERATIONS**: PatientService for file/folder operations (sharded JSON storage, directory traversal). **NO API CODE**.
 - `crates/api-grpc/src/service.rs` — gRPC service implementation (VprService) with authentication, using PatientService from core.
 - `crates/api-shared/vpr.proto` — Canonical protobuf definitions for VPR service.
@@ -46,6 +46,7 @@ Conventions and patterns to follow
   - `api-shared`: Shared API utilities (HealthService, auth, protobuf types)
   - `api-grpc`: gRPC-specific concerns (service implementation, interceptors)
   - `api-rest`: REST-specific concerns (HTTP endpoints, JSON handling)
+  - `main.rs`: Startup validation (e.g., checking patient_data folder existence), runtime constant creation (e.g., PATIENT_DATA_PATH), and service orchestration
 
 Change policy and safety
 - Prefer minimal, well-scoped PRs updating single crates or modules.

@@ -94,7 +94,8 @@
     "Tunables",
     "Utoipa",
     "vars",
-    "Venkaresan"
+    "Venkaresan",
+    "writable"
   ],
   "ignoreWords": ["Exampletown"],
   "languageSettings": [

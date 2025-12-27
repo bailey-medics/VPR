@@ -68,6 +68,86 @@ struct ApiDoc;
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
 
+    // Validate patient data directory (set or default)
+    let data_dir = std::env::var("PATIENT_DATA_DIR")
+        .unwrap_or_else(|_| vpr_core::DEFAULT_PATIENT_DATA_DIR.into());
+    let path = std::path::Path::new(&data_dir);
+    if !path.exists() {
+        eprintln!(
+            "Error: Patient data directory does not exist: {}",
+            path.display()
+        );
+        std::process::exit(1);
+    }
+    // Test write access by attempting to create a temp file
+    let test_file = path.join(".vpr_test_write");
+    match std::fs::write(&test_file, b"test") {
+        Ok(_) => {
+            let _ = std::fs::remove_file(&test_file); // Clean up
+        }
+        Err(e) => {
+            eprintln!(
+                "Error: Patient data directory is not writable: {} ({})",
+                path.display(),
+                e
+            );
+            std::process::exit(1);
+        }
+    }
+
+    // Validate EHR template directory exists and contains files/folders
+    let template_dir = std::path::Path::new("ehr-template");
+    if !template_dir.exists() {
+        eprintln!(
+            "Error: EHR template directory does not exist: {}",
+            template_dir.display()
+        );
+        std::process::exit(1);
+    }
+
+    // Check if template directory contains at least one file or folder
+    let has_content = match std::fs::read_dir(template_dir) {
+        Ok(entries) => entries.count() > 0,
+        Err(e) => {
+            eprintln!(
+                "Error: Cannot read EHR template directory: {} ({})",
+                template_dir.display(),
+                e
+            );
+            std::process::exit(1);
+        }
+    };
+
+    if !has_content {
+        eprintln!(
+            "Error: EHR template directory is empty: {}",
+            template_dir.display()
+        );
+        std::process::exit(1);
+    }
+
+    // Ensure clinical subdirectory exists
+    let clinical_dir = path.join("clinical");
+    if let Err(e) = std::fs::create_dir_all(&clinical_dir) {
+        eprintln!(
+            "Error: Failed to create clinical directory: {} ({})",
+            clinical_dir.display(),
+            e
+        );
+        std::process::exit(1);
+    }
+
+    // Ensure demographics subdirectory exists
+    let demographics_dir = path.join("demographics");
+    if let Err(e) = std::fs::create_dir_all(&demographics_dir) {
+        eprintln!(
+            "Error: Failed to create demographics directory: {} ({})",
+            demographics_dir.display(),
+            e
+        );
+        std::process::exit(1);
+    }
+
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::from_default_env().add_directive("vpr=info".parse()?))
         .with(tracing_subscriber::fmt::layer())
