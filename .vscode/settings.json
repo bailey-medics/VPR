@@ -32,5 +32,6 @@
     "PATH": "${env:HOME}/.cargo/bin:${env:PATH}"
   },
 
-  "git.autoRepositoryDetection": false
+  "git.autoRepositoryDetection": false,
+  "cSpell.words": ["writable"]
 }

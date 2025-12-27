@@ -10,6 +10,10 @@ FHIR for demographics
 
 openEHR for clinical data
 
+## Shard directory structure
+
+VPR uses sharded directories to keep filesystem performance predictable and scalable as the number of patient or EHR repositories grows. Instead of placing every record under a single massive directory—which can slow down lookups and directory listings on most filesystems—VPR distributes repositories across multiple subfolders based on a hash or prefix of their UUID. This structure ensures faster access times, avoids inode exhaustion, and keeps Git operations efficient even with thousands of records. In short, sharding prevents filesystem bottlenecks by spreading data evenly across smaller, manageable directory trees.
+
 ## Testing
 
 When testing VPR’s file creation and repository logic, it is best to use real temporary directories rather than mocked filesystems. Because file creation and structure are central to VPR’s design, tests should verify that directories, Git repositories, and configuration files are created exactly as they will be in production. Using crates such as tempfile or assert_fs allows tests to write into isolated, automatically cleaned-up folders, ensuring realism without cluttering the developer’s system. This approach validates not only path logic but also permissions, file naming, and serialisation behaviour—details that mocks often overlook. In short, VPR’s tests should interact with the filesystem genuinely but safely, using temporary sandboxes to confirm that the system builds and cleans up its data as intended.
