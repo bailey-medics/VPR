@@ -5,6 +5,7 @@
 //! update demographics, link clinical records to demographics, and list patients.
 
 use clap::{Parser, Subcommand};
+use vpr_certificates::Certificate;
 use vpr_core::{
     clinical::ClinicalService, demographics::DemographicsService, Author, PatientService,
 };
@@ -90,6 +91,15 @@ enum Commands {
     GetFirstCommitTime {
         /// Clinical repository UUID
         clinical_uuid: String,
+    },
+    /// Create a professional registration certificate
+    CreateCertificate {
+        /// Full name of the person
+        name: String,
+        /// Registration authority (e.g., GMC, NMC)
+        registration_authority: String,
+        /// Registration number
+        registration_number: String,
     },
 }
 
@@ -231,6 +241,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Err(e) => eprintln!("Error getting first commit time: {}", e),
             }
         }
+        Some(Commands::CreateCertificate {
+            name,
+            registration_authority,
+            registration_number,
+        }) => match Certificate::create(&name, &registration_authority, &registration_number) {
+            Ok((cert_pem, key_pem)) => {
+                println!("Certificate created successfully:");
+                println!("--- Certificate ---");
+                println!("{}", cert_pem);
+                println!("--- Private Key ---");
+                println!("{}", key_pem);
+            }
+            Err(e) => eprintln!("Error creating certificate: {}", e),
+        },
         None => {
             println!("Use 'vpr --help' for commands");
         }
