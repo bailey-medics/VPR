@@ -8,6 +8,7 @@
 - [To Do](./todo.md)
 - [Technical](./technical.md)
   - [Design Decisions](./design-decisions.md)
+  - [Git](./git.md)
 - [CLI](./cli.md)
 - [Code docs](./code/vpr_temp/index.html)
 - [Thanks to](./thanks-to.md)

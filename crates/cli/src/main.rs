@@ -9,6 +9,8 @@ use vpr_certificates::Certificate;
 use vpr_core::{
     clinical::ClinicalService, demographics::DemographicsService, Author, PatientService,
 };
+
+use base64::{engine::general_purpose, Engine as _};
 ///
 /// This struct defines the CLI structure using clap for parsing command line arguments.
 #[derive(Parser)]
@@ -91,6 +93,19 @@ enum Commands {
     GetFirstCommitTime {
         /// Clinical repository UUID
         clinical_uuid: String,
+    },
+
+    /// Verify the signature on the latest clinical commit: <clinical_uuid> <public_key>
+    ///
+    /// The public key can be:
+    /// - PEM text (contains "-----BEGIN")
+    /// - a file path to a PEM file
+    /// - base64-encoded PEM
+    VerifyClinicalCommitSignature {
+        /// Clinical repository UUID
+        clinical_uuid: String,
+        /// ECDSA P-256 public key (PEM string, base64-encoded PEM, or file path)
+        public_key: String,
     },
     /// Create a professional registration certificate: <name> <registration_authority> <registration_number> [--cert-out <cert_file>] [--key-out <key_file>]
     CreateCertificate {
@@ -245,6 +260,46 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     clinical_uuid, timestamp
                 ),
                 Err(e) => eprintln!("Error getting first commit time: {}", e),
+            }
+        }
+        Some(Commands::VerifyClinicalCommitSignature {
+            clinical_uuid,
+            public_key,
+        }) => {
+            let public_key_pem = if public_key.contains("-----BEGIN") {
+                public_key
+            } else if std::path::Path::new(&public_key).exists() {
+                match std::fs::read_to_string(&public_key) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Error reading public key file {}: {}", public_key, e);
+                        return Ok(());
+                    }
+                }
+            } else {
+                match general_purpose::STANDARD.decode(&public_key) {
+                    Ok(bytes) => match String::from_utf8(bytes) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            eprintln!("Error decoding base64 public key to UTF-8: {}", e);
+                            return Ok(());
+                        }
+                    },
+                    Err(e) => {
+                        eprintln!(
+                            "Public key must be PEM, a readable file path, or base64-encoded PEM: {}",
+                            e
+                        );
+                        return Ok(());
+                    }
+                }
+            };
+
+            let clinical_service = ClinicalService;
+            match clinical_service.verify_commit_signature(&clinical_uuid, &public_key_pem) {
+                Ok(true) => println!("Signature VALID for clinical UUID: {}", clinical_uuid),
+                Ok(false) => println!("Signature INVALID for clinical UUID: {}", clinical_uuid),
+                Err(e) => eprintln!("Error verifying signature: {}", e),
             }
         }
         Some(Commands::CreateCertificate {

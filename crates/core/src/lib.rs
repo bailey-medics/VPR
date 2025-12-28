@@ -69,6 +69,8 @@ pub enum PatientError {
     PemParse(pem::PemError),
     #[error("failed to parse ECDSA private key: {0}")]
     EcdsaPrivateKeyParse(Box<dyn std::error::Error + Send + Sync>),
+    #[error("failed to parse ECDSA public key/certificate: {0}")]
+    EcdsaPublicKeyParse(Box<dyn std::error::Error + Send + Sync>),
     #[error("failed to sign: {0}")]
     EcdsaSign(Box<dyn std::error::Error + Send + Sync>),
     #[error("failed to create commit buffer: {0}")]
@@ -79,8 +81,12 @@ pub enum PatientError {
     CommitBufferToString(std::string::FromUtf8Error),
     #[error("failed to open git repository: {0}")]
     GitOpen(git2::Error),
+    #[error("failed to create/update git reference: {0}")]
+    GitReference(git2::Error),
     #[error("failed to get git head: {0}")]
     GitHead(git2::Error),
+    #[error("failed to set git head: {0}")]
+    GitSetHead(git2::Error),
     #[error("failed to peel git commit: {0}")]
     GitPeel(git2::Error),
     #[error("invalid timestamp")]
