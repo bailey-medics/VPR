@@ -25,7 +25,6 @@ use crate::{PatientError, PatientResult};
 /// Represents the EHR status information in openEHR format.
 /// This struct models the EHR status archetype for patient records.
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
-#[allow(dead_code)]
 struct EhrStatus {
     ehr_id: EhrId,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -42,21 +41,18 @@ struct EhrStatus {
 
 /// Represents a name value in the EHR status.
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
-#[allow(dead_code)]
 struct Name {
     value: String,
 }
 
 /// Represents the subject of the EHR status, linking to the patient.
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
-#[allow(dead_code)]
 struct Subject {
     external_ref: ExternalRef,
 }
 
 /// Represents an external reference to the patient in the EHR system.
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
-#[allow(dead_code)]
 struct ExternalRef {
     namespace: String,
     #[serde(rename = "type")]
@@ -66,7 +62,6 @@ struct ExternalRef {
 
 /// Represents the initial EHR status with just the EHR ID.
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
-#[allow(dead_code)]
 struct EhrStatusInit {
     ehr_id: EhrId,
 }
@@ -157,6 +152,7 @@ impl ClinicalService {
                 .map_err(PatientError::CommitBufferToString)?;
 
             // Check if the key is a file path, base64-encoded, or PEM
+            // TODO: will need to reconsider if we support files here on in the CLI
             let key_pem = if private_key_pem.contains("-----BEGIN") {
                 private_key_pem.clone()
             } else if std::path::Path::new(private_key_pem).exists() {
