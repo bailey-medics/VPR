@@ -14,6 +14,11 @@ use std::fs;
 use std::path::Path;
 use uuid::Uuid;
 
+use base64::{engine::general_purpose, Engine as _};
+use p256::ecdsa::signature::Signer;
+use p256::ecdsa::SigningKey;
+use p256::pkcs8::DecodePrivateKey;
+
 use crate::{PatientError, PatientResult};
 
 /// Represents the EHR status information in openEHR format.
@@ -136,15 +141,53 @@ impl ClinicalService {
 
         let sig = git2::Signature::now(&author.name, &author.email)
             .map_err(PatientError::GitSignature)?;
-        repo.commit(
-            Some("HEAD"),
-            &sig,
-            &sig,
-            "Initial clinical record",
-            &tree,
-            &[],
-        )
-        .map_err(PatientError::GitCommit)?;
+
+        if let Some(private_key_pem) = &author.signature {
+            // Sign the commit with X.509 private key
+            let buf = repo
+                .commit_create_buffer(&sig, &sig, "Initial clinical record", &tree, &[])
+                .map_err(PatientError::GitCommitBuffer)?;
+
+            let buf_str = String::from_utf8(buf.as_ref().to_vec())
+                .map_err(PatientError::CommitBufferToString)?;
+
+            // Check if the key is a file path, base64-encoded, or PEM
+            let key_pem = if private_key_pem.contains("-----BEGIN") {
+                private_key_pem.clone()
+            } else if std::path::Path::new(private_key_pem).exists() {
+                // Read from file
+                std::fs::read_to_string(private_key_pem)
+                    .map_err(|e| PatientError::EcdsaPrivateKeyParse(Box::new(e)))?
+            } else {
+                // Assume it's base64-encoded PEM
+                String::from_utf8(
+                    general_purpose::STANDARD
+                        .decode(private_key_pem)
+                        .map_err(|e| PatientError::EcdsaPrivateKeyParse(Box::new(e)))?,
+                )
+                .map_err(|e| PatientError::EcdsaPrivateKeyParse(Box::new(e)))?
+            };
+
+            let signing_key = SigningKey::from_pkcs8_pem(&key_pem)
+                .map_err(|e| PatientError::EcdsaPrivateKeyParse(Box::new(e)))?;
+
+            let signature: p256::ecdsa::Signature = signing_key.sign(buf_str.as_bytes());
+            let signature_bytes = signature.to_bytes();
+            let signature_str = general_purpose::STANDARD.encode(signature_bytes);
+
+            repo.commit_signed(&buf_str, &signature_str, None)
+                .map_err(PatientError::GitCommitSigned)?;
+        } else {
+            repo.commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "Initial clinical record",
+                &tree,
+                &[],
+            )
+            .map_err(PatientError::GitCommit)?;
+        }
 
         Ok(uuid)
     }
