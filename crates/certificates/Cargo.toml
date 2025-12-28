@@ -1,0 +1,13 @@
+[package]
+name = "vpr-certificates"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "vpr_certificates"
+path = "src/lib.rs"
+
+[dependencies]
+rcgen = { version = "0.13", features = ["crypto"] }
+thiserror = "1.0"
+time = "0.3"

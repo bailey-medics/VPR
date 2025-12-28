@@ -13,6 +13,8 @@ Overview
   - `crates/api-shared` — Shared utilities and definitions for both APIs: Protobuf types, HealthService, authentication utilities.
   - `crates/api-grpc` — gRPC-specific implementation: VprService, authentication interceptors, tonic integration.
   - `crates/api-rest` — REST-specific implementation: HTTP endpoints, OpenAPI/Swagger, axum integration.
+  - `crates/certificates` (vpr-certificates) — Digital certificate generation utilities: X.509 certificate creation for user authentication.
+  - `crates/cli` (vpr-cli) — Command-line interface: CLI tools for patient record management and certificate generation.
 - Main binary: `vpr-run` (defined in root `Cargo.toml`), runs both gRPC (port 50051) and REST (port 3000) servers concurrently using tokio::join.
 
 Important files to reference
@@ -75,3 +77,4 @@ If unsure, ask for clarification and provide a short plan: files to change, test
 
 ---
 If you'd like I can expand any section (e.g., CI, proto build details, or example PR checklist).
+
