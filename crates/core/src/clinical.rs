@@ -15,9 +15,10 @@ use std::path::Path;
 use uuid::Uuid;
 
 use base64::{engine::general_purpose, Engine as _};
-use p256::ecdsa::signature::Signer;
-use p256::ecdsa::SigningKey;
-use p256::pkcs8::DecodePrivateKey;
+use p256::ecdsa::signature::{Signer, Verifier};
+use p256::ecdsa::{Signature, SigningKey, VerifyingKey};
+use p256::pkcs8::{DecodePrivateKey, DecodePublicKey};
+use x509_parser::prelude::*;
 
 use crate::{PatientError, PatientResult};
 
@@ -132,6 +133,10 @@ impl ClinicalService {
         // Initialize Git repository for the patient
         let repo = git2::Repository::init(&patient_dir).map_err(PatientError::GitInit)?;
 
+        // Default the initial branch to `main` (unborn until the first commit is created).
+        repo.set_head("refs/heads/main")
+            .map_err(PatientError::GitSetHead)?;
+
         // Create initial commit with all copied files
         let mut index = repo.index().map_err(PatientError::GitIndex)?;
         add_directory_to_index(&mut index, &patient_dir).map_err(PatientError::GitAdd)?;
@@ -171,12 +176,21 @@ impl ClinicalService {
             let signing_key = SigningKey::from_pkcs8_pem(&key_pem)
                 .map_err(|e| PatientError::EcdsaPrivateKeyParse(Box::new(e)))?;
 
-            let signature: p256::ecdsa::Signature = signing_key.sign(buf_str.as_bytes());
-            let signature_bytes = signature.to_bytes();
-            let signature_str = general_purpose::STANDARD.encode(signature_bytes);
+            // Sign the canonical *unsigned* commit buffer.
+            // This must match the buffer passed to `commit_signed`.
+            let signature: Signature = signing_key.sign(buf_str.as_bytes());
+            let signature_str = general_purpose::STANDARD.encode(signature.to_bytes());
 
-            repo.commit_signed(&buf_str, &signature_str, None)
+            let oid = repo
+                .commit_signed(&buf_str, &signature_str, None)
                 .map_err(PatientError::GitCommitSigned)?;
+
+            // `commit_signed` creates the commit object but does not update any refs.
+            // Update `refs/heads/main` to point at the new commit and set HEAD to it.
+            repo.reference("refs/heads/main", oid, true, "initial signed commit")
+                .map_err(PatientError::GitReference)?;
+            repo.set_head("refs/heads/main")
+                .map_err(PatientError::GitSetHead)?;
         } else {
             repo.commit(
                 Some("HEAD"),
@@ -308,6 +322,107 @@ impl ClinicalService {
 
         Ok(datetime)
     }
+
+    /// Verifies the ECDSA signature of the latest commit in the patient's Git repository.
+    ///
+    /// VPR uses `git2::Repository::commit_signed` with an ECDSA P-256 signature encoded as
+    /// base64 over the *unsigned commit buffer* produced by `commit_create_buffer`.
+    /// This method reconstructs that buffer and verifies the signature using `public_key_pem`.
+    ///
+    /// # Arguments
+    ///
+    /// * `uuid` - The UUID of the clinical record.
+    /// * `public_key_pem` - The PEM-encoded public key used for verification.
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` if the signature is valid, `false` otherwise.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `PatientError` if the repository cannot be opened, the commit cannot be accessed,
+    /// or the signature/public key cannot be parsed.
+    pub fn verify_commit_signature(&self, uuid: &str, public_key_pem: &str) -> PatientResult<bool> {
+        let clinical_dir = crate::clinical_data_path();
+        let uuid = uuid.to_lowercase();
+        let s1 = &uuid[0..2];
+        let s2 = &uuid[2..4];
+        let patient_dir = clinical_dir.join(s1).join(s2).join(&uuid);
+
+        let repo = git2::Repository::open(&patient_dir).map_err(PatientError::GitOpen)?;
+
+        let head = repo.head().map_err(PatientError::GitHead)?;
+        let commit = head.peel_to_commit().map_err(PatientError::GitPeel)?;
+
+        // Extract signature from the commit header (written by `commit_signed`).
+        let sig_field = match commit.header_field_bytes("gpgsig") {
+            Ok(v) => v,
+            Err(_) => return Ok(false),
+        };
+        if sig_field.is_empty() {
+            return Ok(false);
+        }
+
+        let sig_field_str = match std::str::from_utf8(sig_field.as_ref()) {
+            Ok(s) => s,
+            Err(_) => return Ok(false),
+        };
+        // The `gpgsig` value may be wrapped/indented; normalize by stripping whitespace.
+        let sig_b64: String = sig_field_str.lines().map(|l| l.trim()).collect();
+
+        let sig_bytes = match general_purpose::STANDARD.decode(sig_b64) {
+            Ok(b) => b,
+            Err(_) => return Ok(false),
+        };
+        let signature = match Signature::from_slice(&sig_bytes) {
+            Ok(s) => s,
+            Err(_) => return Ok(false),
+        };
+
+        let verifying_key = verifying_key_from_public_key_or_cert_pem(public_key_pem)?;
+
+        // Recreate the unsigned commit buffer for this commit.
+        let tree = commit.tree().map_err(PatientError::GitFindTree)?;
+        let parents: Vec<git2::Commit> = commit.parents().collect();
+        let parent_refs: Vec<&git2::Commit> = parents.iter().collect();
+        let message = commit.message().unwrap_or("");
+        let author = commit.author();
+        let committer = commit.committer();
+
+        let buf = repo
+            .commit_create_buffer(&author, &committer, message, &tree, &parent_refs)
+            .map_err(PatientError::GitCommitBuffer)?;
+        let buf_str =
+            String::from_utf8(buf.as_ref().to_vec()).map_err(PatientError::CommitBufferToString)?;
+
+        // Verify with the correct payload.
+        if verifying_key.verify(buf_str.as_bytes(), &signature).is_ok() {
+            return Ok(true);
+        }
+
+        // Backwards compatibility: older code in this repo signed the Git object framing too.
+        let legacy_payload = format!("commit {}\0{}", buf_str.len(), buf_str);
+        Ok(verifying_key
+            .verify(legacy_payload.as_bytes(), &signature)
+            .is_ok())
+    }
+}
+
+fn verifying_key_from_public_key_or_cert_pem(pem_or_cert: &str) -> PatientResult<VerifyingKey> {
+    if pem_or_cert.contains("-----BEGIN CERTIFICATE-----") {
+        let (_, pem) = x509_parser::pem::parse_x509_pem(pem_or_cert.as_bytes())
+            .map_err(|e| PatientError::EcdsaPublicKeyParse(Box::new(e)))?;
+        let (_, cert) = X509Certificate::from_der(pem.contents.as_ref())
+            .map_err(|e| PatientError::EcdsaPublicKeyParse(Box::new(e)))?;
+
+        let spk = cert.public_key();
+        let key_bytes = &spk.subject_public_key.data;
+        VerifyingKey::from_sec1_bytes(key_bytes.as_ref())
+            .map_err(|e| PatientError::EcdsaPublicKeyParse(Box::new(e)))
+    } else {
+        VerifyingKey::from_public_key_pem(pem_or_cert)
+            .map_err(|e| PatientError::EcdsaPublicKeyParse(Box::new(e)))
+    }
 }
 
 /// Recursively copy a directory and its contents to a destination
@@ -374,6 +489,7 @@ fn add_directory_to_index(index: &mut git2::Index, dir: &Path) -> Result<(), git
 #[cfg(test)]
 mod tests {
     use super::*;
+    use p256::pkcs8::{EncodePrivateKey, EncodePublicKey};
     use std::env;
     use tempfile::TempDir;
 
@@ -564,6 +680,70 @@ mod tests {
         let now = Utc::now();
         let diff = now.signed_duration_since(timestamp);
         assert!(diff.num_seconds() < 60, "timestamp should be recent");
+
+        // Clean up environment variable
+        env::remove_var("PATIENT_DATA_DIR");
+        if let Some(original) = original_env {
+            env::set_var("PATIENT_DATA_DIR", original);
+        }
+    }
+
+    #[test]
+    fn test_verify_commit_signature() {
+        // Save original env var
+        let original_env = env::var("PATIENT_DATA_DIR").ok();
+
+        // Create a temporary directory for testing
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let temp_path = temp_dir.path().to_str().unwrap();
+        env::set_var("PATIENT_DATA_DIR", temp_path);
+
+        // Generate a key pair for signing
+        let signing_key = SigningKey::random(&mut rand::thread_rng());
+        let verifying_key = signing_key.verifying_key();
+
+        // Encode private key to PEM
+        let private_key_pem = signing_key
+            .to_pkcs8_pem(p256::pkcs8::LineEnding::LF)
+            .expect("Failed to encode private key");
+
+        // Encode public key to PEM
+        let public_key_pem = verifying_key
+            .to_public_key_pem(p256::pkcs8::LineEnding::LF)
+            .expect("Failed to encode public key");
+
+        let service = ClinicalService;
+        let author = Author {
+            name: "Test Author".to_string(),
+            email: "test@example.com".to_string(),
+            signature: Some(private_key_pem.to_string()),
+        };
+
+        // Initialize clinical record
+        let result = service.initialise(author);
+        assert!(result.is_ok(), "initialise should succeed");
+        let clinical_uuid = result.unwrap();
+
+        // Verify the signature
+        let verify_result = service.verify_commit_signature(&clinical_uuid, &public_key_pem);
+        assert!(
+            verify_result.is_ok(),
+            "verify_commit_signature should succeed"
+        );
+        assert!(verify_result.unwrap(), "signature should be valid");
+
+        // Verify fails with a wrong public key
+        let wrong_signing_key = SigningKey::random(&mut rand::thread_rng());
+        let wrong_pub_pem = wrong_signing_key
+            .verifying_key()
+            .to_public_key_pem(p256::pkcs8::LineEnding::LF)
+            .expect("Failed to encode wrong public key");
+        let wrong_verify = service.verify_commit_signature(&clinical_uuid, &wrong_pub_pem);
+        assert!(wrong_verify.is_ok(), "verify with wrong key should succeed");
+        assert!(
+            !wrong_verify.unwrap(),
+            "signature should be invalid with wrong key"
+        );
 
         // Clean up environment variable
         env::remove_var("PATIENT_DATA_DIR");

@@ -11,3 +11,4 @@ path = "src/main.rs"
 clap = { version = "4.0", features = ["derive"] }
 vpr-core = { path = "../core" }
 vpr-certificates = { path = "../certificates" }
+base64 = "0.21"
