@@ -27,27 +27,27 @@ struct Cli {
 enum Commands {
     /// List all patients
     List,
-    /// Initialise demographics
+    /// Initialise demographics: <name> <email> [--signature <ecdsa_private_key_pem>]
     InitialiseDemographics {
         /// Author name for Git commit
         name: String,
         /// Author email for Git commit
         email: String,
-        /// Author signature (optional)
+        /// ECDSA private key PEM for X.509 signing (optional, can be PEM string, base64-encoded PEM, or file path)
         #[arg(long)]
         signature: Option<String>,
     },
-    /// Initialise clinical
+    /// Initialise clinical: <name> <email> [--signature <ecdsa_private_key_pem>]
     InitialiseClinical {
         /// Author name for Git commit
         name: String,
         /// Author email for Git commit
         email: String,
-        /// Author signature (optional)
+        /// ECDSA private key PEM for X.509 signing (optional, can be PEM string, base64-encoded PEM, or file path)
         #[arg(long)]
         signature: Option<String>,
     },
-    /// Write EHR status
+    /// Write EHR status: <clinical_uuid> <demographics_uuid> [--namespace <namespace>]
     WriteEhrStatus {
         /// Clinical repository UUID
         clinical_uuid: String,
@@ -57,7 +57,7 @@ enum Commands {
         #[arg(long)]
         namespace: Option<String>,
     },
-    /// Update demographics
+    /// Update demographics: <demographics_uuid> <given_names> <last_name> <birth_date>
     UpdateDemographics {
         /// Demographics UUID
         demographics_uuid: String,
@@ -68,31 +68,31 @@ enum Commands {
         /// Date of birth (YYYY-MM-DD)
         birth_date: String,
     },
-    /// Initialise full record (demographics + clinical)
+    /// Initialise full record: <name> <email> <given_names> <last_name> <birth_date> [--signature <ecdsa_private_key_pem>] [--namespace <namespace>]
     InitialiseFullRecord {
         /// Author name for Git commit
         name: String,
         /// Author email for Git commit
         email: String,
-        /// Author signature (optional)
-        #[arg(long)]
-        signature: Option<String>,
         /// Given names (comma-separated)
         given_names: String,
         /// Last name
         last_name: String,
         /// Date of birth (YYYY-MM-DD)
         birth_date: String,
+        /// ECDSA private key PEM for X.509 signing (optional, can be PEM string, base64-encoded PEM, or file path)
+        #[arg(long)]
+        signature: Option<String>,
         /// Organisation domain (optional)
         #[arg(long)]
         namespace: Option<String>,
     },
-    /// Get first commit time for clinical record
+    /// Get first commit time for clinical record: <clinical_uuid>
     GetFirstCommitTime {
         /// Clinical repository UUID
         clinical_uuid: String,
     },
-    /// Create a professional registration certificate
+    /// Create a professional registration certificate: <name> <registration_authority> <registration_number> [--cert-out <cert_file>] [--key-out <key_file>]
     CreateCertificate {
         /// Full name of the person
         name: String,
@@ -100,6 +100,12 @@ enum Commands {
         registration_authority: String,
         /// Registration number
         registration_number: String,
+        /// Output file for the certificate (optional, prints to stdout if not specified)
+        #[arg(long)]
+        cert_out: Option<String>,
+        /// Output file for the private key (optional, prints to stdout if not specified)
+        #[arg(long)]
+        key_out: Option<String>,
     },
 }
 
@@ -201,10 +207,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(Commands::InitialiseFullRecord {
             name,
             email,
-            signature,
             given_names,
             last_name,
             birth_date,
+            signature,
             namespace,
         }) => {
             let author = Author {
@@ -245,13 +251,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             name,
             registration_authority,
             registration_number,
+            cert_out,
+            key_out,
         }) => match Certificate::create(&name, &registration_authority, &registration_number) {
             Ok((cert_pem, key_pem)) => {
-                println!("Certificate created successfully:");
-                println!("--- Certificate ---");
-                println!("{}", cert_pem);
-                println!("--- Private Key ---");
-                println!("{}", key_pem);
+                if let Some(cert_file) = cert_out {
+                    if let Err(e) = std::fs::write(&cert_file, &cert_pem) {
+                        eprintln!("Error writing certificate to {}: {}", cert_file, e);
+                        return Ok(());
+                    }
+                    println!("Certificate written to {}", cert_file);
+                } else {
+                    println!("--- Certificate ---");
+                    println!("{}", cert_pem);
+                }
+
+                if let Some(key_file) = key_out {
+                    if let Err(e) = std::fs::write(&key_file, &key_pem) {
+                        eprintln!("Error writing private key to {}: {}", key_file, e);
+                        return Ok(());
+                    }
+                    println!("Private key written to {}", key_file);
+                } else {
+                    println!("--- Private Key ---");
+                    println!("{}", key_pem);
+                }
             }
             Err(e) => eprintln!("Error creating certificate: {}", e),
         },

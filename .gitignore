@@ -24,3 +24,5 @@ logs/
 patient_data/
 
 .env
+*.crt
+*.key
