@@ -2,7 +2,7 @@ use crate::pb::HealthRes;
 
 /// Simple health service that can be used by both gRPC and REST APIs
 ///
-/// This service provides a standardized way to check the health status of the VPR system.
+/// This service provides a standardised way to check the health status of the VPR system.
 /// It can be used both as a static utility and as an instantiated service.
 #[derive(Clone)]
 pub struct HealthService;

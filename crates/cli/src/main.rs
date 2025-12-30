@@ -1,7 +1,7 @@
 //! VPR Command Line Interface
 //!
 //! This module provides a CLI for interacting with the VPR patient record system.
-//! It allows users to initialize patient demographics and clinical records,
+//! It allows users to initialise patient demographics and clinical records,
 //! update demographics, link clinical records to demographics, and list patients.
 
 use clap::{Parser, Subcommand};
@@ -24,7 +24,7 @@ struct Cli {
 /// Available CLI commands for the VPR system.
 ///
 /// Each variant represents a different operation that can be performed
-/// on patient records, from initialization to updates and queries.
+/// on patient records, from initialisation to updates and queries.
 #[derive(Subcommand)]
 enum Commands {
     /// List all patients
@@ -127,7 +127,7 @@ enum Commands {
 /// Main entry point for the VPR CLI.
 ///
 /// Parses command line arguments and executes the appropriate command.
-/// Handles initialization of demographics and clinical records, updates,
+/// Handles initialisation of demographics and clinical records, updates,
 /// linking operations, and patient listing.
 ///
 /// # Returns

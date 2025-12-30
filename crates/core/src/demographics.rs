@@ -1,6 +1,6 @@
 //! Patient demographics management.
 //!
-//! This module provides functionality for initializing and updating patient
+//! This module provides functionality for initialising and updating patient
 //! demographic information. It handles the creation of new patient records
 //! with unique identifiers, storage in a sharded directory structure, and
 //! version control using Git. Demographic updates include name and birth date
@@ -43,11 +43,11 @@ struct Name {
 pub struct DemographicsService;
 
 impl DemographicsService {
-    /// Initializes a new patient demographics record.
+    /// Initialises a new patient demographics record.
     ///
     /// This function creates a new patient with a unique UUID, stores the initial
     /// demographics in a JSON file within a sharded directory structure, and
-    /// initializes a Git repository for version control.
+    /// initialises a Git repository for version control.
     ///
     /// # Arguments
     ///
@@ -59,7 +59,7 @@ impl DemographicsService {
     ///
     /// # Errors
     ///
-    /// Returns a `PatientError` if any step in the initialization fails, such as
+    /// Returns a `PatientError` if any step in the initialisation fails, such as
     /// directory creation, file writing, or Git operations.
     pub fn initialise(&self, author: Author) -> PatientResult<String> {
         // Determine storage directory from environment
@@ -93,7 +93,7 @@ impl DemographicsService {
         let filename = patient_dir.join(crate::constants::PATIENT_JSON_FILENAME);
         fs::write(&filename, json).map_err(PatientError::FileWrite)?;
 
-        // Initialize Git repository for the patient
+        // Initialise Git repository for the patient
         let repo = git2::Repository::init(&patient_dir).map_err(PatientError::GitInit)?;
 
         // Create initial commit with demographics.json

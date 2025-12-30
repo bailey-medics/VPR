@@ -10,7 +10,7 @@ Clinical records are stored under the sharded directory structure:
 
 - `patient_data/clinical/<s1>/<s2>/<32-hex-uuid>/`
 
-That patient directory is initialized as a Git repository (`.git/` lives inside it).
+That patient directory is initialised as a Git repository (`.git/` lives inside it).
 
 ## Initial commit creation
 
@@ -38,7 +38,7 @@ Result: clinical repos “land on” the `main` branch.
 
 ## How signing works
 
-If `Author.signature` is provided during initialization, VPR signs the initial commit using ECDSA P-256.
+If `Author.signature` is provided during initialisation, VPR signs the initial commit using ECDSA P-256.
 
 - Payload: the **unsigned commit buffer** produced by `Repository::commit_create_buffer`.
   - This is the exact byte payload that must be signed to match what `commit_signed` expects.
@@ -61,7 +61,7 @@ Verification steps (implemented in `ClinicalService::verify_commit_signature`):
 1. Open the patient Git repo.
 2. Resolve the latest commit from `HEAD`.
 3. Read the `gpgsig` header field from the commit.
-4. Normalize it (handle whitespace wrapping), base64-decode it, and parse as a P-256 ECDSA signature.
+4. Normalise it (handle whitespace wrapping), base64-decode it, and parse as a P-256 ECDSA signature.
 5. Recreate the unsigned commit buffer with `commit_create_buffer` using the commit’s tree/parents/author/committer/message.
 6. Verify the signature over that recreated buffer using the provided public key.
 

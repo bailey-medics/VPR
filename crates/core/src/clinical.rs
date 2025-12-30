@@ -1,8 +1,8 @@
 //! Patient clinical records management.
 //!
-//! This module handles the initialization and management of clinical records
+//! This module handles the initialisation and management of clinical records
 //! for patients. It includes creating clinical entries with timestamps,
-//! initializing Git repositories for version control, and writing EHR status
+//! initialising Git repositories for version control, and writing EHR status
 //! information in YAML format.
 
 use crate::Author;
@@ -15,9 +15,9 @@ use std::path::Path;
 use uuid::Uuid;
 
 use base64::{engine::general_purpose, Engine as _};
-use p256::ecdsa::signature::{Signer, Verifier};
-use p256::ecdsa::{Signature, SigningKey, VerifyingKey};
-use p256::pkcs8::{DecodePrivateKey, DecodePublicKey};
+use p256::ecdsa::signature::Verifier;
+use p256::ecdsa::{Signature, VerifyingKey};
+use p256::pkcs8::DecodePublicKey;
 use x509_parser::prelude::*;
 
 use crate::{PatientError, PatientResult};
@@ -77,10 +77,10 @@ struct EhrId {
 pub struct ClinicalService;
 
 impl ClinicalService {
-    /// Initializes a new clinical record for a patient.
+    /// Initialises a new clinical record for a patient.
     ///
     /// This function creates a new clinical entry with a unique UUID, stores it
-    /// in a JSON file within a sharded directory structure, and initializes a
+    /// in a JSON file within a sharded directory structure, and initialises a
     /// Git repository for version control.
     ///
     /// # Arguments
@@ -93,7 +93,7 @@ impl ClinicalService {
     ///
     /// # Errors
     ///
-    /// Returns a `PatientError` if any step in the initialization fails, such as
+    /// Returns a `PatientError` if any step in the initialisation fails, such as
     /// directory creation, file writing, or Git operations.
     pub fn initialise(&self, author: Author) -> PatientResult<String> {
         // Generate 32-hex form UUID without hyphens and in lowercase safe for directory naming
@@ -125,79 +125,10 @@ impl ClinicalService {
         };
         crate::yaml_write(&filename, &ehr_status)?;
 
-        // Initialize Git repository for the patient
+        // Initialise Git repository for the patient
         let repo = git2::Repository::init(&patient_dir).map_err(PatientError::GitInit)?;
 
-        // Default the initial branch to `main` (unborn until the first commit is created).
-        repo.set_head("refs/heads/main")
-            .map_err(PatientError::GitSetHead)?;
-
-        // Create initial commit with all copied files
-        let mut index = repo.index().map_err(PatientError::GitIndex)?;
-        add_directory_to_index(&mut index, &patient_dir).map_err(PatientError::GitAdd)?;
-
-        let tree_id = index.write_tree().map_err(PatientError::GitWriteTree)?;
-        let tree = repo.find_tree(tree_id).map_err(PatientError::GitFindTree)?;
-
-        let sig = git2::Signature::now(&author.name, &author.email)
-            .map_err(PatientError::GitSignature)?;
-
-        if let Some(private_key_pem) = &author.signature {
-            // Sign the commit with X.509 private key
-            let buf = repo
-                .commit_create_buffer(&sig, &sig, "Initial clinical record", &tree, &[])
-                .map_err(PatientError::GitCommitBuffer)?;
-
-            let buf_str = String::from_utf8(buf.as_ref().to_vec())
-                .map_err(PatientError::CommitBufferToString)?;
-
-            // Check if the key is a file path, base64-encoded, or PEM
-            // TODO: will need to reconsider if we support files here on in the CLI
-            let key_pem = if private_key_pem.contains("-----BEGIN") {
-                private_key_pem.clone()
-            } else if std::path::Path::new(private_key_pem).exists() {
-                // Read from file
-                std::fs::read_to_string(private_key_pem)
-                    .map_err(|e| PatientError::EcdsaPrivateKeyParse(Box::new(e)))?
-            } else {
-                // Assume it's base64-encoded PEM
-                String::from_utf8(
-                    general_purpose::STANDARD
-                        .decode(private_key_pem)
-                        .map_err(|e| PatientError::EcdsaPrivateKeyParse(Box::new(e)))?,
-                )
-                .map_err(|e| PatientError::EcdsaPrivateKeyParse(Box::new(e)))?
-            };
-
-            let signing_key = SigningKey::from_pkcs8_pem(&key_pem)
-                .map_err(|e| PatientError::EcdsaPrivateKeyParse(Box::new(e)))?;
-
-            // Sign the canonical *unsigned* commit buffer.
-            // This must match the buffer passed to `commit_signed`.
-            let signature: Signature = signing_key.sign(buf_str.as_bytes());
-            let signature_str = general_purpose::STANDARD.encode(signature.to_bytes());
-
-            let oid = repo
-                .commit_signed(&buf_str, &signature_str, None)
-                .map_err(PatientError::GitCommitSigned)?;
-
-            // `commit_signed` creates the commit object but does not update any refs.
-            // Update `refs/heads/main` to point at the new commit and set HEAD to it.
-            repo.reference("refs/heads/main", oid, true, "initial signed commit")
-                .map_err(PatientError::GitReference)?;
-            repo.set_head("refs/heads/main")
-                .map_err(PatientError::GitSetHead)?;
-        } else {
-            repo.commit(
-                Some("HEAD"),
-                &sig,
-                &sig,
-                "Initial clinical record",
-                &tree,
-                &[],
-            )
-            .map_err(PatientError::GitCommit)?;
-        }
+        crate::git::commit_all(&repo, &patient_dir, &author, "Initial clinical record")?;
 
         Ok(uuid)
     }
@@ -363,7 +294,7 @@ impl ClinicalService {
             Ok(s) => s,
             Err(_) => return Ok(false),
         };
-        // The `gpgsig` value may be wrapped/indented; normalize by stripping whitespace.
+        // The `gpgsig` value may be wrapped/indented; normalise by stripping whitespace.
         let sig_b64: String = sig_field_str.lines().map(|l| l.trim()).collect();
 
         let sig_bytes = match general_purpose::STANDARD.decode(sig_b64) {
@@ -451,37 +382,6 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
 }
 
 /// Recursively add all files in a directory to a Git index
-fn add_directory_to_index(index: &mut git2::Index, dir: &Path) -> Result<(), git2::Error> {
-    fn add_recursive(index: &mut git2::Index, dir: &Path, base: &Path) -> Result<(), git2::Error> {
-        for entry in
-            fs::read_dir(dir).map_err(|_| git2::Error::from_str("Failed to read directory"))?
-        {
-            let entry =
-                entry.map_err(|_| git2::Error::from_str("Failed to read directory entry"))?;
-            let entry_path = entry.path();
-
-            // Skip .git directory
-            if entry_path.ends_with(".git") {
-                continue;
-            }
-
-            if entry_path.is_dir() {
-                add_recursive(index, &entry_path, base)?;
-            } else {
-                // Calculate relative path from base directory
-                let relative_path = entry_path
-                    .strip_prefix(base)
-                    .map_err(|_| git2::Error::from_str("Entry path is not under base directory"))?;
-
-                index.add_path(relative_path)?;
-            }
-        }
-        Ok(())
-    }
-
-    add_recursive(index, dir, dir)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -508,7 +408,7 @@ mod tests {
             signature: None,
         };
 
-        // Initialize clinical service
+        // Initialise clinical service
         let service = ClinicalService;
 
         // Call initialise
@@ -582,10 +482,10 @@ mod tests {
             signature: None,
         };
 
-        // Initialize clinical service
+        // Initialise clinical service
         let service = ClinicalService;
 
-        // First, initialize a clinical record
+        // First, initialise a clinical record
         let result = service.initialise(author);
         assert!(result.is_ok(), "initialise should succeed");
         let clinical_uuid = result.unwrap();
@@ -659,7 +559,7 @@ mod tests {
             signature: None,
         };
 
-        // Initialize clinical service
+        // Initialise clinical service
         let service = ClinicalService;
 
         // Call initialise to create a record
@@ -715,7 +615,7 @@ mod tests {
             signature: Some(private_key_pem.to_string()),
         };
 
-        // Initialize clinical record
+        // Initialise clinical record
         let result = service.initialise(author);
         assert!(result.is_ok(), "initialise should succeed");
         let clinical_uuid = result.unwrap();
