@@ -1,3 +1,11 @@
+//! X.509 certificate generation utilities.
+//!
+//! ## Purpose
+//! Provides helper functionality to generate self-signed X.509 certificates.
+//!
+//! ## Intended use
+//! Certificates are used for user authentication and commit signing within the wider VPR system.
+
 use rcgen::{
     CertificateParams, DistinguishedName, DnType, Ia5String, IsCa, KeyPair, KeyUsagePurpose,
     SanType, SerialNumber,

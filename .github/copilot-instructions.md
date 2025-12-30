@@ -51,6 +51,11 @@ Conventions and patterns to follow
 - Git versioning: Each patient directory is a Git repo; commits signed with X.509 certificates from author.signature.
 - EHR template: `ehr-template/` directory copied to new patient clinical dirs; validated at startup.
 - Spelling: Use British English (en-GB) for documentation and other prose (mdBook pages, README, Rustdoc/comments).
+- Documentation style:
+  - Use **Rustdoc** (doc comments) with standard section headings.
+  - For functions/methods, include clear `# Arguments`, `# Returns`, and `# Errors` sections **when applicable**.
+    - If there are no arguments/meaningful return value/no error conditions to document, omit the empty section.
+  - For each module, start the file with `//!` module-level Rustdoc that outlines what the module does and what it is intended to do.
 - **Architecture boundaries**: 
   - `core`: ONLY file/folder/git operations (ClinicalService, DemographicsService, data persistence)
   - `api-shared`: Shared API utilities (HealthService, auth, protobuf types)

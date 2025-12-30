@@ -1,3 +1,13 @@
+//! Standalone gRPC server binary.
+//!
+//! ## Purpose
+//! Runs the gRPC API server on its own.
+//!
+//! ## Intended use
+//! This binary is useful for development and debugging when you only want the gRPC server (for
+//! example, with reflection enabled). The workspace's main `vpr-run` binary runs both gRPC and
+//! REST concurrently.
+
 use std::net::SocketAddr;
 use tonic::transport::Server;
 use tonic_reflection::server::Builder;
@@ -18,7 +28,9 @@ use api_shared::FILE_DESCRIPTOR_SET;
 ///
 /// # Returns
 /// * `Ok(())` - If server starts and runs successfully
-/// * `Err(anyhow::Error)` - If server startup or runtime fails
+///
+/// # Errors
+/// Returns an error if the server cannot be configured, bound, or started.
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();

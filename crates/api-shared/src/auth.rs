@@ -1,3 +1,11 @@
+//! Authentication helpers shared by the gRPC and REST APIs.
+//!
+//! ## Purpose
+//! Provides simple API key validation used by API front-ends.
+//!
+//! ## Intended use
+//! This module contains API-level authentication utilities only. It is not used by `vpr-core`.
+
 use std::env;
 
 /// Validates the provided API key against the expected API key from environment.
@@ -10,7 +18,11 @@ use std::env;
 ///
 /// # Returns
 /// * `Ok(())` - If the provided key matches the expected key
-/// * `Err(Status)` - INTERNAL error if API_KEY env var not set, UNAUTHENTICATED if keys don't match
+///
+/// # Errors
+/// Returns:
+/// - `INTERNAL` if `API_KEY` is not set
+/// - `UNAUTHENTICATED` if the provided key does not match
 ///
 /// # Environment Variables
 /// * `API_KEY` - The expected API key value (must be set)

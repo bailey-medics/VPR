@@ -1,3 +1,12 @@
+//! Health check utilities shared by both APIs.
+//!
+//! ## Purpose
+//! Provides a small helper for returning a standard health response.
+//!
+//! ## Intended use
+//! This module is used by both gRPC and REST implementations as a shared source of truth for the
+//! health response payload.
+
 use crate::pb::HealthRes;
 
 /// Simple health service that can be used by both gRPC and REST APIs

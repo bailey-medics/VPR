@@ -1,3 +1,12 @@
+//! Standalone REST API server binary.
+//!
+//! ## Purpose
+//! Runs the REST API server on its own.
+//!
+//! ## Intended use
+//! This binary is useful for development and debugging when you only want the REST server (with
+//! OpenAPI/Swagger UI). The workspace's main `vpr-run` binary runs both gRPC and REST concurrently.
+
 use axum::{
     extract::State,
     http::StatusCode,
@@ -45,7 +54,9 @@ struct ApiDoc;
 ///
 /// # Returns
 /// * `Ok(())` - If server starts and runs successfully
-/// * `Err(anyhow::Error)` - If server startup or runtime fails
+///
+/// # Errors
+/// Returns an error if the server cannot be configured, bound, or started.
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::registry()
@@ -118,6 +129,9 @@ async fn health(State(_state): State<AppState>) -> Json<pb::HealthRes> {
 /// # Returns
 /// * `Ok(Json<pb::ListPatientsRes>)` - List of patients with their IDs and names
 /// * `Err((StatusCode, &str))` - Internal server error if listing fails
+///
+/// # Errors
+/// Returns `500 Internal Server Error` if patient listing fails.
 #[axum::debug_handler]
 async fn list_patients(
     State(state): State<AppState>,
@@ -138,15 +152,20 @@ async fn list_patients(
 )]
 /// Create a new patient record
 ///
-/// Creates a new patient by calling the underlying patient service.
-/// This provides a REST interface to the patient creation functionality.
+/// Creates a new clinical record by calling the underlying clinical service.
 ///
-/// # Parameters
-/// * `req` - Empty request for initialising clinical
+/// Note: this endpoint currently initialises a clinical record and returns the generated
+/// identifier; it does not yet populate patient demographics.
+///
+/// # Arguments
+/// * `req` - Request body containing author information used for the initial Git commit
 ///
 /// # Returns
 /// * `Ok(Json<pb::CreatePatientRes>)` - Initialised clinical with generated UUID
 /// * `Err((StatusCode, &str))` - Internal server error if initialisation fails
+///
+/// # Errors
+/// Returns `500 Internal Server Error` if initialisation fails.
 #[axum::debug_handler]
 async fn create_patient(
     State(_state): State<AppState>,

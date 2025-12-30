@@ -1,12 +1,23 @@
-// Re-export the proto module from the shared `api-shared` crate so callers
-// can continue to reference `api::service::pb`.
+//! gRPC service implementation and authentication wiring.
+//!
+//! ## Purpose
+//! This module provides the gRPC implementation of the VPR API, including:
+//! - An `x-api-key` authentication interceptor.
+//! - The `VprService` implementation for protobuf-generated `Vpr` trait methods.
+//!
+//! ## Intended use
+//! API-level concerns (authentication, request/response mapping) live here.
+//! Data operations are delegated to services in `vpr-core`.
+
+// Re-export the proto module from the shared `api-shared` crate so callers can continue to
+// reference `api::service::pb`.
 pub use api_shared::pb;
 
 use api_shared::{auth, HealthService};
 use tonic::{Request, Response, Status};
 use vpr_core::{clinical::ClinicalService, demographics::DemographicsService, Author};
 
-/// Authentication interceptor for gRPC requests
+/// Authentication interceptor for gRPC requests.
 ///
 /// This interceptor checks for the presence of an `x-api-key` header in incoming
 /// gRPC requests and validates it against the expected API key from environment
@@ -19,6 +30,9 @@ use vpr_core::{clinical::ClinicalService, demographics::DemographicsService, Aut
 /// # Returns
 /// * `Ok(Request<()>)` - The request with authentication validated
 /// * `Err(Status)` - UNAUTHENTICATED status if API key is missing or invalid
+///
+/// # Errors
+/// Returns `UNAUTHENTICATED` if the API key is missing or invalid.
 #[allow(clippy::result_large_err)]
 pub fn auth_interceptor(req: Request<()>) -> Result<Request<()>, Status> {
     let api_key = req
@@ -34,7 +48,7 @@ pub fn auth_interceptor(req: Request<()>) -> Result<Request<()>, Status> {
 // Use the shared api-shared crate for generated protobuf types.
 use api_shared::pb::{vpr_server::Vpr, CreatePatientReq, CreatePatientRes, HealthRes};
 
-/// gRPC service implementation for VPR patient operations
+/// gRPC service implementation for VPR patient operations.
 ///
 /// This service implements the Vpr gRPC trait and provides authenticated access
 /// to patient data operations. It uses the PatientService from the core crate

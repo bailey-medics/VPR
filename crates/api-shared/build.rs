@@ -1,3 +1,12 @@
+//! Build script for the `api-shared` crate.
+//!
+//! ## Purpose
+//! Generates Rust protobuf types from `vpr.proto` and emits a file-descriptor set.
+//!
+//! ## Intended use
+//! The generated types are shared by both gRPC and REST APIs. The descriptor set is used for gRPC
+//! reflection.
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let proto_file = std::path::Path::new(manifest_dir).join("vpr.proto");

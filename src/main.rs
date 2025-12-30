@@ -1,3 +1,12 @@
+//! Combined gRPC + REST server binary (`vpr-run`).
+//!
+//! ## Purpose
+//! Starts both the gRPC and REST API servers concurrently.
+//!
+//! ## Intended use
+//! This is the primary runtime entry point for VPR. It performs basic startup validation (for
+//! example, ensuring the patient data directory and EHR template exist) and then serves both APIs.
+
 use axum::{
     Router,
     extract::State,
@@ -63,7 +72,9 @@ struct ApiDoc;
 ///
 /// # Returns
 /// * `Ok(())` - If servers start and run successfully
-/// * `Err(anyhow::Error)` - If server startup or runtime fails
+///
+/// # Errors
+/// Returns an error if the servers cannot be configured, bound, or started.
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
@@ -246,16 +257,20 @@ async fn list_patients(
 )]
 /// Create a new patient record
 ///
-/// Creates a new patient with the provided first and last name.
-/// The patient data is stored as JSON in a sharded directory structure
-/// under the configured patient data directory.
+/// Creates a new clinical record and returns the generated identifier.
 ///
-/// # Parameters
-/// * None - Initialises clinical with no input
+/// Note: this endpoint currently initialises a clinical record only; it does not yet populate
+/// patient demographics.
+///
+/// # Arguments
+/// * `req` - Request body containing author information used for the initial Git commit
 ///
 /// # Returns
 /// * `Ok(Json<CreatePatientRes>)` - Initialised clinical with generated UUID
 /// * `Err((StatusCode, &str))` - Internal server error
+///
+/// # Errors
+/// Returns `500 Internal Server Error` if initialisation fails.
 async fn create_patient(
     State(_state): State<AppState>,
     Json(req): Json<CreatePatientReq>,
