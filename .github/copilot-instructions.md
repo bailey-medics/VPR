@@ -20,7 +20,7 @@ Overview
 Important files to reference
 - `src/main.rs` — Main binary that performs startup validation (checks for patient_data, ehr-template directories; creates clinical/demographics subdirs), creates runtime constants, and starts both gRPC (port 50051) and REST (port 3000) servers concurrently using tokio::join.
 - `crates/core/src/lib.rs` — **PURE DATA OPERATIONS**: Services for file/folder operations (sharded storage, directory traversal, Git repos per patient). **NO API CODE**.
-- `crates/core/src/clinical.rs` — ClinicalService: Initializes patients with EHR template copy, creates Git repo, signs commits with X.509.
+- `crates/core/src/clinical.rs` — ClinicalService: Initialises patients with EHR template copy, creates Git repo, signs commits with X.509.
 - `crates/core/src/demographics.rs` — DemographicsService: Updates patient demographics JSON, lists patients via directory traversal.
 - `crates/api-grpc/src/service.rs` — gRPC service implementation (VprService) with authentication, using core services.
 - `crates/api-shared/vpr.proto` — Canonical protobuf definitions for VPR service (note: national_id field present but unused in current impl).
@@ -50,6 +50,7 @@ Conventions and patterns to follow
 - File I/O: Direct `std::fs` operations with `serde_json`/`serde_yaml` for patient data; no database layer.
 - Git versioning: Each patient directory is a Git repo; commits signed with X.509 certificates from author.signature.
 - EHR template: `ehr-template/` directory copied to new patient clinical dirs; validated at startup.
+- Spelling: Use British English (en-GB) for documentation and other prose (mdBook pages, README, Rustdoc/comments).
 - **Architecture boundaries**: 
   - `core`: ONLY file/folder/git operations (ClinicalService, DemographicsService, data persistence)
   - `api-shared`: Shared API utilities (HealthService, auth, protobuf types)

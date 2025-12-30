@@ -5,13 +5,14 @@
 //! This crate contains pure data operations and file/folder management:
 //! - Patient creation and listing with sharded JSON storage
 //! - File system operations under `PATIENT_DATA_DIR`
-//! - Git-like versioning (future)
+//! - Git-like versioning
 //!
 //! **No API concerns**: Authentication, HTTP/gRPC servers, or service interfaces belong in `api-grpc`, `api-rest`, or `api-shared`.
 
 pub mod clinical;
 pub mod constants;
 pub mod demographics;
+pub(crate) mod git;
 
 // Use the shared api-shared crate for generated protobuf types.
 pub use api_shared::pb;
@@ -51,7 +52,7 @@ pub enum PatientError {
     YamlSerialization(serde_yaml::Error),
     #[error("failed to deserialize YAML: {0}")]
     YamlDeserialization(serde_yaml::Error),
-    #[error("failed to initialize git repository: {0}")]
+    #[error("failed to initialise git repository: {0}")]
     GitInit(git2::Error),
     #[error("failed to access git index: {0}")]
     GitIndex(git2::Error),
@@ -117,7 +118,7 @@ impl PatientService {
         Self
     }
 
-    /// Initializes a complete patient record with demographics and clinical components.
+    /// Initialises a complete patient record with demographics and clinical components.
     ///
     /// This function creates both a demographics repository and a clinical repository,
     /// links them together, and populates the demographics with the provided patient information.
@@ -136,7 +137,7 @@ impl PatientService {
     ///
     /// # Errors
     ///
-    /// Returns a `PatientError` if any step in the initialization fails.
+    /// Returns a `PatientError` if any step in the initialisation fails.
     pub fn initialise_full_record(
         &self,
         author: Author,
@@ -146,13 +147,13 @@ impl PatientService {
         namespace: Option<String>,
     ) -> PatientResult<FullRecord> {
         let demographics_service = crate::demographics::DemographicsService;
-        // Initialize demographics
+        // Initialise demographics
         let demographics_uuid = demographics_service.initialise(author.clone())?;
 
         // Update demographics with patient information
         demographics_service.update(&demographics_uuid, given_names, &last_name, &birth_date)?;
 
-        // Initialize clinical
+        // Initialise clinical
         let clinical_service = crate::clinical::ClinicalService;
         let clinical_uuid = clinical_service.initialise(author)?;
 
