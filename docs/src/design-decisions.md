@@ -107,3 +107,13 @@ X.509 underpins electronic signature mechanisms used for:
 These signatures apply to documents, not to the live patient record data model.
 
 They are usually implemented as separate workflows layered on top of clinical systems.
+
+## The patient's voice
+
+VPR stores both professional clinical entries and patient contributions in the same repository, using distinct artefact paths.
+Clinical truth is authored and signed under /clinical/.
+Patient input is preserved under /patient/ and may inform, but never overwrite, clinical records without professional review.
+
+## A single branch repository
+
+We only use a single "refs/heads/main" branch per repository in VPR. However, this is only policy, as Git itself allows multiple branches.
