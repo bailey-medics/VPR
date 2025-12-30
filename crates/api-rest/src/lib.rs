@@ -5,7 +5,7 @@
 //! Handles:
 //! - HTTP endpoints with axum
 //! - OpenAPI/Swagger documentation
-//! - REST-specific concerns (JSON serialization, CORS)
+//! - REST-specific concerns (JSON serialisation, CORS)
 //!
 //! Uses `api-shared` for common types and utilities.
 

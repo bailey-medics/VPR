@@ -13,6 +13,7 @@ pub mod clinical;
 pub mod constants;
 pub mod demographics;
 pub(crate) mod git;
+pub(crate) mod uuid;
 
 // Use the shared api-shared crate for generated protobuf types.
 pub use api_shared::pb;

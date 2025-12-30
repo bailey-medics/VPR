@@ -13,7 +13,6 @@ use serde::{Deserialize, Serialize};
 use serde_json;
 use std::fs;
 use tracing;
-use uuid::Uuid;
 
 use crate::{PatientError, PatientResult};
 
@@ -65,15 +64,13 @@ impl DemographicsService {
         // Determine storage directory from environment
         let data_dir = crate::patient_data_path();
 
-        // Generate uuid and a 32-hex form without hyphens for directory naming
-        let raw_uuid = Uuid::new_v4().to_string();
-        let uuid = raw_uuid.replace('-', "");
+        let demographics_uuid = crate::uuid::UuidService::new();
         let created_at = chrono::Utc::now().to_rfc3339();
 
         // Create initial patient JSON
         let patient = Patient {
             resource_type: "Patient".to_string(),
-            id: uuid.clone(),
+            id: demographics_uuid.to_string(),
             name: vec![],               // Empty initially
             birth_date: "".to_string(), // Empty initially
             created_at: created_at.clone(),
@@ -84,17 +81,14 @@ impl DemographicsService {
         let demographics_dir = data_dir.join(crate::constants::DEMOGRAPHICS_DIR_NAME);
         // Note: demographics directory creation moved to startup validation in main.rs
 
-        // Shard into two-level hex dirs from first 4 chars of the 32-char uuid within demographics
-        let s1 = &uuid[0..2];
-        let s2 = &uuid[2..4];
-        let patient_dir = demographics_dir.join(s1).join(s2).join(&uuid);
+        let patient_dir = demographics_uuid.sharded_dir(&demographics_dir);
         fs::create_dir_all(&patient_dir).map_err(PatientError::PatientDirCreation)?;
 
         let filename = patient_dir.join(crate::constants::PATIENT_JSON_FILENAME);
         fs::write(&filename, json).map_err(PatientError::FileWrite)?;
 
         // Initialise Git repository for the patient
-        let repo = git2::Repository::init(&patient_dir).map_err(PatientError::GitInit)?;
+        let repo = crate::git::GitService::init(&patient_dir)?.into_repo();
 
         // Create initial commit with demographics.json
         let mut index = repo.index().map_err(PatientError::GitIndex)?;
@@ -119,7 +113,7 @@ impl DemographicsService {
         )
         .map_err(PatientError::GitCommit)?;
 
-        Ok(uuid)
+        Ok(demographics_uuid.into_string())
     }
 
     /// Updates the demographics of an existing patient.
@@ -144,7 +138,7 @@ impl DemographicsService {
     /// the file fails.
     pub fn update(
         &self,
-        uuid: &str,
+        demographics_uuid: &str,
         given_names: Vec<String>,
         last_name: &str,
         birth_date: &str,
@@ -152,10 +146,8 @@ impl DemographicsService {
         let data_dir = crate::patient_data_path();
         let demographics_dir = data_dir.join(crate::constants::DEMOGRAPHICS_DIR_NAME);
 
-        let uuid = uuid.to_lowercase();
-        let s1 = &uuid[0..2];
-        let s2 = &uuid[2..4];
-        let patient_dir = demographics_dir.join(s1).join(s2).join(&uuid);
+        let demographics_uuid = crate::uuid::UuidService::parse(demographics_uuid)?;
+        let patient_dir = demographics_uuid.sharded_dir(&demographics_dir);
         let filename = patient_dir.join(crate::constants::PATIENT_JSON_FILENAME);
 
         // Read existing patient.json

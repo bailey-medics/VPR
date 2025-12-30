@@ -5,6 +5,8 @@
 //! initialising Git repositories for version control, and writing EHR status
 //! information in YAML format.
 
+use crate::git::GitService;
+use crate::yaml_write;
 use crate::Author;
 use chrono::{DateTime, Utc};
 use git2;
@@ -12,7 +14,6 @@ use serde::{Deserialize, Serialize};
 use serde_yaml;
 use std::fs;
 use std::path::Path;
-use uuid::Uuid;
 
 use base64::{engine::general_purpose, Engine as _};
 use p256::ecdsa::signature::Verifier;
@@ -79,9 +80,9 @@ pub struct ClinicalService;
 impl ClinicalService {
     /// Initialises a new clinical record for a patient.
     ///
-    /// This function creates a new clinical entry with a unique UUID, stores it
-    /// in a JSON file within a sharded directory structure, and initialises a
-    /// Git repository for version control.
+    /// This function creates a new clinical entry with a unique UUID, stores it in a sharded
+    /// directory structure, copies the EHR template into the patient's directory, writes an
+    /// initial `ehr_status.yaml`, and initialises a Git repository for version control.
     ///
     /// # Arguments
     ///
@@ -89,20 +90,16 @@ impl ClinicalService {
     ///
     /// # Returns
     ///
-    /// Returns the UUID of the newly created clinical record as a string.
+    /// Returns the UUID of the newly created clinical record as a string (canonical form: 32
+    /// lowercase hex characters, no hyphens).
     ///
     /// # Errors
     ///
     /// Returns a `PatientError` if any step in the initialisation fails, such as
     /// directory creation, file writing, or Git operations.
     pub fn initialise(&self, author: Author) -> PatientResult<String> {
-        // Generate 32-hex form UUID without hyphens and in lowercase safe for directory naming
-        let uuid = Uuid::new_v4().simple().to_string();
-
-        // Shard UUID into two-level hex dirs from first 4 chars of the 32-char uuid
-        let s1 = &uuid[0..2];
-        let s2 = &uuid[2..4];
-        let patient_dir = crate::clinical_data_path().join(s1).join(s2).join(&uuid);
+        let clinical_uuid = crate::uuid::UuidService::new();
+        let patient_dir = clinical_uuid.sharded_dir(&crate::clinical_data_path());
         fs::create_dir_all(&patient_dir).map_err(PatientError::PatientDirCreation)?;
 
         // Copy EHR template to patient directory
@@ -120,17 +117,16 @@ impl ClinicalService {
         let filename = patient_dir.join(crate::constants::EHR_STATUS_FILENAME);
         let ehr_status = EhrStatusInit {
             ehr_id: EhrId {
-                value: uuid.clone(),
+                value: clinical_uuid.to_string(),
             },
         };
-        crate::yaml_write(&filename, &ehr_status)?;
+        yaml_write(&filename, &ehr_status)?;
 
         // Initialise Git repository for the patient
-        let repo = git2::Repository::init(&patient_dir).map_err(PatientError::GitInit)?;
+        let repo = GitService::init(&patient_dir)?;
+        repo.commit_all(&author, "Initial clinical record")?;
 
-        crate::git::commit_all(&repo, &patient_dir, &author, "Initial clinical record")?;
-
-        Ok(uuid)
+        Ok(clinical_uuid.into_string())
     }
 
     /// Links the clinical record to the patient's demographics.
@@ -151,10 +147,10 @@ impl ClinicalService {
     ///
     /// # Errors
     ///
-    /// Returns a `PatientError` if serialization or file writing fails.
+    /// Returns a `PatientError` if serialisation or file writing fails.
     pub fn link_to_demographics(
         &self,
-        uuid: &str,
+        clinical_uuid: &str,
         demographics_uuid: &str,
         namespace: Option<String>,
     ) -> PatientResult<()> {
@@ -164,10 +160,8 @@ impl ClinicalService {
 
         let clinical_dir = crate::clinical_data_path();
 
-        let uuid = uuid.to_lowercase();
-        let s1 = &uuid[0..2];
-        let s2 = &uuid[2..4];
-        let patient_dir = clinical_dir.join(s1).join(s2).join(&uuid);
+        let clinical_uuid = crate::uuid::UuidService::parse(clinical_uuid)?;
+        let patient_dir = clinical_uuid.sharded_dir(&clinical_dir);
 
         // Read existing EHR status to get the current ehr_id
         let filename = patient_dir.join(crate::constants::EHR_STATUS_FILENAME);
@@ -194,7 +188,7 @@ impl ClinicalService {
         };
 
         // Write the updated EHR status
-        crate::yaml_write(&filename, &ehr_status)?;
+        yaml_write(&filename, &ehr_status)?;
 
         Ok(())
     }
@@ -212,18 +206,13 @@ impl ClinicalService {
     ///
     /// Returns the timestamp of the first commit as a `DateTime<Utc>`.
     ///
-    /// # Arguments
-    ///
-    /// * `uuid` - The UUID of the clinical record.
-    /// * `base_dir` - Optional base directory for patient data; defaults to PATIENT_DATA_DIR env var or "patient_data".
-    ///
     /// # Errors
     ///
     /// Returns a `PatientError` if the repository cannot be opened, the head
     /// cannot be retrieved, or the commit cannot be peeled.
     pub fn get_first_commit_time(
         &self,
-        uuid: &str,
+        clinical_uuid: &str,
         base_dir: Option<&Path>,
     ) -> PatientResult<DateTime<Utc>> {
         let base = base_dir
@@ -233,12 +222,10 @@ impl ClinicalService {
         let data_dir = Path::new(&base);
         let clinical_dir = data_dir.join(crate::constants::CLINICAL_DIR_NAME);
 
-        let uuid = uuid.to_lowercase();
-        let s1 = &uuid[0..2];
-        let s2 = &uuid[2..4];
-        let patient_dir = clinical_dir.join(s1).join(s2).join(&uuid);
+        let clinical_uuid = crate::uuid::UuidService::parse(clinical_uuid)?;
+        let patient_dir = clinical_uuid.sharded_dir(&clinical_dir);
 
-        let repo = git2::Repository::open(&patient_dir).map_err(PatientError::GitOpen)?;
+        let repo = GitService::open(&patient_dir)?.into_repo();
         let head = repo.head().map_err(PatientError::GitHead)?;
         let commit = head.peel_to_commit().map_err(PatientError::GitPeel)?;
 
@@ -258,7 +245,7 @@ impl ClinicalService {
     ///
     /// # Arguments
     ///
-    /// * `uuid` - The UUID of the clinical record.
+    /// * `clinical_uuid` - The UUID of the clinical record.
     /// * `public_key_pem` - The PEM-encoded public key used for verification.
     ///
     /// # Returns
@@ -269,14 +256,17 @@ impl ClinicalService {
     ///
     /// Returns a `PatientError` if the repository cannot be opened, the commit cannot be accessed,
     /// or the signature/public key cannot be parsed.
-    pub fn verify_commit_signature(&self, uuid: &str, public_key_pem: &str) -> PatientResult<bool> {
+    pub fn verify_commit_signature(
+        &self,
+        clinical_uuid: &str,
+        public_key_pem: &str,
+    ) -> PatientResult<bool> {
         let clinical_dir = crate::clinical_data_path();
-        let uuid = uuid.to_lowercase();
-        let s1 = &uuid[0..2];
-        let s2 = &uuid[2..4];
-        let patient_dir = clinical_dir.join(s1).join(s2).join(&uuid);
 
-        let repo = git2::Repository::open(&patient_dir).map_err(PatientError::GitOpen)?;
+        let clinical_uuid = crate::uuid::UuidService::parse(clinical_uuid)?;
+        let patient_dir = clinical_uuid.sharded_dir(&clinical_dir);
+
+        let repo = GitService::open(&patient_dir)?.into_repo();
 
         let head = repo.head().map_err(PatientError::GitHead)?;
         let commit = head.peel_to_commit().map_err(PatientError::GitPeel)?;
@@ -385,12 +375,22 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use p256::ecdsa::SigningKey;
     use p256::pkcs8::{EncodePrivateKey, EncodePublicKey};
     use std::env;
+    use std::sync::{Mutex, OnceLock};
     use tempfile::TempDir;
+
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("lock poisoned")
+    }
 
     #[test]
     fn test_initialise_creates_clinical_record() {
+        let _lock = env_lock();
         // Save original env var
         let original_env = env::var("PATIENT_DATA_DIR").ok();
 
@@ -465,6 +465,7 @@ mod tests {
 
     #[test]
     fn test_link_to_demographics_updates_ehr_status() {
+        let _lock = env_lock();
         // Save original env var
         let original_env = env::var("PATIENT_DATA_DIR").ok();
 
@@ -497,10 +498,9 @@ mod tests {
 
         // Verify ehr_status.yaml was updated with linking information
         let clinical_dir = temp_dir.path().join(crate::constants::CLINICAL_DIR_NAME);
-        let id_lower = clinical_uuid.to_lowercase();
-        let s1 = &id_lower[0..2];
-        let s2 = &id_lower[2..4];
-        let patient_dir = clinical_dir.join(s1).join(s2).join(&id_lower);
+        let patient_dir = crate::uuid::UuidService::parse(&clinical_uuid)
+            .expect("clinical_uuid should be canonical")
+            .sharded_dir(&clinical_dir);
         let ehr_status_file = patient_dir.join(crate::constants::EHR_STATUS_FILENAME);
 
         assert!(ehr_status_file.exists(), "ehr_status.yaml should exist");
@@ -542,6 +542,7 @@ mod tests {
 
     #[test]
     fn test_get_first_commit_time() {
+        let _lock = env_lock();
         // Save original env var
         let original_env = env::var("PATIENT_DATA_DIR").ok();
 
@@ -586,6 +587,7 @@ mod tests {
 
     #[test]
     fn test_verify_commit_signature() {
+        let _lock = env_lock();
         // Save original env var
         let original_env = env::var("PATIENT_DATA_DIR").ok();
 
