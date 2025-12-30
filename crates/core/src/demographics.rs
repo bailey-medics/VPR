@@ -6,12 +6,13 @@
 //! version control using Git. Demographic updates include name and birth date
 //! modifications.
 
+use crate::git::{GitService, VprCommitAction, VprCommitDomain, VprCommitMessage};
 use crate::Author;
 use chrono;
-use git2;
 use serde::{Deserialize, Serialize};
 use serde_json;
 use std::fs;
+use std::path::PathBuf;
 use tracing;
 
 use crate::{PatientError, PatientResult};
@@ -88,30 +89,17 @@ impl DemographicsService {
         fs::write(&filename, json).map_err(PatientError::FileWrite)?;
 
         // Initialise Git repository for the patient
-        let repo = crate::git::GitService::init(&patient_dir)?.into_repo();
-
-        // Create initial commit with demographics.json
-        let mut index = repo.index().map_err(PatientError::GitIndex)?;
-        index
-            .add_path(std::path::Path::new(
-                crate::constants::PATIENT_JSON_FILENAME,
-            ))
-            .map_err(PatientError::GitAdd)?;
-
-        let tree_id = index.write_tree().map_err(PatientError::GitWriteTree)?;
-        let tree = repo.find_tree(tree_id).map_err(PatientError::GitFindTree)?;
-
-        let sig = git2::Signature::now(&author.name, &author.email)
-            .map_err(PatientError::GitSignature)?;
-        repo.commit(
-            Some("HEAD"),
-            &sig,
-            &sig,
-            "Initial patient record",
-            &tree,
-            &[],
-        )
-        .map_err(PatientError::GitCommit)?;
+        let repo = GitService::init(&patient_dir)?;
+        let msg = VprCommitMessage::new(
+            VprCommitDomain::Record,
+            VprCommitAction::Init,
+            "Demographics record created",
+        )?;
+        repo.commit_paths(
+            &author,
+            &msg,
+            &[PathBuf::from(crate::constants::PATIENT_JSON_FILENAME)],
+        )?;
 
         Ok(demographics_uuid.into_string())
     }

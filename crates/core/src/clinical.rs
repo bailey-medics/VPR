@@ -6,7 +6,7 @@
 //! information in YAML format.
 
 use crate::constants;
-use crate::git::GitService;
+use crate::git::{GitService, VprCommitAction, VprCommitDomain, VprCommitMessage};
 use crate::uuid::UuidService;
 use crate::{clinical_data_path, yaml_write, Author, PatientError, PatientResult};
 use chrono::{DateTime, Utc};
@@ -123,7 +123,12 @@ impl ClinicalService {
 
         // Initialise Git repository for the patient
         let repo = GitService::init(&patient_dir)?;
-        repo.commit_all(&author, "Initial clinical record")?;
+        let msg = VprCommitMessage::new(
+            VprCommitDomain::Record,
+            VprCommitAction::Init,
+            "Clinical record created",
+        )?;
+        repo.commit_all(&author, &msg)?;
 
         Ok(clinical_uuid.into_string())
     }
@@ -453,7 +458,10 @@ mod tests {
         let repo = git2::Repository::open(&patient_dir).expect("Failed to open Git repo");
         let head = repo.head().expect("Failed to get HEAD");
         let commit = head.peel_to_commit().expect("Failed to get commit");
-        assert_eq!(commit.message().unwrap(), "Initial clinical record");
+        assert_eq!(
+            commit.message().unwrap(),
+            "record:init: Clinical record created"
+        );
 
         // Clean up environment variable
         env::remove_var("PATIENT_DATA_DIR");

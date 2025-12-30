@@ -32,10 +32,223 @@ use base64::{engine::general_purpose, Engine as _};
 use p256::ecdsa::signature::Signer;
 use p256::ecdsa::{Signature, SigningKey};
 use p256::pkcs8::DecodePrivateKey;
+use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 const MAIN_REF: &str = "refs/heads/main";
+
+/// Controlled vocabulary for VPR commit message domains.
+///
+/// These are intentionally small and stable, and should be treated as labels/indexes.
+///
+/// Safety/intent: Do not include patient identifiers or raw clinical data in commit messages.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum VprCommitDomain {
+    Record,
+    Obs,
+    Dx,
+    Tx,
+    Admin,
+    Corr,
+    Meta,
+}
+
+impl VprCommitDomain {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Record => "record",
+            Self::Obs => "obs",
+            Self::Dx => "dx",
+            Self::Tx => "tx",
+            Self::Admin => "admin",
+            Self::Corr => "corr",
+            Self::Meta => "meta",
+        }
+    }
+}
+
+impl fmt::Display for VprCommitDomain {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Controlled vocabulary for VPR commit message actions.
+///
+/// Safety/intent: Do not include patient identifiers or raw clinical data in commit messages.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum VprCommitAction {
+    Init,
+    Add,
+    Update,
+    Remove,
+    Correct,
+    Verify,
+    Close,
+}
+
+impl VprCommitAction {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Init => "init",
+            Self::Add => "add",
+            Self::Update => "update",
+            Self::Remove => "remove",
+            Self::Correct => "correct",
+            Self::Verify => "verify",
+            Self::Close => "close",
+        }
+    }
+}
+
+impl fmt::Display for VprCommitAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// A single commit trailer line in standard Git trailer format.
+///
+/// Renders as `Key: Value`.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub(crate) struct VprCommitTrailer {
+    key: String,
+    value: String,
+}
+
+impl VprCommitTrailer {
+    #[allow(dead_code)]
+    pub(crate) fn new(key: impl Into<String>, value: impl Into<String>) -> PatientResult<Self> {
+        let key = key.into().trim().to_string();
+        let value = value.into().trim().to_string();
+
+        if key.is_empty()
+            || key.contains(['\n', '\r'])
+            || key.contains(':')
+            || value.is_empty()
+            || value.contains(['\n', '\r'])
+        {
+            return Err(PatientError::InvalidInput);
+        }
+
+        Ok(Self { key, value })
+    }
+
+    pub(crate) fn key(&self) -> &str {
+        &self.key
+    }
+
+    pub(crate) fn value(&self) -> &str {
+        &self.value
+    }
+}
+
+/// A structured, predictable VPR commit message.
+///
+/// Rendering rules:
+///
+/// - Subject line: `<domain>:<action>: <summary>`
+/// - Trailers (optional): standard Git trailer lines `Key: Value`
+/// - If there are trailers, a single blank line separates subject from trailers.
+/// - No free-form prose paragraphs.
+///
+/// Safety/intent: Commit messages are labels and indexes; do not include patient identifiers or
+/// raw clinical data.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct VprCommitMessage {
+    domain: VprCommitDomain,
+    action: VprCommitAction,
+    summary: String,
+    trailers: Vec<VprCommitTrailer>,
+}
+
+impl VprCommitMessage {
+    #[allow(dead_code)]
+    pub(crate) fn new(
+        domain: VprCommitDomain,
+        action: VprCommitAction,
+        summary: impl Into<String>,
+    ) -> PatientResult<Self> {
+        let summary = summary.into().trim().to_string();
+        if summary.is_empty() || summary.contains(['\n', '\r']) {
+            return Err(PatientError::InvalidInput);
+        }
+
+        Ok(Self {
+            domain,
+            action,
+            summary,
+            trailers: Vec::new(),
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn with_trailer(
+        mut self,
+        key: impl Into<String>,
+        value: impl Into<String>,
+    ) -> PatientResult<Self> {
+        self.trailers.push(VprCommitTrailer::new(key, value)?);
+        Ok(self)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn domain(&self) -> VprCommitDomain {
+        self.domain
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn action(&self) -> VprCommitAction {
+        self.action
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn summary(&self) -> &str {
+        &self.summary
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn trailers(&self) -> &[VprCommitTrailer] {
+        &self.trailers
+    }
+
+    pub(crate) fn render(&self) -> PatientResult<String> {
+        // Defensively validate invariants so `VprCommitMessage` stays safe even if constructed
+        // manually (e.g. via struct literal within the crate).
+        if self.summary.trim().is_empty() || self.summary.contains(['\n', '\r']) {
+            return Err(PatientError::InvalidInput);
+        }
+
+        let mut rendered = format!("{}:{}: {}", self.domain, self.action, self.summary.trim());
+        if self.trailers.is_empty() {
+            return Ok(rendered);
+        }
+
+        rendered.push_str("\n\n");
+        for (idx, trailer) in self.trailers.iter().enumerate() {
+            if trailer.key().contains(['\n', '\r'])
+                || trailer.key().trim().is_empty()
+                || trailer.key().contains(':')
+                || trailer.value().contains(['\n', '\r'])
+            {
+                return Err(PatientError::InvalidInput);
+            }
+
+            if idx > 0 {
+                rendered.push('\n');
+            }
+            rendered.push_str(trailer.key());
+            rendered.push_str(": ");
+            rendered.push_str(trailer.value());
+        }
+
+        Ok(rendered)
+    }
+}
 
 /// Service for common Git operations on a repository rooted at `workdir`.
 ///
@@ -84,9 +297,16 @@ impl GitService {
     }
 
     /// Create a commit including *all* files under the repo workdir.
-    pub(crate) fn commit_all(&self, author: &Author, message: &str) -> PatientResult<git2::Oid> {
+    ///
+    /// Commit messages must use the structured `VprCommitMessage` format.
+    pub(crate) fn commit_all(
+        &self,
+        author: &Author,
+        message: &VprCommitMessage,
+    ) -> PatientResult<git2::Oid> {
+        let rendered = message.render()?;
         let paths = self.collect_paths_recursive()?;
-        self.commit_paths(author, message, &paths)
+        self.commit_paths_rendered(author, &rendered, &paths)
     }
 
     /// Create a commit including only the provided file paths (relative to the repo workdir).
@@ -102,6 +322,16 @@ impl GitService {
     ///
     /// Paths containing `..` are rejected.
     pub(crate) fn commit_paths(
+        &self,
+        author: &Author,
+        message: &VprCommitMessage,
+        relative_paths: &[PathBuf],
+    ) -> PatientResult<git2::Oid> {
+        let rendered = message.render()?;
+        self.commit_paths_rendered(author, &rendered, relative_paths)
+    }
+
+    fn commit_paths_rendered(
         &self,
         author: &Author,
         message: &str,
@@ -259,5 +489,70 @@ impl GitService {
         let mut paths = Vec::new();
         walk(&self.workdir, &self.workdir, &mut paths)?;
         Ok(paths)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn domain_serialises_lowercase() {
+        let s = serde_json::to_string(&VprCommitDomain::Record).unwrap();
+        assert_eq!(s, "\"record\"");
+    }
+
+    #[test]
+    fn action_serialises_lowercase() {
+        let s = serde_json::to_string(&VprCommitAction::Init).unwrap();
+        assert_eq!(s, "\"init\"");
+    }
+
+    #[test]
+    fn render_without_trailers_is_single_line() {
+        let msg = VprCommitMessage::new(
+            VprCommitDomain::Record,
+            VprCommitAction::Init,
+            "Patient record created",
+        )
+        .unwrap();
+        assert_eq!(msg.render().unwrap(), "record:init: Patient record created");
+    }
+
+    #[test]
+    fn render_with_trailers_matches_git_trailer_format() {
+        let msg = VprCommitMessage::new(
+            VprCommitDomain::Record,
+            VprCommitAction::Init,
+            "Patient record created",
+        )
+        .unwrap()
+        .with_trailer("Actor-Role", "Consultant Physician")
+        .unwrap()
+        .with_trailer("Authority", "GMC")
+        .unwrap();
+
+        assert_eq!(
+            msg.render().unwrap(),
+            "record:init: Patient record created\n\nActor-Role: Consultant Physician\nAuthority: GMC"
+        );
+    }
+
+    #[test]
+    fn rejects_multiline_summary() {
+        let err = VprCommitMessage::new(
+            VprCommitDomain::Record,
+            VprCommitAction::Init,
+            "line1\nline2",
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, PatientError::InvalidInput));
+    }
+
+    #[test]
+    fn rejects_invalid_trailer_key() {
+        let err = VprCommitTrailer::new("Bad:Key", "Value").unwrap_err();
+        assert!(matches!(err, PatientError::InvalidInput));
     }
 }

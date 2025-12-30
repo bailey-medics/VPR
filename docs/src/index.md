@@ -1,5 +1,7 @@
 # Versioned Patient Repository (VPR)
 
+> A patient-owned record with professionally curated truth.
+
 Welcome to the Versioned Patient Repository (VPR) documentation!
 
 The VPR uses files rather than traditional databases to store patient data. On top of this, version control via Git is used to track changes to patient records over time, providing a robust and auditable history of all modifications.
