@@ -5,9 +5,10 @@
 //! initialising Git repositories for version control, and writing EHR status
 //! information in YAML format.
 
+use crate::constants;
 use crate::git::GitService;
-use crate::yaml_write;
-use crate::Author;
+use crate::uuid::UuidService;
+use crate::{clinical_data_path, yaml_write, Author, PatientError, PatientResult};
 use chrono::{DateTime, Utc};
 use git2;
 use serde::{Deserialize, Serialize};
@@ -20,8 +21,6 @@ use p256::ecdsa::signature::Verifier;
 use p256::ecdsa::{Signature, VerifyingKey};
 use p256::pkcs8::DecodePublicKey;
 use x509_parser::prelude::*;
-
-use crate::{PatientError, PatientResult};
 
 /// Represents the EHR status information in openEHR format.
 /// This struct models the EHR status archetype for patient records.
@@ -98,8 +97,8 @@ impl ClinicalService {
     /// Returns a `PatientError` if any step in the initialisation fails, such as
     /// directory creation, file writing, or Git operations.
     pub fn initialise(&self, author: Author) -> PatientResult<String> {
-        let clinical_uuid = crate::uuid::UuidService::new();
-        let patient_dir = clinical_uuid.sharded_dir(&crate::clinical_data_path());
+        let clinical_uuid = UuidService::new();
+        let patient_dir = clinical_uuid.sharded_dir(&clinical_data_path());
         fs::create_dir_all(&patient_dir).map_err(PatientError::PatientDirCreation)?;
 
         // Copy EHR template to patient directory
@@ -110,11 +109,11 @@ impl ClinicalService {
             .parent()
             .and_then(|p| p.parent())
             .ok_or(PatientError::InvalidInput)?;
-        let template_dir = workspace_root.join(crate::constants::EHR_TEMPLATE_DIR);
+        let template_dir = workspace_root.join(constants::EHR_TEMPLATE_DIR);
         copy_dir_recursive(&template_dir, &patient_dir).map_err(PatientError::FileWrite)?;
 
         // Create initial EHR status YAML file
-        let filename = patient_dir.join(crate::constants::EHR_STATUS_FILENAME);
+        let filename = patient_dir.join(constants::EHR_STATUS_FILENAME);
         let ehr_status = EhrStatusInit {
             ehr_id: EhrId {
                 value: clinical_uuid.to_string(),
@@ -158,13 +157,13 @@ impl ClinicalService {
             std::env::var("VPR_NAMESPACE").unwrap_or_else(|_| "vpr.dev.1".into())
         });
 
-        let clinical_dir = crate::clinical_data_path();
+        let clinical_dir = clinical_data_path();
 
-        let clinical_uuid = crate::uuid::UuidService::parse(clinical_uuid)?;
+        let clinical_uuid = UuidService::parse(clinical_uuid)?;
         let patient_dir = clinical_uuid.sharded_dir(&clinical_dir);
 
         // Read existing EHR status to get the current ehr_id
-        let filename = patient_dir.join(crate::constants::EHR_STATUS_FILENAME);
+        let filename = patient_dir.join(constants::EHR_STATUS_FILENAME);
         let existing_yaml = fs::read_to_string(&filename).map_err(PatientError::FileRead)?;
         let existing_status: EhrStatusInit =
             serde_yaml::from_str(&existing_yaml).map_err(PatientError::YamlDeserialization)?;
@@ -218,11 +217,11 @@ impl ClinicalService {
         let base = base_dir
             .map(|p| p.to_string_lossy().to_string())
             .or_else(|| std::env::var("PATIENT_DATA_DIR").ok())
-            .unwrap_or_else(|| crate::constants::DEFAULT_PATIENT_DATA_DIR.into());
+            .unwrap_or_else(|| constants::DEFAULT_PATIENT_DATA_DIR.into());
         let data_dir = Path::new(&base);
-        let clinical_dir = data_dir.join(crate::constants::CLINICAL_DIR_NAME);
+        let clinical_dir = data_dir.join(constants::CLINICAL_DIR_NAME);
 
-        let clinical_uuid = crate::uuid::UuidService::parse(clinical_uuid)?;
+        let clinical_uuid = UuidService::parse(clinical_uuid)?;
         let patient_dir = clinical_uuid.sharded_dir(&clinical_dir);
 
         let repo = GitService::open(&patient_dir)?.into_repo();
@@ -261,9 +260,9 @@ impl ClinicalService {
         clinical_uuid: &str,
         public_key_pem: &str,
     ) -> PatientResult<bool> {
-        let clinical_dir = crate::clinical_data_path();
+        let clinical_dir = clinical_data_path();
 
-        let clinical_uuid = crate::uuid::UuidService::parse(clinical_uuid)?;
+        let clinical_uuid = UuidService::parse(clinical_uuid)?;
         let patient_dir = clinical_uuid.sharded_dir(&clinical_dir);
 
         let repo = GitService::open(&patient_dir)?.into_repo();
@@ -419,7 +418,7 @@ mod tests {
         assert_eq!(clinical_uuid.len(), 32, "UUID should be 32 characters");
 
         // Verify directory structure exists
-        let clinical_dir = temp_dir.path().join(crate::constants::CLINICAL_DIR_NAME);
+        let clinical_dir = temp_dir.path().join(constants::CLINICAL_DIR_NAME);
         assert!(clinical_dir.exists(), "clinical directory should exist");
 
         // Extract sharding directories from UUID
@@ -497,11 +496,11 @@ mod tests {
         assert!(result.is_ok(), "link_to_demographics should succeed");
 
         // Verify ehr_status.yaml was updated with linking information
-        let clinical_dir = temp_dir.path().join(crate::constants::CLINICAL_DIR_NAME);
-        let patient_dir = crate::uuid::UuidService::parse(&clinical_uuid)
+        let clinical_dir = temp_dir.path().join(constants::CLINICAL_DIR_NAME);
+        let patient_dir = UuidService::parse(&clinical_uuid)
             .expect("clinical_uuid should be canonical")
             .sharded_dir(&clinical_dir);
-        let ehr_status_file = patient_dir.join(crate::constants::EHR_STATUS_FILENAME);
+        let ehr_status_file = patient_dir.join(constants::EHR_STATUS_FILENAME);
 
         assert!(ehr_status_file.exists(), "ehr_status.yaml should exist");
 

@@ -56,6 +56,11 @@ Conventions and patterns to follow
   - For functions/methods, include clear `# Arguments`, `# Returns`, and `# Errors` sections **when applicable**.
     - If there are no arguments/meaningful return value/no error conditions to document, omit the empty section.
   - For each module, start the file with `//!` module-level Rustdoc that outlines what the module does and what it is intended to do.
+- Imports and naming:
+  - Prefer adding clear `use` imports (for example, `use crate::constants;`, `use crate::uuid::UuidService;`) rather than repeating long paths like `crate::...` throughout the file.
+  - Avoid glob imports (`use crate::foo::*;`) unless there is a strong reason.
+  - Keep imports scoped to what the file uses; remove unused imports to satisfy clippy `-D warnings`.
+  - If two imports would conflict, use explicit renaming (`use crate::thing::Type as ThingType;`) rather than falling back to fully-qualified paths everywhere.
 - **Architecture boundaries**: 
   - `core`: ONLY file/folder/git operations (ClinicalService, DemographicsService, data persistence)
   - `api-shared`: Shared API utilities (HealthService, auth, protobuf types)
