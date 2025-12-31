@@ -1,119 +1,132 @@
 # Design decisions
 
-## Separation of Patient Demographics and Clinical Data
+This document captures the key architectural and governance decisions behind VPR, and the reasoning for each. The emphasis throughout is on auditability, clinical accountability, privacy, and long-term robustness.
 
-In VPR, patient demographics and clinical data are stored separately to preserve privacy, improve data integrity, and follow openEHR principles. The demographics repository (equivalent to a Master Patient Index) contains personal identifiers such as name, date of birth, and national ID, while the clinical repository holds all medical content including observations, encounters, and results. The only connection between them is a reference stored in the clinical repository’s ehr_status.subject.external_ref, which points to the corresponding demographic record. This separation allows clinical data to be shared, versioned, and audited independently of personally identifiable information, supporting both patient confidentiality and modular system design.
+---
 
-Ref: [https://specifications.openehr.org/releases/1.0.1/html/architecture/overview/Output/design_of_ehr.html](https://specifications.openehr.org/releases/1.0.1/html/architecture/overview/Output/design_of_ehr.html)
+## Separation of demographics and clinical data
 
-FHIR for demographics
+VPR stores **patient demographics** and **clinical data** in separate repositories.
 
-openEHR for clinical data
+- The **demographics repository** (equivalent to a Master Patient Index) contains personal identifiers such as name, date of birth, and national identifiers.
+- The **clinical repository** contains all medical content, including observations, diagnoses, encounters, and results.
 
-## Shard directory structure
+The only link between the two is a reference stored in `ehr_status.subject.external_ref` within the clinical repository, pointing to the corresponding demographic record.
 
-VPR uses sharded directories to keep filesystem performance predictable and scalable as the number of patient or EHR repositories grows. Instead of placing every record under a single massive directory—which can slow down lookups and directory listings on most filesystems—VPR distributes repositories across multiple subfolders based on a hash or prefix of their UUID. This structure ensures faster access times, avoids inode exhaustion, and keeps Git operations efficient even with thousands of records. In short, sharding prevents filesystem bottlenecks by spreading data evenly across smaller, manageable directory trees.
+This design follows established openEHR principles and provides several benefits:
 
-## Testing
+- Clinical data can be shared, versioned, and audited independently of personally identifiable information.
+- Privacy risks are reduced by minimising the spread of identifiers.
+- Systems remain modular, allowing demographics and clinical services to evolve separately.
 
-When testing VPR’s file creation and repository logic, it is best to use real temporary directories rather than mocked filesystems. Because file creation and structure are central to VPR’s design, tests should verify that directories, Git repositories, and configuration files are created exactly as they will be in production. Using crates such as tempfile or assert_fs allows tests to write into isolated, automatically cleaned-up folders, ensuring realism without cluttering the developer’s system. This approach validates not only path logic but also permissions, file naming, and serialisation behaviour—details that mocks often overlook. In short, VPR’s tests should interact with the filesystem genuinely but safely, using temporary sandboxes to confirm that the system builds and cleans up its data as intended.
+In practice:
 
-VPR uses the tempfile crate for testing file creation and repository logic. The crate provides automatically managed temporary files and directories that are securely created in the system’s temp folder and deleted when the test ends. Because VPR’s core functionality involves creating and managing filesystem structures, these tests must interact with real files rather than mocks. Using tempfile::TempDir allows us to test against the actual operating system, validating path resolution, permissions, serialisation, and cleanup behaviour without leaving residual data on the developer’s machine. This ensures our tests remain both realistic and self-contained, accurately reflecting production behaviour while maintaining a clean and reproducible testing environment.
+- **FHIR** is used for demographics.
+- **openEHR** is used for structured clinical data.
 
-## Signed Commits in VPR
+Reference:  
+https://specifications.openehr.org/releases/1.0.1/html/architecture/overview/Output/design_of_ehr.html
 
-VPR requires all Git commits to be cryptographically signed to guarantee the authenticity and integrity of every change made to a patient’s digital record. Each commit forms part of the clinical audit trail, ensuring that the author of every modification—whether a clinician, developer, or automated process—can be verified beyond doubt. This provides non-repudiation (proof that a specific individual authorised a change) and makes any tampering or unauthorised alteration immediately detectable. In healthcare systems, where patient safety and data provenance are paramount, this level of assurance is essential.
+---
 
-To achieve this, VPR mandates the use of X.509 certificates for commit signing. X.509 is the same internationally recognised standard that underpins secure web traffic (TLS), encrypted email (S/MIME), and enterprise PKI systems. Each certificate binds a cryptographic key to a verified organisational identity and includes expiry and revocation capabilities. This enables hospitals or healthcare organisations to centrally issue, manage, and revoke clinician or system signing certificates as part of their normal governance and information security processes.
+## Sharded directory structure
 
-Alternative signing methods such as SSH or GPG were intentionally not adopted. SSH keys, while simple, lack built-in identity validation, expiry, or revocation mechanisms, making them unsuitable for regulated environments. GPG, though capable of strong cryptography, relies on a decentralised “web of trust” model that does not align with the controlled identity assurance required in clinical governance. In contrast, X.509 certificates provide a trusted, hierarchical chain of identity that integrates directly with organisational PKI and complies with established healthcare and security standards.
+VPR uses **sharded directory layouts** to maintain predictable filesystem performance as the number of patient repositories grows.
 
-In short, VPR’s mandatory use of X.509-signed commits transforms every repository into a tamper-evident, cryptographically verifiable clinical ledger, ensuring that each change is traceable to an authenticated, accountable individual within a trusted institutional framework.
+Rather than placing all repositories in a single directory, repositories are distributed across subdirectories derived from a UUID prefix or hash. This avoids filesystem bottlenecks, improves lookup performance, and keeps Git operations efficient at scale.
 
-### The core idea
+Sharding ensures that the system remains performant and manageable even with very large numbers of patient records.
 
-In the NHS, X.509 certificates are primarily used for identity, authentication, and trust between systems. They underpin who you are and whether a system should trust you, not what you have written clinically.
+---
 
-The anchor for all of this is the NHS Public Key Infrastructure (PKI), operated nationally under NHS England.
+## Testing strategy
 
-#### 1. NHS Smartcards – the most visible use of X.509
+VPR’s core functionality depends on real filesystem behaviour. As a result, tests are designed to interact with **actual temporary directories**, not mocked filesystems.
 
-NHS smartcards are the clearest, most widespread use of X.509 in day-to-day clinical life.
+Using crates such as `tempfile`, tests create isolated, automatically cleaned-up directories that closely mirror production behaviour. This allows tests to validate:
 
-Each smartcard contains X.509 digital certificates issued by the NHS PKI. These certificates are:
+- directory creation and layout,
+- Git repository initialisation,
+- file permissions and naming,
+- serialisation and cleanup behaviour.
 
-- Bound to a real person (for example, a clinician)
-- Linked to their role and organisation
-- Protected by the physical card and a personal identification number
+This approach keeps tests realistic while remaining safe, reproducible, and free from side effects on the developer’s machine.
 
-When a clinician inserts their smartcard and enters their personal identification number:
+---
 
-- The certificate on the card is presented to the system
-- The system validates the certificate against the NHS PKI trust chain
-- The clinician is authenticated as a known, trusted individual
+## Signed Git commits in VPR (summary)
 
-This is certificate-based authentication, not just username and password.
+VPR uses **cryptographically signed Git commits** to provide immutable, auditable authorship of clinical records.
 
-Crucially, the certificate is used to log in, not to sign individual clinical entries.
+For signed commits, VPR embeds a **self-contained cryptographic payload directly in the commit object**, not as files in the repository. This payload includes:
 
-#### 2. Role-Based Access Control (RBAC)
+- an ECDSA P-256 signature over the canonical commit content,
+- the author’s public signing key,
+- an optional X.509 certificate issued by a trusted authority (for example a professional regulator).
 
-Once authenticated via the smartcard certificate, NHS systems then apply role-based access control.
+The private key is generated and held by the author and is never shared or stored in the repository.
 
-The certificate proves identity.
-The role assignment (for example, consultant, registrar, pharmacist) determines what the user can do.
+Because all verification material is attached to the commit itself, signed VPR commits can be verified **offline**, years later, without reliance on external services. Each commit therefore acts as a sealed attestation linking the clinical change to a named, accountable professional identity.
 
-X.509 plays no direct role here beyond establishing a trusted identity at login. The permissions logic lives in directories and access control services, not in the certificate itself.
+---
 
-#### 3. Access to national NHS systems (Spine services)
+## Why X.509 certificates
 
-Smartcard-based X.509 authentication is required for access to many national services, including:
+VPR mandates the use of **X.509 certificates** for commit signing.
 
-- Patient demographic services
-- Summary Care Records
-- Prescription and dispensing systems
-- Other Spine-connected applications
+X.509 is the same widely adopted standard used for:
 
-These systems trust users because they trust the NHS PKI certificate chain, not because they trust the local hospital.
+- secure web traffic (Transport Layer Security),
+- encrypted email,
+- enterprise public key infrastructure,
+- regulated identity systems.
 
-This gives the NHS a nationally consistent trust model.
+Each certificate binds a public key to a verified identity and supports expiry and revocation, making it suitable for regulated healthcare environments.
 
-#### 4. System-to-system communication (mutual transport layer security)
+Other signing mechanisms were deliberately rejected:
 
-X.509 is also widely used between systems, not just for people.
+- **SSH keys** lack identity assurance, expiry, and revocation.
+- **GPG** relies on a decentralised web-of-trust model that does not align with formal clinical governance.
 
-NHS services often use mutual transport layer security, where:
+X.509 provides a hierarchical, auditable trust model that fits naturally with healthcare regulation and organisational identity management.
 
-- Both client and server present X.509 certificates
-- Each side validates the other against trusted certificate authorities
+---
 
-This is common for:
+## X.509 in the NHS (context)
 
-- Spine integrations
-- Messaging between organisations
-- Secure application programming interfaces
+In the NHS, X.509 certificates are primarily used for **identity and authentication**, not for signing individual clinical entries.
 
-Again, this secures the connection, not the content.
+The trust anchor is the **NHS Public Key Infrastructure**, operated nationally.
 
-#### 5. Electronic signatures and formal approvals
+Key uses include:
 
-X.509 underpins electronic signature mechanisms used for:
+- **NHS smartcards**, which authenticate clinicians as known individuals.
+- **Role-based access control**, where identity is established first and permissions applied separately.
+- **Access to national services** such as demographic services and summary care records.
+- **System-to-system communication** using mutual Transport Layer Security.
+- **Formal electronic signatures** for legal or regulatory workflows.
 
-- Legal documents
-- Contracts
-- Regulatory submissions
-- Some consent workflows
+VPR builds on this familiar model but applies X.509 certificates to **authorship of clinical record changes**, rather than to login or transport security.
 
-These signatures apply to documents, not to the live patient record data model.
+---
 
-They are usually implemented as separate workflows layered on top of clinical systems.
+## The patient’s voice
 
-## The patient's voice
+VPR supports both professional clinical entries and patient contributions within the same repository, using **distinct artefact paths**:
 
-VPR stores both professional clinical entries and patient contributions in the same repository, using distinct artefact paths.
-Clinical truth is authored and signed under /clinical/.
-Patient input is preserved under /patient/ and may inform, but never overwrite, clinical records without professional review.
+- `/clinical/` contains authoritative, professionally authored and signed records.
+- `/patient/` contains patient-contributed material such as reported outcomes, symptom logs, or uploaded documents.
 
-## A single branch repository
+Patient input may inform clinical care, but it never overwrites clinical records without explicit professional review and a new signed commit.
 
-We only use a single "refs/heads/main" branch per repository in VPR. However, this is only policy, as Git itself allows multiple branches.
+This preserves patient voice while maintaining clinical accountability.
+
+---
+
+## Single-branch repository policy
+
+Each VPR repository uses a single authoritative branch: `refs/heads/main`.
+
+While Git itself allows multiple branches, VPR enforces a **single-branch policy** at the system level. Branches may exist transiently during local operations, but only `main` is accepted as authoritative.
+
+This ensures a single, linear clinical history and avoids ambiguity about competing versions of truth.

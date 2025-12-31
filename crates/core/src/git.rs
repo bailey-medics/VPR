@@ -21,8 +21,13 @@
 //!
 //! - Signed payload: the *unsigned commit buffer* produced by `Repository::commit_create_buffer`.
 //! - Signature bytes: raw 64 bytes (`r || s`, not DER).
-//! - Stored form: base64 of those 64 bytes, passed to `commit_signed` and written into the
-//!   commit header field `gpgsig`.
+//! - Stored form: base64 of a deterministic container (JSON) passed to `commit_signed` and
+//!   written into the commit header field `gpgsig`.
+//!
+//! The container embeds:
+//! - `signature`: base64 of raw 64-byte `r||s`
+//! - `public_key`: base64 of SEC1-encoded public key bytes
+//! - `certificate` (optional): base64 of the certificate bytes (PEM or DER)
 //!
 //! The verifier in clinical code (`ClinicalService::verify_commit_signature`) expects this
 //! exact scheme.
@@ -36,8 +41,44 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
+use x509_parser::prelude::*;
 
 const MAIN_REF: &str = "refs/heads/main";
+
+/// Deterministic container for VPR commit signatures.
+///
+/// This is serialized to JSON with a stable field order (struct order), then base64-encoded and
+/// stored as the `gpgsig` header value via `git2::Repository::commit_signed`.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+struct VprCommitSignaturePayloadV1 {
+    /// Base64 of raw 64-byte ECDSA P-256 signature (`r || s`).
+    signature: String,
+    /// Base64 of SEC1-encoded public key bytes.
+    public_key: String,
+    /// Base64 of X.509 certificate bytes (PEM or DER), if provided.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    certificate: Option<String>,
+}
+
+fn extract_cert_public_key_sec1(cert_bytes: &[u8]) -> PatientResult<Vec<u8>> {
+    // Accept PEM or DER; treat as opaque bytes for storage but parse to validate key match.
+    let cert_der: Vec<u8> = if cert_bytes
+        .windows("-----BEGIN CERTIFICATE-----".len())
+        .any(|w| w == b"-----BEGIN CERTIFICATE-----")
+    {
+        let (_, pem) = x509_parser::pem::parse_x509_pem(cert_bytes)
+            .map_err(|e| PatientError::EcdsaPublicKeyParse(Box::new(e)))?;
+        pem.contents.to_vec()
+    } else {
+        cert_bytes.to_vec()
+    };
+
+    let (_, cert) = X509Certificate::from_der(cert_der.as_slice())
+        .map_err(|e| PatientError::EcdsaPublicKeyParse(Box::new(e)))?;
+
+    let spk = cert.public_key();
+    Ok(spk.subject_public_key.data.to_vec())
+}
 
 /// Controlled vocabulary for VPR commit message domains.
 ///
@@ -522,9 +563,33 @@ impl GitService {
             let signing_key = SigningKey::from_pkcs8_pem(&key_pem)
                 .map_err(|e| PatientError::EcdsaPrivateKeyParse(Box::new(e)))?;
 
+            let public_key_bytes = signing_key
+                .verifying_key()
+                .to_encoded_point(false)
+                .as_bytes()
+                .to_vec();
+
+            if let Some(cert_bytes) = author.certificate.as_deref() {
+                let cert_public_key = extract_cert_public_key_sec1(cert_bytes)?;
+                if cert_public_key != public_key_bytes {
+                    return Err(PatientError::AuthorCertificatePublicKeyMismatch);
+                }
+            }
+
             // Sign the unsigned commit buffer. Signature is raw 64-byte (r||s), base64-encoded.
             let signature: Signature = signing_key.sign(buf_str.as_bytes());
-            let signature_str = general_purpose::STANDARD.encode(signature.to_bytes());
+
+            let payload = VprCommitSignaturePayloadV1 {
+                signature: general_purpose::STANDARD.encode(signature.to_bytes()),
+                public_key: general_purpose::STANDARD.encode(&public_key_bytes),
+                certificate: author
+                    .certificate
+                    .as_deref()
+                    .map(|b| general_purpose::STANDARD.encode(b)),
+            };
+
+            let payload_json = serde_json::to_vec(&payload).map_err(PatientError::Serialization)?;
+            let signature_str = general_purpose::STANDARD.encode(payload_json);
 
             let oid = self
                 .repo
@@ -679,6 +744,7 @@ mod tests {
             email: "test@example.com".to_string(),
             registrations: vec![],
             signature: None,
+            certificate: None,
         };
 
         let msg = VprCommitMessage::new(
