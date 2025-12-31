@@ -285,7 +285,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let registrations: Vec<AuthorRegistration> = registration
                 .chunks(2)
                 .map(|chunk| AuthorRegistration {
-                    authority: chunk.get(0).cloned().unwrap_or_default(),
+                    authority: chunk.first().cloned().unwrap_or_default(),
                     number: chunk.get(1).cloned().unwrap_or_default(),
                 })
                 .collect();
@@ -295,6 +295,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 email,
                 registrations,
                 signature,
+                certificate: None,
             };
             let demographics_service = DemographicsService;
             match demographics_service.initialise(author, care_location) {
@@ -313,7 +314,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let registrations: Vec<AuthorRegistration> = registration
                 .chunks(2)
                 .map(|chunk| AuthorRegistration {
-                    authority: chunk.get(0).cloned().unwrap_or_default(),
+                    authority: chunk.first().cloned().unwrap_or_default(),
                     number: chunk.get(1).cloned().unwrap_or_default(),
                 })
                 .collect();
@@ -323,6 +324,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 email,
                 registrations,
                 signature,
+                certificate: None,
             };
             let clinical_service = ClinicalService;
             match clinical_service.initialise(author, care_location) {
@@ -404,6 +406,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 email: author_email,
                 registrations,
                 signature,
+                certificate: None,
             };
             let given_names_vec: Vec<String> = given_names
                 .split(',')

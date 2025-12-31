@@ -26,3 +26,4 @@ x509-parser = "0.16"
 
 [dev-dependencies]
 tempfile = "3.0"
+rcgen = { version = "0.13", features = ["crypto"] }

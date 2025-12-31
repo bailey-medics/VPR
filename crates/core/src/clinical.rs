@@ -16,7 +16,6 @@ use serde_yaml;
 use std::fs;
 use std::path::Path;
 
-use base64::{engine::general_purpose, Engine as _};
 use p256::ecdsa::signature::Verifier;
 use p256::ecdsa::{Signature, VerifyingKey};
 use p256::pkcs8::DecodePublicKey;
@@ -245,9 +244,14 @@ impl ClinicalService {
 
     /// Verifies the ECDSA signature of the latest commit in the patient's Git repository.
     ///
-    /// VPR uses `git2::Repository::commit_signed` with an ECDSA P-256 signature encoded as
-    /// base64 over the *unsigned commit buffer* produced by `commit_create_buffer`.
-    /// This method reconstructs that buffer and verifies the signature using `public_key_pem`.
+    /// VPR uses `git2::Repository::commit_signed` with an ECDSA P-256 signature over the
+    /// *unsigned commit buffer* produced by `commit_create_buffer`.
+    ///
+    /// The signature, signing public key, and optional X.509 certificate are embedded directly
+    /// in the commit object's `gpgsig` header as a base64-encoded JSON container.
+    ///
+    /// This method reconstructs the commit buffer and verifies the signature using the embedded
+    /// public key, optionally checking that `public_key_pem` (if provided) matches it.
     ///
     /// # Arguments
     ///
@@ -277,32 +281,30 @@ impl ClinicalService {
         let head = repo.head().map_err(PatientError::GitHead)?;
         let commit = head.peel_to_commit().map_err(PatientError::GitPeel)?;
 
-        // Extract signature from the commit header (written by `commit_signed`).
-        let sig_field = match commit.header_field_bytes("gpgsig") {
+        let embedded = match crate::extract_embedded_commit_signature(&commit) {
             Ok(v) => v,
             Err(_) => return Ok(false),
         };
-        if sig_field.is_empty() {
-            return Ok(false);
+
+        let signature = match Signature::from_slice(embedded.signature.as_slice()) {
+            Ok(s) => s,
+            Err(_) => return Ok(false),
+        };
+
+        let embedded_verifying_key =
+            match VerifyingKey::from_sec1_bytes(embedded.public_key.as_slice()) {
+                Ok(k) => k,
+                Err(_) => return Ok(false),
+            };
+
+        // If a trusted key/cert was provided by the caller, it must match the embedded key.
+        if !public_key_pem.trim().is_empty() {
+            let trusted_key = verifying_key_from_public_key_or_cert_pem(public_key_pem)?;
+            let trusted_pub_bytes = trusted_key.to_encoded_point(false).as_bytes().to_vec();
+            if trusted_pub_bytes != embedded.public_key {
+                return Ok(false);
+            }
         }
-
-        let sig_field_str = match std::str::from_utf8(sig_field.as_ref()) {
-            Ok(s) => s,
-            Err(_) => return Ok(false),
-        };
-        // The `gpgsig` value may be wrapped/indented; normalise by stripping whitespace.
-        let sig_b64: String = sig_field_str.lines().map(|l| l.trim()).collect();
-
-        let sig_bytes = match general_purpose::STANDARD.decode(sig_b64) {
-            Ok(b) => b,
-            Err(_) => return Ok(false),
-        };
-        let signature = match Signature::from_slice(&sig_bytes) {
-            Ok(s) => s,
-            Err(_) => return Ok(false),
-        };
-
-        let verifying_key = verifying_key_from_public_key_or_cert_pem(public_key_pem)?;
 
         // Recreate the unsigned commit buffer for this commit.
         let tree = commit.tree().map_err(PatientError::GitFindTree)?;
@@ -318,15 +320,9 @@ impl ClinicalService {
         let buf_str =
             String::from_utf8(buf.as_ref().to_vec()).map_err(PatientError::CommitBufferToString)?;
 
-        // Verify with the correct payload.
-        if verifying_key.verify(buf_str.as_bytes(), &signature).is_ok() {
-            return Ok(true);
-        }
-
-        // Backwards compatibility: older code in this repo signed the Git object framing too.
-        let legacy_payload = format!("commit {}\0{}", buf_str.len(), buf_str);
-        Ok(verifying_key
-            .verify(legacy_payload.as_bytes(), &signature)
+        // Verify with the canonical payload.
+        Ok(embedded_verifying_key
+            .verify(buf_str.as_bytes(), &signature)
             .is_ok())
     }
 }
@@ -383,6 +379,7 @@ mod tests {
     use super::*;
     use p256::ecdsa::SigningKey;
     use p256::pkcs8::{EncodePrivateKey, EncodePublicKey};
+    use rcgen::{CertificateParams, KeyPair};
     use std::env;
     use std::sync::{Mutex, OnceLock};
     use tempfile::TempDir;
@@ -414,6 +411,7 @@ mod tests {
             email: "test@example.com".to_string(),
             registrations: vec![],
             signature: None,
+            certificate: None,
         };
 
         // Initialise clinical service
@@ -494,6 +492,7 @@ mod tests {
             email: "test@example.com".to_string(),
             registrations: vec![],
             signature: None,
+            certificate: None,
         };
 
         // Initialise clinical service
@@ -573,6 +572,7 @@ mod tests {
             email: "test@example.com".to_string(),
             registrations: vec![],
             signature: None,
+            certificate: None,
         };
 
         // Initialise clinical service
@@ -632,6 +632,7 @@ mod tests {
             email: "test@example.com".to_string(),
             registrations: vec![],
             signature: Some(private_key_pem.to_string()),
+            certificate: None,
         };
 
         // Initialise clinical record
@@ -661,6 +662,160 @@ mod tests {
         );
 
         // Clean up environment variable
+        env::remove_var("PATIENT_DATA_DIR");
+        if let Some(original) = original_env {
+            env::set_var("PATIENT_DATA_DIR", original);
+        }
+    }
+
+    #[test]
+    fn test_verify_commit_signature_offline_with_embedded_public_key() {
+        let _lock = env_lock();
+        let original_env = env::var("PATIENT_DATA_DIR").ok();
+
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let temp_path = temp_dir.path().to_str().unwrap();
+        env::set_var("PATIENT_DATA_DIR", temp_path);
+
+        let signing_key = SigningKey::random(&mut rand::thread_rng());
+        let verifying_key = signing_key.verifying_key();
+
+        let private_key_pem = signing_key
+            .to_pkcs8_pem(p256::pkcs8::LineEnding::LF)
+            .expect("Failed to encode private key");
+        let public_key_pem = verifying_key
+            .to_public_key_pem(p256::pkcs8::LineEnding::LF)
+            .expect("Failed to encode public key");
+
+        let service = ClinicalService;
+        let author = Author {
+            name: "Test Author".to_string(),
+            role: "Clinician".to_string(),
+            email: "test@example.com".to_string(),
+            registrations: vec![],
+            signature: Some(private_key_pem.to_string()),
+            certificate: None,
+        };
+
+        let clinical_uuid = service
+            .initialise(author, "Test Hospital".to_string())
+            .expect("initialise should succeed");
+
+        // Offline verification: no external key material is provided.
+        let ok = service
+            .verify_commit_signature(&clinical_uuid, "")
+            .expect("verify_commit_signature should succeed");
+        assert!(ok, "embedded public key verification should succeed");
+
+        // Compatibility: verification still works with an explicit public key.
+        let ok = service
+            .verify_commit_signature(&clinical_uuid, &public_key_pem)
+            .expect("verify_commit_signature should succeed");
+        assert!(ok, "verification with explicit public key should succeed");
+
+        env::remove_var("PATIENT_DATA_DIR");
+        if let Some(original) = original_env {
+            env::set_var("PATIENT_DATA_DIR", original);
+        }
+    }
+
+    #[test]
+    fn test_initialise_rejects_mismatched_author_certificate() {
+        let _lock = env_lock();
+        let original_env = env::var("PATIENT_DATA_DIR").ok();
+
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let temp_path = temp_dir.path().to_str().unwrap();
+        env::set_var("PATIENT_DATA_DIR", temp_path);
+
+        // Signing key used for commit.
+        let signing_key = SigningKey::random(&mut rand::thread_rng());
+        let private_key_pem = signing_key
+            .to_pkcs8_pem(p256::pkcs8::LineEnding::LF)
+            .expect("Failed to encode private key");
+
+        // Different key used to create a certificate (mismatch).
+        let other_key = SigningKey::random(&mut rand::thread_rng());
+        let other_private_key_pem = other_key
+            .to_pkcs8_pem(p256::pkcs8::LineEnding::LF)
+            .expect("Failed to encode other private key");
+        let other_private_key_pem_str = other_private_key_pem.to_string();
+
+        let other_keypair = KeyPair::from_pem(&other_private_key_pem_str)
+            .expect("KeyPair::from_pem should succeed");
+        let params = CertificateParams::default();
+        let cert = params
+            .self_signed(&other_keypair)
+            .expect("self_signed should succeed");
+        let cert_pem = cert.pem();
+
+        let service = ClinicalService;
+        let author = Author {
+            name: "Test Author".to_string(),
+            role: "Clinician".to_string(),
+            email: "test@example.com".to_string(),
+            registrations: vec![],
+            signature: Some(private_key_pem.to_string()),
+            certificate: Some(cert_pem.into_bytes()),
+        };
+
+        let err = service
+            .initialise(author, "Test Hospital".to_string())
+            .expect_err("initialise should fail due to certificate mismatch");
+        assert!(matches!(
+            err,
+            PatientError::AuthorCertificatePublicKeyMismatch
+        ));
+
+        env::remove_var("PATIENT_DATA_DIR");
+        if let Some(original) = original_env {
+            env::set_var("PATIENT_DATA_DIR", original);
+        }
+    }
+
+    #[test]
+    fn test_extract_embedded_commit_signature_from_head_commit() {
+        let _lock = env_lock();
+        let original_env = env::var("PATIENT_DATA_DIR").ok();
+
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let temp_path = temp_dir.path().to_str().unwrap();
+        env::set_var("PATIENT_DATA_DIR", temp_path);
+
+        let signing_key = SigningKey::random(&mut rand::thread_rng());
+        let private_key_pem = signing_key
+            .to_pkcs8_pem(p256::pkcs8::LineEnding::LF)
+            .expect("Failed to encode private key");
+
+        let service = ClinicalService;
+        let author = Author {
+            name: "Test Author".to_string(),
+            role: "Clinician".to_string(),
+            email: "test@example.com".to_string(),
+            registrations: vec![],
+            signature: Some(private_key_pem.to_string()),
+            certificate: None,
+        };
+
+        let clinical_uuid = service
+            .initialise(author, "Test Hospital".to_string())
+            .expect("initialise should succeed");
+
+        let clinical_dir = temp_dir.path().join(constants::CLINICAL_DIR_NAME);
+        let patient_dir = UuidService::parse(&clinical_uuid)
+            .expect("clinical_uuid should be canonical")
+            .sharded_dir(&clinical_dir);
+
+        let repo = git2::Repository::open(&patient_dir).expect("Failed to open Git repo");
+        let head = repo.head().expect("Failed to get HEAD");
+        let commit = head.peel_to_commit().expect("Failed to get commit");
+
+        let embedded = crate::extract_embedded_commit_signature(&commit)
+            .expect("extract_embedded_commit_signature should succeed");
+        assert_eq!(embedded.signature.len(), 64);
+        assert!(!embedded.public_key.is_empty());
+        assert!(embedded.certificate.is_none());
+
         env::remove_var("PATIENT_DATA_DIR");
         if let Some(original) = original_env {
             env::set_var("PATIENT_DATA_DIR", original);

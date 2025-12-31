@@ -2892,6 +2892,7 @@ dependencies = [
  "p256",
  "pem 1.1.1",
  "rand 0.8.5",
+ "rcgen",
  "serde",
  "serde_json",
  "serde_yaml",

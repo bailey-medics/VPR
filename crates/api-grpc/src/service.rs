@@ -127,6 +127,7 @@ impl Vpr for VprService {
             } else {
                 Some(req.author_signature)
             },
+            certificate: None,
         };
         let clinical_service = ClinicalService;
         match clinical_service.initialise(author, req.care_location) {
