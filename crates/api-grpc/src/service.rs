@@ -15,7 +15,9 @@ pub use api_shared::pb;
 
 use api_shared::{auth, HealthService};
 use tonic::{Request, Response, Status};
-use vpr_core::{clinical::ClinicalService, demographics::DemographicsService, Author};
+use vpr_core::{
+    clinical::ClinicalService, demographics::DemographicsService, Author, AuthorRegistration,
+};
 
 /// Authentication interceptor for gRPC requests.
 ///
@@ -105,9 +107,21 @@ impl Vpr for VprService {
         auth::validate_api_key(api_key)?;
 
         let req = req.into_inner();
+
+        let registrations: Vec<AuthorRegistration> = req
+            .author_registrations
+            .into_iter()
+            .map(|r| AuthorRegistration {
+                authority: r.authority,
+                number: r.number,
+            })
+            .collect();
+
         let author = Author {
             name: req.author_name,
+            role: req.author_role,
             email: req.author_email,
+            registrations,
             signature: if req.author_signature.is_empty() {
                 None
             } else {
@@ -115,7 +129,7 @@ impl Vpr for VprService {
             },
         };
         let clinical_service = ClinicalService;
-        match clinical_service.initialise(author) {
+        match clinical_service.initialise(author, req.care_location) {
             Ok(uuid) => {
                 let resp = pb::CreatePatientRes {
                     filename: "".to_string(), // No filename for initialise

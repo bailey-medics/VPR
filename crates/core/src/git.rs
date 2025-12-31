@@ -163,6 +163,7 @@ pub(crate) struct VprCommitMessage {
     domain: VprCommitDomain,
     action: VprCommitAction,
     summary: String,
+    care_location: String,
     trailers: Vec<VprCommitTrailer>,
 }
 
@@ -172,16 +173,26 @@ impl VprCommitMessage {
         domain: VprCommitDomain,
         action: VprCommitAction,
         summary: impl Into<String>,
+        care_location: impl Into<String>,
     ) -> PatientResult<Self> {
         let summary = summary.into().trim().to_string();
         if summary.is_empty() || summary.contains(['\n', '\r']) {
             return Err(PatientError::InvalidInput);
         }
 
+        let care_location = care_location.into().trim().to_string();
+        if care_location.is_empty() {
+            return Err(PatientError::MissingCareLocation);
+        }
+        if care_location.contains(['\n', '\r']) {
+            return Err(PatientError::InvalidCareLocation);
+        }
+
         Ok(Self {
             domain,
             action,
             summary,
+            care_location,
             trailers: Vec::new(),
         })
     }
@@ -192,7 +203,15 @@ impl VprCommitMessage {
         key: impl Into<String>,
         value: impl Into<String>,
     ) -> PatientResult<Self> {
-        self.trailers.push(VprCommitTrailer::new(key, value)?);
+        let key_str = key.into();
+        if key_str.trim_start().starts_with("Author-") {
+            return Err(PatientError::ReservedAuthorTrailerKey);
+        }
+        if key_str.trim() == "Care-Location" {
+            return Err(PatientError::ReservedCareLocationTrailerKey);
+        }
+        self.trailers
+            .push(VprCommitTrailer::new(key_str, value.into())?);
         Ok(self)
     }
 
@@ -216,6 +235,7 @@ impl VprCommitMessage {
         &self.trailers
     }
 
+    #[allow(dead_code)]
     pub(crate) fn render(&self) -> PatientResult<String> {
         // Defensively validate invariants so `VprCommitMessage` stays safe even if constructed
         // manually (e.g. via struct literal within the crate).
@@ -223,13 +243,28 @@ impl VprCommitMessage {
             return Err(PatientError::InvalidInput);
         }
 
-        let mut rendered = format!("{}:{}: {}", self.domain, self.action, self.summary.trim());
-        if self.trailers.is_empty() {
-            return Ok(rendered);
+        if self.care_location.trim().is_empty() {
+            return Err(PatientError::MissingCareLocation);
+        }
+        if self.care_location.contains(['\n', '\r']) {
+            return Err(PatientError::InvalidCareLocation);
         }
 
+        let mut rendered = format!("{}:{}: {}", self.domain, self.action, self.summary.trim());
+
+        // Sort non-reserved trailers deterministically.
+        let mut other = self.trailers.clone();
+        other.sort_by(|a, b| {
+            let a_key = (a.key().trim(), a.value().trim());
+            let b_key = (b.key().trim(), b.value().trim());
+            a_key.cmp(&b_key)
+        });
+
         rendered.push_str("\n\n");
-        for (idx, trailer) in self.trailers.iter().enumerate() {
+        rendered.push_str("Care-Location: ");
+        rendered.push_str(self.care_location.trim());
+
+        for trailer in other {
             if trailer.key().contains(['\n', '\r'])
                 || trailer.key().trim().is_empty()
                 || trailer.key().contains(':')
@@ -238,12 +273,102 @@ impl VprCommitMessage {
                 return Err(PatientError::InvalidInput);
             }
 
-            if idx > 0 {
-                rendered.push('\n');
+            // Author trailers are rendered via `render_with_author` only.
+            if trailer.key().trim_start().starts_with("Author-") {
+                return Err(PatientError::ReservedAuthorTrailerKey);
             }
-            rendered.push_str(trailer.key());
+
+            // Care-Location is rendered via `with_care_location` only.
+            if trailer.key().trim() == "Care-Location" {
+                return Err(PatientError::ReservedCareLocationTrailerKey);
+            }
+
+            rendered.push('\n');
+            rendered.push_str(trailer.key().trim());
             rendered.push_str(": ");
-            rendered.push_str(trailer.value());
+            rendered.push_str(trailer.value().trim());
+        }
+
+        Ok(rendered)
+    }
+
+    /// Render a commit message including mandatory Author trailers.
+    ///
+    /// The Author trailers are rendered deterministically in the order:
+    ///
+    /// - `Author-Name`
+    /// - `Author-Role`
+    /// - `Author-Registration` (0..N; sorted)
+    pub(crate) fn render_with_author(&self, author: &Author) -> PatientResult<String> {
+        author.validate_commit_author()?;
+
+        // Author trailers are reserved and must only be emitted from the structured metadata.
+        if self
+            .trailers
+            .iter()
+            .any(|t| t.key().trim_start().starts_with("Author-"))
+        {
+            return Err(PatientError::ReservedAuthorTrailerKey);
+        }
+
+        // Care-Location is reserved and must only be emitted from the structured metadata.
+        if self
+            .trailers
+            .iter()
+            .any(|t| t.key().trim() == "Care-Location")
+        {
+            return Err(PatientError::ReservedCareLocationTrailerKey);
+        }
+
+        if self.care_location.trim().is_empty() {
+            return Err(PatientError::MissingCareLocation);
+        }
+        if self.care_location.contains(['\n', '\r']) {
+            return Err(PatientError::InvalidCareLocation);
+        }
+
+        let mut rendered = format!("{}:{}: {}", self.domain, self.action, self.summary.trim());
+
+        // Sort registrations deterministically, but do not require selecting a primary authority.
+        let mut regs = author.registrations.clone();
+        regs.sort_by(|a, b| {
+            let a_key = (a.authority.as_str(), a.number.as_str());
+            let b_key = (b.authority.as_str(), b.number.as_str());
+            a_key.cmp(&b_key)
+        });
+
+        // Sort non-author trailers deterministically.
+        let mut other = self.trailers.clone();
+        other.sort_by(|a, b| {
+            let a_key = (a.key().trim(), a.value().trim());
+            let b_key = (b.key().trim(), b.value().trim());
+            a_key.cmp(&b_key)
+        });
+
+        rendered.push_str("\n\n");
+        rendered.push_str("Author-Name: ");
+        rendered.push_str(author.name.trim());
+        rendered.push('\n');
+        rendered.push_str("Author-Role: ");
+        rendered.push_str(author.role.trim());
+
+        for reg in regs {
+            rendered.push('\n');
+            rendered.push_str("Author-Registration: ");
+            rendered.push_str(reg.authority.trim());
+            rendered.push(' ');
+            rendered.push_str(reg.number.trim());
+        }
+
+        rendered.push('\n');
+        rendered.push_str("Care-Location: ");
+        rendered.push_str(self.care_location.trim());
+
+        for trailer in other {
+            rendered.push('\n');
+            rendered.push_str(trailer.key().trim());
+            rendered.push_str(": ");
+            rendered.push_str(trailer.value().trim());
         }
 
         Ok(rendered)
@@ -304,7 +429,7 @@ impl GitService {
         author: &Author,
         message: &VprCommitMessage,
     ) -> PatientResult<git2::Oid> {
-        let rendered = message.render()?;
+        let rendered = message.render_with_author(author)?;
         let paths = self.collect_paths_recursive()?;
         self.commit_paths_rendered(author, &rendered, &paths)
     }
@@ -327,7 +452,7 @@ impl GitService {
         message: &VprCommitMessage,
         relative_paths: &[PathBuf],
     ) -> PatientResult<git2::Oid> {
-        let rendered = message.render()?;
+        let rendered = message.render_with_author(author)?;
         self.commit_paths_rendered(author, &rendered, relative_paths)
     }
 
@@ -369,6 +494,9 @@ impl GitService {
         message: &str,
         index: &mut git2::Index,
     ) -> PatientResult<git2::Oid> {
+        // Ensure author metadata is valid before creating any commit buffers or signatures.
+        author.validate_commit_author()?;
+
         let tree_id = index.write_tree().map_err(PatientError::GitWriteTree)?;
         let tree = self
             .repo
@@ -514,9 +642,13 @@ mod tests {
             VprCommitDomain::Record,
             VprCommitAction::Init,
             "Patient record created",
+            "St Elsewhere Hospital",
         )
         .unwrap();
-        assert_eq!(msg.render().unwrap(), "record:init: Patient record created");
+        assert_eq!(
+            msg.render().unwrap(),
+            "record:init: Patient record created\n\nCare-Location: St Elsewhere Hospital"
+        );
     }
 
     #[test]
@@ -525,16 +657,43 @@ mod tests {
             VprCommitDomain::Record,
             VprCommitAction::Init,
             "Patient record created",
+            "St Elsewhere Hospital",
         )
         .unwrap()
-        .with_trailer("Actor-Role", "Consultant Physician")
+        .with_trailer("Change-Reason", "Correction")
         .unwrap()
         .with_trailer("Authority", "GMC")
         .unwrap();
 
         assert_eq!(
             msg.render().unwrap(),
-            "record:init: Patient record created\n\nActor-Role: Consultant Physician\nAuthority: GMC"
+            "record:init: Patient record created\n\nCare-Location: St Elsewhere Hospital\nAuthority: GMC\nChange-Reason: Correction"
+        );
+    }
+
+    #[test]
+    fn render_with_author_includes_care_location_after_author_trailers() {
+        let author = Author {
+            name: "Test Author".to_string(),
+            role: "Clinician".to_string(),
+            email: "test@example.com".to_string(),
+            registrations: vec![],
+            signature: None,
+        };
+
+        let msg = VprCommitMessage::new(
+            VprCommitDomain::Record,
+            VprCommitAction::Init,
+            "Patient record created",
+            "St Elsewhere Hospital",
+        )
+        .unwrap()
+        .with_trailer("Change-Reason", "Init")
+        .unwrap();
+
+        assert_eq!(
+            msg.render_with_author(&author).unwrap(),
+            "record:init: Patient record created\n\nAuthor-Name: Test Author\nAuthor-Role: Clinician\nCare-Location: St Elsewhere Hospital\nChange-Reason: Init"
         );
     }
 
@@ -544,6 +703,7 @@ mod tests {
             VprCommitDomain::Record,
             VprCommitAction::Init,
             "line1\nline2",
+            "St Elsewhere Hospital",
         )
         .unwrap_err();
 

@@ -2868,6 +2868,7 @@ dependencies = [
  "rcgen",
  "thiserror 1.0.69",
  "time",
+ "x509-parser",
 ]
 
 [[package]]

@@ -25,7 +25,9 @@ use api_grpc::{VprService, auth_interceptor};
 use api_shared::HealthService;
 use api_shared::pb;
 use api_shared::pb::vpr_server::VprServer;
-use vpr_core::{Author, clinical::ClinicalService, demographics::DemographicsService};
+use vpr_core::{
+    Author, AuthorRegistration, clinical::ClinicalService, demographics::DemographicsService,
+};
 
 type HealthRes = pb::HealthRes;
 type ListPatientsRes = pb::ListPatientsRes;
@@ -275,9 +277,20 @@ async fn create_patient(
     State(_state): State<AppState>,
     Json(req): Json<CreatePatientReq>,
 ) -> Result<Json<CreatePatientRes>, (StatusCode, &'static str)> {
+    let registrations: Vec<AuthorRegistration> = req
+        .author_registrations
+        .into_iter()
+        .map(|r| AuthorRegistration {
+            authority: r.authority,
+            number: r.number,
+        })
+        .collect();
+
     let author = Author {
         name: req.author_name,
+        role: req.author_role,
         email: req.author_email,
+        registrations,
         signature: if req.author_signature.is_empty() {
             None
         } else {
@@ -285,7 +298,7 @@ async fn create_patient(
         },
     };
     let clinical_service = ClinicalService;
-    match clinical_service.initialise(author) {
+    match clinical_service.initialise(author, req.care_location) {
         Ok(uuid) => {
             let resp = CreatePatientRes {
                 filename: "".to_string(),

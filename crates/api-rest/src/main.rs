@@ -21,7 +21,9 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 use api_shared::pb;
-use vpr_core::{clinical::ClinicalService, demographics::DemographicsService, Author};
+use vpr_core::{
+    clinical::ClinicalService, demographics::DemographicsService, Author, AuthorRegistration,
+};
 
 /// Application state for the REST API server
 ///
@@ -171,9 +173,20 @@ async fn create_patient(
     State(_state): State<AppState>,
     Json(req): Json<pb::CreatePatientReq>,
 ) -> Result<Json<pb::CreatePatientRes>, (StatusCode, &'static str)> {
+    let registrations: Vec<AuthorRegistration> = req
+        .author_registrations
+        .into_iter()
+        .map(|r| AuthorRegistration {
+            authority: r.authority,
+            number: r.number,
+        })
+        .collect();
+
     let author = Author {
         name: req.author_name,
+        role: req.author_role,
         email: req.author_email,
+        registrations,
         signature: if req.author_signature.is_empty() {
             None
         } else {
@@ -181,7 +194,7 @@ async fn create_patient(
         },
     };
     let clinical_service = ClinicalService;
-    match clinical_service.initialise(author) {
+    match clinical_service.initialise(author, req.care_location) {
         Ok(uuid) => {
             let resp = pb::CreatePatientRes {
                 filename: "".to_string(),
