@@ -29,8 +29,60 @@ use std::path::Path;
 #[derive(Clone, Debug)]
 pub struct Author {
     pub name: String,
+    pub role: String,
     pub email: String,
+    pub registrations: Vec<AuthorRegistration>,
     pub signature: Option<String>,
+}
+
+/// A declared professional registration for an author.
+///
+/// This is rendered in commit trailers as:
+///
+/// `Author-Registration: <authority> <number>`
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct AuthorRegistration {
+    pub authority: String,
+    pub number: String,
+}
+
+impl AuthorRegistration {
+    pub fn new(authority: impl Into<String>, number: impl Into<String>) -> PatientResult<Self> {
+        let authority = authority.into().trim().to_string();
+        let number = number.into().trim().to_string();
+
+        if authority.is_empty()
+            || number.is_empty()
+            || authority.contains(['\n', '\r'])
+            || number.contains(['\n', '\r'])
+            || authority.chars().any(char::is_whitespace)
+            || number.chars().any(char::is_whitespace)
+        {
+            return Err(PatientError::InvalidAuthorRegistration);
+        }
+
+        Ok(Self { authority, number })
+    }
+}
+
+impl Author {
+    /// Validate that this author contains the mandatory commit author metadata.
+    ///
+    /// This validation is intended to run before commit creation/signing.
+    pub fn validate_commit_author(&self) -> PatientResult<()> {
+        if self.name.trim().is_empty() {
+            return Err(PatientError::MissingAuthorName);
+        }
+        if self.role.trim().is_empty() {
+            return Err(PatientError::MissingAuthorRole);
+        }
+
+        for reg in &self.registrations {
+            AuthorRegistration::new(reg.authority.clone(), reg.number.clone())?;
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -93,6 +145,22 @@ pub enum PatientError {
     GitPeel(git2::Error),
     #[error("invalid timestamp")]
     InvalidTimestamp,
+
+    #[error("missing Author-Name")]
+    MissingAuthorName,
+    #[error("missing Author-Role")]
+    MissingAuthorRole,
+    #[error("invalid Author-Registration")]
+    InvalidAuthorRegistration,
+    #[error("author trailer keys are reserved")]
+    ReservedAuthorTrailerKey,
+
+    #[error("invalid Care-Location")]
+    InvalidCareLocation,
+    #[error("missing Care-Location")]
+    MissingCareLocation,
+    #[error("Care-Location trailer key is reserved")]
+    ReservedCareLocationTrailerKey,
 }
 
 pub type PatientResult<T> = std::result::Result<T, PatientError>;
@@ -142,6 +210,7 @@ impl PatientService {
     pub fn initialise_full_record(
         &self,
         author: Author,
+        care_location: String,
         given_names: Vec<String>,
         last_name: String,
         birth_date: String,
@@ -149,14 +218,15 @@ impl PatientService {
     ) -> PatientResult<FullRecord> {
         let demographics_service = crate::demographics::DemographicsService;
         // Initialise demographics
-        let demographics_uuid = demographics_service.initialise(author.clone())?;
+        let demographics_uuid =
+            demographics_service.initialise(author.clone(), care_location.clone())?;
 
         // Update demographics with patient information
         demographics_service.update(&demographics_uuid, given_names, &last_name, &birth_date)?;
 
         // Initialise clinical
         let clinical_service = crate::clinical::ClinicalService;
-        let clinical_uuid = clinical_service.initialise(author)?;
+        let clinical_uuid = clinical_service.initialise(author, care_location)?;
 
         // Link clinical to demographics
         clinical_service.link_to_demographics(&clinical_uuid, &demographics_uuid, namespace)?;

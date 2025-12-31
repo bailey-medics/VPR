@@ -5,11 +5,19 @@ import "google/protobuf/empty.proto";
 
 message HealthRes { bool ok = 1; string message = 2; }
 
+message AuthorRegistration {
+  string authority = 1;
+  string number = 2;
+}
+
 message CreatePatientReq {
   string first_name = 1;
   string last_name = 2;
   string author_name = 3;
+  string author_role = 7;
   string author_email = 4;
+  repeated AuthorRegistration author_registrations = 8;
+  string care_location = 9;
   string author_signature = 6;
   string national_id = 5;
 }

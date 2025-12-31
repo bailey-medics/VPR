@@ -52,6 +52,7 @@ impl DemographicsService {
     /// # Arguments
     ///
     /// * `author` - The author information for the initial Git commit.
+    /// * `care_location` - High-level organisational location for the commit (e.g. hospital name).
     ///
     /// # Returns
     ///
@@ -61,7 +62,7 @@ impl DemographicsService {
     ///
     /// Returns a `PatientError` if any step in the initialisation fails, such as
     /// directory creation, file writing, or Git operations.
-    pub fn initialise(&self, author: Author) -> PatientResult<String> {
+    pub fn initialise(&self, author: Author, care_location: String) -> PatientResult<String> {
         // Determine storage directory from environment
         let data_dir = crate::patient_data_path();
 
@@ -94,6 +95,7 @@ impl DemographicsService {
             VprCommitDomain::Record,
             VprCommitAction::Init,
             "Demographics record created",
+            care_location,
         )?;
         repo.commit_paths(
             &author,

@@ -7,10 +7,13 @@
 use clap::{Parser, Subcommand};
 use vpr_certificates::Certificate;
 use vpr_core::{
-    clinical::ClinicalService, demographics::DemographicsService, Author, PatientService,
+    clinical::ClinicalService, constants, demographics::DemographicsService, Author,
+    AuthorRegistration, PatientService,
 };
 
 use base64::{engine::general_purpose, Engine as _};
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 ///
 /// This struct defines the CLI structure using clap for parsing command line arguments.
 #[derive(Parser)]
@@ -33,8 +36,17 @@ enum Commands {
     InitialiseDemographics {
         /// Author name for Git commit
         name: String,
+        /// Mandatory author role for commit metadata
+        #[arg(long)]
+        role: String,
         /// Author email for Git commit
         email: String,
+        /// Declared professional registrations (repeatable): --registration <AUTHORITY> <NUMBER>
+        #[arg(long, value_names = ["AUTHORITY", "NUMBER"], num_args = 2, action = clap::ArgAction::Append)]
+        registration: Vec<String>,
+        /// Mandatory organisational location for the commit (e.g. hospital name, GP surgery)
+        #[arg(long)]
+        care_location: String,
         /// ECDSA private key PEM for X.509 signing (optional, can be PEM string, base64-encoded PEM, or file path)
         #[arg(long)]
         signature: Option<String>,
@@ -43,8 +55,17 @@ enum Commands {
     InitialiseClinical {
         /// Author name for Git commit
         name: String,
+        /// Mandatory author role for commit metadata
+        #[arg(long)]
+        role: String,
         /// Author email for Git commit
         email: String,
+        /// Declared professional registrations (repeatable): --registration <AUTHORITY> <NUMBER>
+        #[arg(long, value_names = ["AUTHORITY", "NUMBER"], num_args = 2, action = clap::ArgAction::Append)]
+        registration: Vec<String>,
+        /// Mandatory organisational location for the commit (e.g. hospital name, GP surgery)
+        #[arg(long)]
+        care_location: String,
         /// ECDSA private key PEM for X.509 signing (optional, can be PEM string, base64-encoded PEM, or file path)
         #[arg(long)]
         signature: Option<String>,
@@ -70,18 +91,37 @@ enum Commands {
         /// Date of birth (YYYY-MM-DD)
         birth_date: String,
     },
-    /// Initialise full record: <name> <email> <given_names> <last_name> <birth_date> [--signature <ecdsa_private_key_pem>] [--namespace <namespace>]
+    /// Initialise full record:
+    ///
+    /// <given_names> <last_name> <birth_date>
+    /// <author_name> <author_email>
+    /// <author_role>
+    /// <care_location>
+    /// [--author-registration "AUTHORITY NUMBER" ...]
+    /// [--signature <ecdsa_private_key_pem>]
+    /// [--namespace <namespace>]
     InitialiseFullRecord {
-        /// Author name for Git commit
-        name: String,
-        /// Author email for Git commit
-        email: String,
         /// Given names (comma-separated)
         given_names: String,
         /// Last name
         last_name: String,
         /// Date of birth (YYYY-MM-DD)
         birth_date: String,
+        /// Author name for Git commit
+        author_name: String,
+        /// Author email for Git commit
+        author_email: String,
+        /// Mandatory author role for commit metadata
+        author_role: String,
+        /// Mandatory organisational location for the commit (e.g. hospital name, GP surgery)
+        care_location: String,
+        /// Declared professional registrations (repeatable): --author-registration "AUTHORITY NUMBER"
+        #[arg(
+            long = "author-registration",
+            action = clap::ArgAction::Append,
+            value_name = "AUTHORITY NUMBER",
+        )]
+        author_registration: Vec<String>,
         /// ECDSA private key PEM for X.509 signing (optional, can be PEM string, base64-encoded PEM, or file path)
         #[arg(long)]
         signature: Option<String>,
@@ -108,12 +148,19 @@ enum Commands {
         public_key: String,
     },
     /// Create a professional registration certificate: <name> <registration_authority> <registration_number> [--cert-out <cert_file>] [--key-out <key_file>]
+    ///
+    /// The generated X.509 Subject includes:
+    /// - `CN` = name
+    /// - `O` = registration authority
+    /// - `serialNumber` = registration number
+    ///
+    /// A `subjectAltName` URI is also added: `vpr://<authority>/<number>`.
     CreateCertificate {
         /// Full name of the person
         name: String,
-        /// Registration authority (e.g., GMC, NMC)
+        /// Registration authority (e.g., GMC, NMC). Populates X.509 Subject `O`.
         registration_authority: String,
-        /// Registration number
+        /// Registration number. Populates X.509 Subject `serialNumber`.
         registration_number: String,
         /// Output file for the certificate (optional, prints to stdout if not specified)
         #[arg(long)]
@@ -122,6 +169,82 @@ enum Commands {
         #[arg(long)]
         key_out: Option<String>,
     },
+
+    /// Delete ALL patient data under patient_data (DEV only).
+    ///
+    /// Deletes both:
+    /// - `<PATIENT_DATA_DIR>/clinical`
+    /// - `<PATIENT_DATA_DIR>/demographics`
+    ///
+    /// Refuses to run unless `DEV_ENV=true`.
+    DeleteAllData,
+}
+
+#[derive(Debug)]
+struct CliError(String);
+
+impl std::fmt::Display for CliError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for CliError {}
+
+fn is_dev_env() -> bool {
+    let value = match std::env::var("DEV_ENV") {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "true" | "1" | "yes" | "y"
+    )
+}
+
+fn patient_data_dir() -> PathBuf {
+    std::env::var("PATIENT_DATA_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(constants::DEFAULT_PATIENT_DATA_DIR))
+}
+
+fn confirm_delete_all_data(base_dir: &Path) -> Result<bool, io::Error> {
+    eprintln!("WARNING: This will permanently delete ALL patient data.");
+    eprintln!("It will remove all contents within:");
+    eprintln!(
+        "- {}",
+        base_dir.join(constants::CLINICAL_DIR_NAME).display()
+    );
+    eprintln!(
+        "- {}",
+        base_dir.join(constants::DEMOGRAPHICS_DIR_NAME).display()
+    );
+    eprint!("Are you sure you wish to proceed? (y/N): ");
+    io::stderr().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let answer = input.trim().to_ascii_lowercase();
+    Ok(answer == "y" || answer == "yes")
+}
+
+fn clear_dir_contents(path: &Path) -> Result<(), io::Error> {
+    std::fs::create_dir_all(path)?;
+
+    for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        let entry_path = entry.path();
+        let file_type = entry.file_type()?;
+
+        if file_type.is_dir() {
+            std::fs::remove_dir_all(&entry_path)?;
+        } else {
+            std::fs::remove_file(&entry_path)?;
+        }
+    }
+
+    Ok(())
 }
 
 /// Main entry point for the VPR CLI.
@@ -153,32 +276,56 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some(Commands::InitialiseDemographics {
             name,
+            role,
             email,
+            registration,
+            care_location,
             signature,
         }) => {
+            let registrations: Vec<AuthorRegistration> = registration
+                .chunks(2)
+                .map(|chunk| AuthorRegistration {
+                    authority: chunk.get(0).cloned().unwrap_or_default(),
+                    number: chunk.get(1).cloned().unwrap_or_default(),
+                })
+                .collect();
             let author = Author {
                 name,
+                role,
                 email,
+                registrations,
                 signature,
             };
             let demographics_service = DemographicsService;
-            match demographics_service.initialise(author) {
+            match demographics_service.initialise(author, care_location) {
                 Ok(uuid) => println!("Initialised demographics with UUID: {}", uuid),
                 Err(e) => eprintln!("Error initialising demographics: {}", e),
             }
         }
         Some(Commands::InitialiseClinical {
             name,
+            role,
             email,
+            registration,
+            care_location,
             signature,
         }) => {
+            let registrations: Vec<AuthorRegistration> = registration
+                .chunks(2)
+                .map(|chunk| AuthorRegistration {
+                    authority: chunk.get(0).cloned().unwrap_or_default(),
+                    number: chunk.get(1).cloned().unwrap_or_default(),
+                })
+                .collect();
             let author = Author {
                 name,
+                role,
                 email,
+                registrations,
                 signature,
             };
             let clinical_service = ClinicalService;
-            match clinical_service.initialise(author) {
+            match clinical_service.initialise(author, care_location) {
                 Ok(uuid) => println!("Initialised clinical with UUID: {}", uuid),
                 Err(e) => eprintln!("Error initialising clinical: {}", e),
             }
@@ -220,17 +367,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Some(Commands::InitialiseFullRecord {
-            name,
-            email,
             given_names,
             last_name,
             birth_date,
+            author_name,
+            author_email,
+            author_role,
+            care_location,
+            author_registration,
             signature,
             namespace,
         }) => {
+            let mut registrations: Vec<AuthorRegistration> = Vec::new();
+            for reg in author_registration {
+                let mut parts = reg.split_whitespace();
+                let authority = parts.next().unwrap_or("");
+                let number = parts.next().unwrap_or("");
+
+                if authority.is_empty() || number.is_empty() || parts.next().is_some() {
+                    return Err(format!(
+                        "Invalid --author-registration value (expected \"AUTHORITY NUMBER\"): {}",
+                        reg
+                    )
+                    .into());
+                }
+
+                registrations.push(AuthorRegistration {
+                    authority: authority.to_string(),
+                    number: number.to_string(),
+                });
+            }
+
             let author = Author {
-                name,
-                email,
+                name: author_name,
+                role: author_role,
+                email: author_email,
+                registrations,
                 signature,
             };
             let given_names_vec: Vec<String> = given_names
@@ -240,6 +412,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let service = PatientService::new();
             match service.initialise_full_record(
                 author,
+                care_location,
                 given_names_vec,
                 last_name,
                 birth_date,
@@ -334,6 +507,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Err(e) => eprintln!("Error creating certificate: {}", e),
         },
+        Some(Commands::DeleteAllData) => {
+            if !is_dev_env() {
+                return Err(Box::new(CliError(
+                    "Refusing to delete data: DEV_ENV=true is required".to_string(),
+                )));
+            }
+
+            let base_dir = patient_data_dir();
+            if !confirm_delete_all_data(&base_dir)? {
+                eprintln!("Aborted.");
+                return Ok(());
+            }
+
+            clear_dir_contents(&base_dir.join(constants::CLINICAL_DIR_NAME))?;
+            clear_dir_contents(&base_dir.join(constants::DEMOGRAPHICS_DIR_NAME))?;
+
+            println!(
+                "Deleted all patient data under {}",
+                base_dir.to_string_lossy()
+            );
+        }
         None => {
             println!("Use 'vpr --help' for commands");
         }

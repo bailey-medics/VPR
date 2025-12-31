@@ -86,6 +86,7 @@ impl ClinicalService {
     /// # Arguments
     ///
     /// * `author` - The author information for the initial Git commit.
+    /// * `care_location` - High-level organisational location for the commit (e.g. hospital name).
     ///
     /// # Returns
     ///
@@ -96,7 +97,7 @@ impl ClinicalService {
     ///
     /// Returns a `PatientError` if any step in the initialisation fails, such as
     /// directory creation, file writing, or Git operations.
-    pub fn initialise(&self, author: Author) -> PatientResult<String> {
+    pub fn initialise(&self, author: Author, care_location: String) -> PatientResult<String> {
         let clinical_uuid = UuidService::new();
         let patient_dir = clinical_uuid.sharded_dir(&clinical_data_path());
         fs::create_dir_all(&patient_dir).map_err(PatientError::PatientDirCreation)?;
@@ -127,6 +128,7 @@ impl ClinicalService {
             VprCommitDomain::Record,
             VprCommitAction::Init,
             "Clinical record created",
+            care_location,
         )?;
         repo.commit_all(&author, &msg)?;
 
@@ -408,7 +410,9 @@ mod tests {
         // Create a test author
         let author = Author {
             name: "Test Author".to_string(),
+            role: "Clinician".to_string(),
             email: "test@example.com".to_string(),
+            registrations: vec![],
             signature: None,
         };
 
@@ -416,7 +420,7 @@ mod tests {
         let service = ClinicalService;
 
         // Call initialise
-        let result = service.initialise(author);
+        let result = service.initialise(author, "Test Hospital".to_string());
         assert!(result.is_ok(), "initialise should succeed");
 
         let clinical_uuid = result.unwrap();
@@ -460,7 +464,7 @@ mod tests {
         let commit = head.peel_to_commit().expect("Failed to get commit");
         assert_eq!(
             commit.message().unwrap(),
-            "record:init: Clinical record created"
+            "record:init: Clinical record created\n\nAuthor-Name: Test Author\nAuthor-Role: Clinician\nCare-Location: Test Hospital"
         );
 
         // Clean up environment variable
@@ -486,7 +490,9 @@ mod tests {
         // Create a test author
         let author = Author {
             name: "Test Author".to_string(),
+            role: "Clinician".to_string(),
             email: "test@example.com".to_string(),
+            registrations: vec![],
             signature: None,
         };
 
@@ -494,7 +500,7 @@ mod tests {
         let service = ClinicalService;
 
         // First, initialise a clinical record
-        let result = service.initialise(author);
+        let result = service.initialise(author, "Test Hospital".to_string());
         assert!(result.is_ok(), "initialise should succeed");
         let clinical_uuid = result.unwrap();
 
@@ -563,7 +569,9 @@ mod tests {
         // Create a test author
         let author = Author {
             name: "Test Author".to_string(),
+            role: "Clinician".to_string(),
             email: "test@example.com".to_string(),
+            registrations: vec![],
             signature: None,
         };
 
@@ -572,7 +580,7 @@ mod tests {
 
         // Call initialise to create a record
         let clinical_uuid = service
-            .initialise(author)
+            .initialise(author, "Test Hospital".to_string())
             .expect("initialise should succeed");
 
         // Call get_first_commit_time
@@ -620,12 +628,14 @@ mod tests {
         let service = ClinicalService;
         let author = Author {
             name: "Test Author".to_string(),
+            role: "Clinician".to_string(),
             email: "test@example.com".to_string(),
+            registrations: vec![],
             signature: Some(private_key_pem.to_string()),
         };
 
         // Initialise clinical record
-        let result = service.initialise(author);
+        let result = service.initialise(author, "Test Hospital".to_string());
         assert!(result.is_ok(), "initialise should succeed");
         let clinical_uuid = result.unwrap();
 

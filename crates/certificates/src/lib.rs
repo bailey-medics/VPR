@@ -15,6 +15,8 @@ use thiserror::Error;
 /// Errors that can occur during certificate creation.
 #[derive(Error, Debug)]
 pub enum CertificateError {
+    #[error("Invalid certificate input: {0}")]
+    InvalidInput(String),
     #[error("Failed to generate certificate: {0}")]
     GenerationError(String),
 }
@@ -44,11 +46,51 @@ impl Certificate {
         registration_authority: &str,
         registration_number: &str,
     ) -> Result<(String, String), CertificateError> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(CertificateError::InvalidInput(
+                "name must not be empty".to_string(),
+            ));
+        }
+        if name.contains(['\n', '\r']) {
+            return Err(CertificateError::InvalidInput(
+                "name must not contain newlines".to_string(),
+            ));
+        }
+
+        let registration_authority = registration_authority.trim();
+        if registration_authority.is_empty() {
+            return Err(CertificateError::InvalidInput(
+                "registration_authority must not be empty".to_string(),
+            ));
+        }
+        if registration_authority.contains(['\n', '\r']) {
+            return Err(CertificateError::InvalidInput(
+                "registration_authority must not contain newlines".to_string(),
+            ));
+        }
+
+        let registration_number = registration_number.trim();
+        if registration_number.is_empty() {
+            return Err(CertificateError::InvalidInput(
+                "registration_number must not be empty".to_string(),
+            ));
+        }
+        if registration_number.contains(['\n', '\r']) {
+            return Err(CertificateError::InvalidInput(
+                "registration_number must not contain newlines".to_string(),
+            ));
+        }
+
         let mut params = CertificateParams::default();
 
-        // Set subject with only Common Name
+        // Subject DN fields are designed to be human-readable in tools like:
+        // `openssl x509 -noout -subject`
         let mut subject = DistinguishedName::new();
         subject.push(DnType::CommonName, name);
+        subject.push(DnType::OrganizationName, registration_authority);
+        // X.520 serialNumber (OID 2.5.4.5) – commonly displayed by OpenSSL as `serialNumber=...`.
+        subject.push(DnType::CustomDnType(vec![2, 5, 4, 5]), registration_number);
         params.distinguished_name = subject;
 
         // Set issuer (assuming self-signed for simplicity, but in practice this would be a CA)
@@ -56,9 +98,10 @@ impl Certificate {
 
         // Add registration number as a URI in subjectAltName
         let uri = format!("vpr://{}/{}", registration_authority, registration_number);
-        params
-            .subject_alt_names
-            .push(SanType::URI(Ia5String::try_from(uri).unwrap()));
+        let uri = Ia5String::try_from(uri).map_err(|e| {
+            CertificateError::InvalidInput(format!("invalid registration URI: {e}"))
+        })?;
+        params.subject_alt_names.push(SanType::URI(uri));
 
         // Set key usage for signing
         params.key_usages = vec![
@@ -91,6 +134,28 @@ impl Certificate {
 mod tests {
     use super::*;
 
+    fn subject_and_san_uris_from_pem(cert_pem: &str) -> (String, Vec<String>) {
+        let (_, pem) = x509_parser::pem::parse_x509_pem(cert_pem.as_bytes()).unwrap();
+        let (_, cert) = x509_parser::parse_x509_certificate(pem.contents.as_slice()).unwrap();
+
+        let subject = cert.subject().to_string();
+        let mut uris = Vec::new();
+
+        for ext in cert.extensions() {
+            if let x509_parser::extensions::ParsedExtension::SubjectAlternativeName(san) =
+                ext.parsed_extension()
+            {
+                for name in san.general_names.iter() {
+                    if let x509_parser::extensions::GeneralName::URI(uri) = name {
+                        uris.push((*uri).to_string());
+                    }
+                }
+            }
+        }
+
+        (subject, uris)
+    }
+
     #[test]
     fn test_create_certificate() {
         let name = "John Doe";
@@ -105,6 +170,12 @@ mod tests {
         assert!(key_pem.contains("BEGIN PRIVATE KEY"));
         assert!(key_pem.contains("END PRIVATE KEY"));
         // Note: The actual content is DER encoded, so we can't check plain text
+
+        let (subject, uris) = subject_and_san_uris_from_pem(&cert_pem);
+        assert!(subject.contains("CN=John Doe"));
+        assert!(subject.contains("O=GMC"));
+        assert!(subject.contains("serialNumber=123456") || subject.contains("2.5.4.5=123456"));
+        assert!(uris.iter().any(|u| u == "vpr://GMC/123456"));
     }
 
     #[test]

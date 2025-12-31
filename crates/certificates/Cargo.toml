@@ -11,3 +11,6 @@ path = "src/lib.rs"
 rcgen = { version = "0.13", features = ["crypto"] }
 thiserror = "1.0"
 time = "0.3"
+
+[dev-dependencies]
+x509-parser = "0.16.0"
