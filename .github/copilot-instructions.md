@@ -95,6 +95,14 @@ Defensive programming (clinical safety)
   - `api-rest`: REST-specific concerns (HTTP endpoints, JSON handling)
   - `main.rs`: Startup validation (patient_data, ehr-template dirs), runtime constants, service orchestration
 
+Testing boundaries
+- Test where the rule lives:
+  - If a function *implements validation rules* (for example `Author::validate_commit_author`), write exhaustive unit tests for each failure mode and a success case.
+  - If a function merely *calls validation* (for example `ClinicalService::initialise` calling `author.validate_commit_author()?`), write only wiring tests:
+    - validation errors are returned unchanged,
+    - no side effects occur when validation fails.
+- Prefer true unit tests (no filesystem/Git/network) where possible; use TempDir-backed tests only for integration-level behaviour (directory layout, Git repo creation, template copying).
+
 Change policy and safety
 - Prefer minimal, well-scoped PRs updating single crates or modules.
 - Run `./scripts/check-all.sh` before proposing changes; fix clippy warnings.

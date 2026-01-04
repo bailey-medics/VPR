@@ -190,6 +190,71 @@ impl Author {
     }
 }
 
+#[cfg(test)]
+mod author_tests {
+    use super::*;
+
+    fn base_author() -> Author {
+        Author {
+            name: "Test Author".to_string(),
+            role: "Clinician".to_string(),
+            email: "test@example.com".to_string(),
+            registrations: vec![],
+            signature: None,
+            certificate: None,
+        }
+    }
+
+    #[test]
+    fn validate_commit_author_rejects_missing_name() {
+        let mut author = base_author();
+        author.name = "\t\n".to_string();
+
+        let err = author
+            .validate_commit_author()
+            .expect_err("expected validation failure");
+        assert!(matches!(err, PatientError::MissingAuthorName));
+    }
+
+    #[test]
+    fn validate_commit_author_rejects_missing_role() {
+        let mut author = base_author();
+        author.role = " ".to_string();
+
+        let err = author
+            .validate_commit_author()
+            .expect_err("expected validation failure");
+        assert!(matches!(err, PatientError::MissingAuthorRole));
+    }
+
+    #[test]
+    fn validate_commit_author_rejects_invalid_registration() {
+        let mut author = base_author();
+        author.registrations = vec![AuthorRegistration {
+            authority: "G MC".to_string(),
+            number: "12345".to_string(),
+        }];
+
+        let err = author
+            .validate_commit_author()
+            .expect_err("expected validation failure");
+        assert!(matches!(err, PatientError::InvalidAuthorRegistration));
+    }
+
+    #[test]
+    fn validate_commit_author_accepts_valid_author() {
+        let mut author = base_author();
+        author.registrations = vec![AuthorRegistration {
+            authority: "GMC".to_string(),
+            number: "12345".to_string(),
+        }];
+
+        author
+            .validate_commit_author()
+            .expect("expected validation to succeed");
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum PatientError {
     #[error("first_name and last_name are required")]
