@@ -195,6 +195,16 @@ pub enum PatientError {
     StorageDirCreation(std::io::Error),
     #[error("failed to create patient directory: {0}")]
     PatientDirCreation(std::io::Error),
+    #[error(
+        "initialise failed and cleanup also failed (path: {path}): init={init_error}; cleanup={cleanup_error}",
+        path = path.display()
+    )]
+    CleanupAfterInitialiseFailed {
+        path: std::path::PathBuf,
+        #[source]
+        init_error: Box<PatientError>,
+        cleanup_error: std::io::Error,
+    },
     #[error("failed to write patient file: {0}")]
     FileWrite(std::io::Error),
     #[error("failed to read patient file: {0}")]
