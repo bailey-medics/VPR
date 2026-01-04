@@ -20,9 +20,9 @@ use std::env;
 /// * `Ok(())` - If the provided key matches the expected key
 ///
 /// # Errors
-/// Returns:
-/// - `INTERNAL` if `API_KEY` is not set
-/// - `UNAUTHENTICATED` if the provided key does not match
+/// Returns `tonic::Status` if:
+/// - `API_KEY` is not set (`INTERNAL`),
+/// - the provided key does not match (`UNAUTHENTICATED`).
 ///
 /// # Environment Variables
 /// * `API_KEY` - The expected API key value (must be set)

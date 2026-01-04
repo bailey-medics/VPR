@@ -10,6 +10,7 @@
 //! **No API concerns**: Authentication, HTTP/gRPC servers, or service interfaces belong in `api-grpc`, `api-rest`, or `api-shared`.
 
 pub mod clinical;
+pub mod components;
 pub mod constants;
 pub mod demographics;
 pub(crate) mod git;
@@ -312,7 +313,10 @@ impl PatientService {
     ///
     /// # Errors
     ///
-    /// Returns a `PatientError` if any step in the initialisation fails.
+    /// Returns a `PatientError` if:
+    /// - demographics initialisation or update fails,
+    /// - clinical initialisation fails,
+    /// - linking clinical to demographics fails.
     pub fn initialise_full_record(
         &self,
         author: Author,
@@ -429,7 +433,11 @@ pub fn clinical_data_path() -> std::path::PathBuf {
 /// * `dst` - Destination directory path
 ///
 /// # Errors
-/// Returns an `std::io::Error` if copying fails
+/// Returns an `std::io::Error` if:
+/// - creating the destination directory fails,
+/// - reading source directory entries fails,
+/// - inspecting entry types fails,
+/// - copying a file fails.
 pub fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
     if !dst.exists() {
         fs::create_dir_all(dst)?;
@@ -461,7 +469,10 @@ pub fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
 /// * `dir` - Directory path to add to the index
 ///
 /// # Errors
-/// Returns a `git2::Error` if adding files to the index fails
+/// Returns a `git2::Error` if:
+/// - traversing the directory tree fails,
+/// - inspecting file types fails,
+/// - adding a path to the Git index fails.
 pub fn add_directory_to_index(index: &mut git2::Index, dir: &Path) -> Result<(), git2::Error> {
     fn add_recursive(
         index: &mut git2::Index,

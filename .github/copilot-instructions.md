@@ -55,6 +55,9 @@ Conventions and patterns to follow
   - Use **Rustdoc** (doc comments) with standard section headings.
   - For functions/methods, include clear `# Arguments`, `# Returns`, and `# Errors` sections **when applicable**.
     - If there are no arguments/meaningful return value/no error conditions to document, omit the empty section.
+    - For `# Errors`, prefer a short, grouped bullet list describing the *conditions* under which an error is returned (not an exhaustive list of enum variants).
+      - Use the form: `Returns <ErrorType> if:` then `- ...` bullets.
+      - Group by category when helpful (validation/config, filesystem I/O, serialisation, Git, crypto).
   - For each module, start the file with `//!` module-level Rustdoc that outlines what the module does and what it is intended to do.
 - Imports and naming:
   - Prefer adding clear `use` imports (for example, `use crate::constants;`, `use crate::uuid::UuidService;`) rather than repeating long paths like `crate::...` throughout the file.

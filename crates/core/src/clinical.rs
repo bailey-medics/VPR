@@ -1,9 +1,7 @@
 //! Patient clinical records management.
 //!
 //! This module handles the initialisation and management of clinical records
-//! for patients. It includes creating clinical entries with timestamps,
-//! initialising Git repositories for version control, and writing EHR status
-//! information in YAML format.
+//! for patients.
 
 use crate::constants;
 use crate::git::{GitService, VprCommitAction, VprCommitDomain, VprCommitMessage};
@@ -11,8 +9,6 @@ use crate::uuid::UuidService;
 use crate::{clinical_data_path, yaml_write, Author, PatientError, PatientResult};
 use chrono::{DateTime, Utc};
 use git2;
-use serde::{Deserialize, Serialize};
-use serde_yaml;
 use std::fs;
 use std::path::Path;
 
@@ -21,55 +17,7 @@ use p256::ecdsa::{Signature, VerifyingKey};
 use p256::pkcs8::DecodePublicKey;
 use x509_parser::prelude::*;
 
-/// Represents the EHR status information in openEHR format.
-/// This struct models the EHR status archetype for patient records.
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
-struct EhrStatus {
-    ehr_id: EhrId,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    archetype_node_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    name: Option<Name>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    is_modifiable: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    is_queryable: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    subject: Option<Subject>,
-}
-
-/// Represents a name value in the EHR status.
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
-struct Name {
-    value: String,
-}
-
-/// Represents the subject of the EHR status, linking to the patient.
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
-struct Subject {
-    external_ref: ExternalRef,
-}
-
-/// Represents an external reference to the patient in the EHR system.
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
-struct ExternalRef {
-    namespace: String,
-    #[serde(rename = "type")]
-    type_: String,
-    id: String,
-}
-
-/// Represents the initial EHR status with just the EHR ID.
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
-struct EhrStatusInit {
-    ehr_id: EhrId,
-}
-
-/// Represents the EHR ID value.
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
-struct EhrId {
-    value: String,
-}
+use crate::components::ehr_status::{EhrStatus, SubjectRef};
 
 /// Service for managing clinical record operations.
 #[derive(Default, Clone)]
@@ -94,8 +42,12 @@ impl ClinicalService {
     ///
     /// # Errors
     ///
-    /// Returns a `PatientError` if any step in the initialisation fails, such as
-    /// directory creation, file writing, or Git operations.
+    /// Returns a `PatientError` if:
+    /// - required inputs or configuration are invalid (for example the EHR template cannot be
+    ///   located),
+    /// - file or directory operations fail while creating the record or copying templates,
+    /// - writing `ehr_status.yaml` fails,
+    /// - Git repository initialisation or the initial commit fails.
     pub fn initialise(&self, author: Author, care_location: String) -> PatientResult<String> {
         let clinical_uuid = UuidService::new();
         let patient_dir = clinical_uuid.sharded_dir(&clinical_data_path());
@@ -114,12 +66,16 @@ impl ClinicalService {
 
         // Create initial EHR status YAML file
         let filename = patient_dir.join(constants::EHR_STATUS_FILENAME);
-        let ehr_status = EhrStatusInit {
-            ehr_id: EhrId {
-                value: clinical_uuid.to_string(),
-            },
+        let ehr_id = uuid::Uuid::parse_str(&clinical_uuid.to_string())
+            .map_err(|_| PatientError::InvalidInput)?;
+
+        let ehr_status = EhrStatus {
+            ehr_id,
+            subject: Vec::new(),
         };
-        yaml_write(&filename, &ehr_status)?;
+
+        let wire = openehr::vpr::ehr_status_from_domain_parts(ehr_status.ehr_id, Vec::new());
+        yaml_write(&filename, &wire)?;
 
         // Initialise Git repository for the patient
         let repo = GitService::init(&patient_dir)?;
@@ -152,7 +108,9 @@ impl ClinicalService {
     ///
     /// # Errors
     ///
-    /// Returns a `PatientError` if serialisation or file writing fails.
+    /// Returns a `PatientError` if:
+    /// - either UUID cannot be parsed,
+    /// - writing `ehr_status.yaml` fails.
     pub fn link_to_demographics(
         &self,
         clinical_uuid: &str,
@@ -168,32 +126,34 @@ impl ClinicalService {
         let clinical_uuid = UuidService::parse(clinical_uuid)?;
         let patient_dir = clinical_uuid.sharded_dir(&clinical_dir);
 
-        // Read existing EHR status to get the current ehr_id
         let filename = patient_dir.join(constants::EHR_STATUS_FILENAME);
-        let existing_yaml = fs::read_to_string(&filename).map_err(PatientError::FileRead)?;
-        let existing_status: EhrStatusInit =
-            serde_yaml::from_str(&existing_yaml).map_err(PatientError::YamlDeserialization)?;
 
         // Create updated EHR status with linking information
+        let ehr_id = uuid::Uuid::parse_str(&clinical_uuid.to_string())
+            .map_err(|_| PatientError::InvalidInput)?;
+        let subject_id =
+            uuid::Uuid::parse_str(demographics_uuid).map_err(|_| PatientError::InvalidInput)?;
+
         let ehr_status = EhrStatus {
-            ehr_id: existing_status.ehr_id,
-            archetype_node_id: Some("openEHR-EHR-STATUS.ehr_status.v1".to_string()),
-            name: Some(Name {
-                value: "EHR Status".to_string(),
-            }),
-            is_modifiable: Some(true),
-            is_queryable: Some(true),
-            subject: Some(Subject {
-                external_ref: ExternalRef {
-                    namespace: format!("vpr://{}/mpi", namespace),
-                    type_: "PERSON".to_string(),
-                    id: demographics_uuid.to_string(),
-                },
-            }),
+            ehr_id,
+            subject: vec![SubjectRef {
+                namespace: format!("vpr://{}/mpi", namespace),
+                id: subject_id,
+            }],
         };
 
-        // Write the updated EHR status
-        yaml_write(&filename, &ehr_status)?;
+        let wire = openehr::vpr::ehr_status_from_domain_parts(
+            ehr_status.ehr_id,
+            ehr_status
+                .subject
+                .iter()
+                .map(|subject_ref| openehr::vpr::SubjectExternalRef {
+                    namespace: subject_ref.namespace.clone(),
+                    id: subject_ref.id,
+                })
+                .collect(),
+        );
+        yaml_write(&filename, &wire)?;
 
         Ok(())
     }
@@ -213,8 +173,10 @@ impl ClinicalService {
     ///
     /// # Errors
     ///
-    /// Returns a `PatientError` if the repository cannot be opened, the head
-    /// cannot be retrieved, or the commit cannot be peeled.
+    /// Returns a `PatientError` if:
+    /// - the UUID cannot be parsed,
+    /// - the Git repository cannot be opened or the first commit cannot be read,
+    /// - the commit timestamp cannot be converted into a `DateTime<Utc>`.
     pub fn get_first_commit_time(
         &self,
         clinical_uuid: &str,
@@ -264,8 +226,10 @@ impl ClinicalService {
     ///
     /// # Errors
     ///
-    /// Returns a `PatientError` if the repository cannot be opened, the commit cannot be accessed,
-    /// or the signature/public key cannot be parsed.
+    /// Returns a `PatientError` if:
+    /// - the UUID cannot be parsed,
+    /// - the Git repository cannot be opened or the latest commit cannot be read,
+    /// - `public_key_pem` is provided but cannot be parsed as a public key or X.509 certificate.
     pub fn verify_commit_signature(
         &self,
         clinical_uuid: &str,
@@ -519,31 +483,21 @@ mod tests {
 
         // Read and verify the content
         let content = fs::read_to_string(&ehr_status_file).expect("Failed to read ehr_status.yaml");
-        let ehr_status: EhrStatus = serde_yaml::from_str(&content).expect("Failed to parse YAML");
 
-        // Check that the linking information was added
-        assert_eq!(
-            ehr_status.archetype_node_id,
-            Some("openEHR-EHR-STATUS.ehr_status.v1".to_string())
-        );
-        assert_eq!(
-            ehr_status.name,
-            Some(Name {
-                value: "EHR Status".to_string()
-            })
-        );
-        assert_eq!(ehr_status.is_modifiable, Some(true));
-        assert_eq!(ehr_status.is_queryable, Some(true));
-        assert_eq!(
-            ehr_status.subject,
-            Some(Subject {
-                external_ref: ExternalRef {
-                    namespace: "vpr://vpr.dev.1/mpi".to_string(),
-                    type_: "PERSON".to_string(),
-                    id: demographics_uuid.to_string(),
-                }
-            })
-        );
+        let wire = openehr::read_ehr_status_yaml(&content).expect("Failed to parse openEHR YAML");
+        let (_ehr_id, subject_external_refs) = openehr::vpr::ehr_status_to_domain_parts(&wire)
+            .expect("Failed to translate wire to domain parts");
+
+        assert_eq!(wire.archetype_node_id, "openEHR-EHR-STATUS.ehr_status.v1");
+        assert_eq!(wire.name.value, "EHR Status");
+        assert!(wire.is_modifiable);
+        assert!(wire.is_queryable);
+
+        let expected_subject_uuid = uuid::Uuid::parse_str(demographics_uuid).expect("valid uuid");
+
+        assert_eq!(subject_external_refs.len(), 1);
+        assert_eq!(subject_external_refs[0].namespace, "vpr://vpr.dev.1/mpi");
+        assert_eq!(subject_external_refs[0].id, expected_subject_uuid);
 
         // Clean up environment variable
         env::remove_var("PATIENT_DATA_DIR");

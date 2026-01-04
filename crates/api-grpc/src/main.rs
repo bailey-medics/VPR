@@ -30,7 +30,10 @@ use api_shared::FILE_DESCRIPTOR_SET;
 /// * `Ok(())` - If server starts and runs successfully
 ///
 /// # Errors
-/// Returns an error if the server cannot be configured, bound, or started.
+/// Returns an error if:
+/// - the logging/tracing configuration cannot be initialised,
+/// - the server address cannot be parsed,
+/// - the gRPC server cannot be bound or started.
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
