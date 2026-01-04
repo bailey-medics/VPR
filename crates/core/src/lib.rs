@@ -4,12 +4,13 @@
 //!
 //! This crate contains pure data operations and file/folder management:
 //! - Patient creation and listing with sharded JSON storage
-//! - File system operations under `PATIENT_DATA_DIR`
+//! - File system operations under the configured patient data directory
 //! - Git-like versioning
 //!
 //! **No API concerns**: Authentication, HTTP/gRPC servers, or service interfaces belong in `api-grpc`, `api-rest`, or `api-shared`.
 
 pub mod clinical;
+pub mod config;
 pub mod constants;
 pub mod demographics;
 pub(crate) mod git;
@@ -20,6 +21,8 @@ pub use api_shared::pb;
 
 // Re-export commonly used constants
 pub use constants::DEFAULT_PATIENT_DATA_DIR;
+
+pub use config::CoreConfig;
 
 use base64::{engine::general_purpose, Engine as _};
 use serde::Deserialize;
@@ -294,16 +297,18 @@ pub struct FullRecord {
 }
 
 /// Pure patient data operations - no API concerns
-#[derive(Default, Clone)]
-pub struct PatientService;
+#[derive(Clone)]
+pub struct PatientService {
+    cfg: std::sync::Arc<CoreConfig>,
+}
 
 impl PatientService {
     /// Creates a new instance of PatientService.
     ///
     /// # Returns
     /// A new `PatientService` instance ready to handle patient operations.
-    pub fn new() -> Self {
-        Self
+    pub fn new(cfg: std::sync::Arc<CoreConfig>) -> Self {
+        Self { cfg }
     }
 
     /// Initialises a complete patient record with demographics and clinical components.
@@ -338,7 +343,7 @@ impl PatientService {
         birth_date: String,
         namespace: Option<String>,
     ) -> PatientResult<FullRecord> {
-        let demographics_service = crate::demographics::DemographicsService;
+        let demographics_service = crate::demographics::DemographicsService::new(self.cfg.clone());
         // Initialise demographics
         let demographics_uuid =
             demographics_service.initialise(author.clone(), care_location.clone())?;
@@ -347,7 +352,7 @@ impl PatientService {
         demographics_service.update(&demographics_uuid, given_names, &last_name, &birth_date)?;
 
         // Initialise clinical
-        let clinical_service = crate::clinical::ClinicalService;
+        let clinical_service = crate::clinical::ClinicalService::new(self.cfg.clone());
         let clinical_uuid = clinical_service.initialise(author, care_location)?;
 
         // Link clinical to demographics
@@ -402,37 +407,6 @@ fn merge_yaml_values(current: serde_yaml::Value, new_data: serde_yaml::Value) ->
         }
         (_, new) => new, // Replace current with new for non-mapping cases
     }
-}
-
-/// Returns the patient data directory path from environment variable or default.
-///
-/// This function reads the `PATIENT_DATA_DIR` environment variable and returns
-/// the path as a `PathBuf`. If the environment variable is not set, it falls
-/// back to the default path defined in `constants::DEFAULT_PATIENT_DATA_DIR`.
-///
-/// # Returns
-/// A `PathBuf` pointing to the patient data directory.
-/// // TODO: try and delete (demographics and clinical use it directly)
-pub fn patient_data_path() -> std::path::PathBuf {
-    let base = std::env::var("PATIENT_DATA_DIR")
-        .unwrap_or_else(|_| constants::DEFAULT_PATIENT_DATA_DIR.into());
-    std::path::PathBuf::from(base)
-}
-
-/// Returns the clinical data directory path.
-///
-/// This function reads the `PATIENT_DATA_DIR` environment variable and returns
-/// the path to the clinical data directory. If the environment variable is not set,
-/// it falls back to the default path defined in `constants::DEFAULT_PATIENT_DATA_DIR`,
-/// then appends the clinical directory name.
-///
-/// # Returns
-/// A `PathBuf` pointing to the clinical data directory.
-pub fn clinical_data_path() -> std::path::PathBuf {
-    let base = std::env::var("PATIENT_DATA_DIR")
-        .unwrap_or_else(|_| constants::DEFAULT_PATIENT_DATA_DIR.into());
-    let data_dir = std::path::PathBuf::from(base);
-    data_dir.join(constants::CLINICAL_DIR_NAME)
 }
 
 /// Recursively copies a directory and its contents to a destination.

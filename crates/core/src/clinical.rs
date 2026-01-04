@@ -3,18 +3,18 @@
 //! This module handles the initialisation and management of clinical records
 //! for patients.
 
-use crate::constants::{
-    CLINICAL_DIR_NAME, DEFAULT_PATIENT_DATA_DIR, EHR_STATUS_FILENAME, EHR_TEMPLATE_DIR, LATEST_RM,
-};
+use crate::config::CoreConfig;
+use crate::constants::{CLINICAL_DIR_NAME, EHR_STATUS_FILENAME};
 use crate::git::{GitService, VprCommitAction, VprCommitDomain, VprCommitMessage};
 use crate::uuid::UuidService;
-use crate::{clinical_data_path, Author, PatientError, PatientResult};
+use crate::{Author, PatientError, PatientResult};
 use chrono::{DateTime, Utc};
 use git2;
 use std::fs;
 use std::io;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use p256::ecdsa::signature::Verifier;
 use p256::ecdsa::{Signature, VerifyingKey};
@@ -22,8 +22,16 @@ use p256::pkcs8::DecodePublicKey;
 use x509_parser::prelude::*;
 
 /// Service for managing clinical record operations.
-#[derive(Default, Clone)]
-pub struct ClinicalService;
+#[derive(Clone)]
+pub struct ClinicalService {
+    cfg: Arc<CoreConfig>,
+}
+
+impl ClinicalService {
+    pub fn new(cfg: Arc<CoreConfig>) -> Self {
+        Self { cfg }
+    }
+}
 
 impl ClinicalService {
     /// Initialises a new clinical record for a patient.
@@ -63,11 +71,11 @@ impl ClinicalService {
         )?;
 
         // Preflight checks before any filesystem side-effects.
-        let rm_version = rm_version_from_env_or_latest()?;
-        let template_dir = resolve_ehr_template_dir()?;
-        validate_ehr_template_dir_safe_to_copy(&template_dir)?;
+        let data_dir = self.cfg.patient_data_dir().to_path_buf();
+        let rm_version = self.cfg.rm_system_version();
+        let template_dir = self.cfg.ehr_template_dir().to_path_buf();
 
-        let clinical_dir = clinical_data_path();
+        let clinical_dir = data_dir.join(CLINICAL_DIR_NAME);
         let mut clinical_uuid_allocating: Option<UuidService> = None;
         let mut patient_dir_allocating: Option<PathBuf> = None;
 
@@ -145,8 +153,8 @@ impl ClinicalService {
     ///
     /// * `clinical_uuid` - The UUID of the clinical record.
     /// * `demographics_uuid` - The UUID of the associated patient demographics.
-    /// * `namespace` - Optional namespace for the external reference; defaults to
-    ///   the VPR_NAMESPACE environment variable or "vpr.dev.1".
+    /// * `namespace` - Optional namespace for the external reference; defaults to the
+    ///   value configured in `CoreConfig`.
     ///
     /// # Returns
     ///
@@ -163,13 +171,12 @@ impl ClinicalService {
         demographics_uuid: &str,
         namespace: Option<String>,
     ) -> PatientResult<()> {
-        let rm_version = rm_version_from_env_or_latest()?;
+        let rm_version = self.cfg.rm_system_version();
 
-        let namespace = namespace.unwrap_or_else(|| {
-            std::env::var("VPR_NAMESPACE").unwrap_or_else(|_| "vpr.dev.1".into())
-        });
+        let namespace = namespace.unwrap_or_else(|| self.cfg.vpr_namespace().to_string());
 
-        let clinical_dir = clinical_data_path();
+        let data_dir = self.cfg.patient_data_dir().to_path_buf();
+        let clinical_dir = data_dir.join(CLINICAL_DIR_NAME);
 
         let clinical_uuid = UuidService::parse(clinical_uuid)?;
         let patient_dir = clinical_uuid.sharded_dir(&clinical_dir);
@@ -213,11 +220,10 @@ impl ClinicalService {
         clinical_uuid: &str,
         base_dir: Option<&Path>,
     ) -> PatientResult<DateTime<Utc>> {
-        let base = base_dir
-            .map(|p| p.to_string_lossy().to_string())
-            .or_else(|| std::env::var("PATIENT_DATA_DIR").ok())
-            .unwrap_or_else(|| DEFAULT_PATIENT_DATA_DIR.into());
-        let data_dir = Path::new(&base);
+        let data_dir = match base_dir {
+            Some(dir) => dir.to_path_buf(),
+            None => self.cfg.patient_data_dir().to_path_buf(),
+        };
         let clinical_dir = data_dir.join(CLINICAL_DIR_NAME);
 
         let clinical_uuid = UuidService::parse(clinical_uuid)?;
@@ -266,7 +272,8 @@ impl ClinicalService {
         clinical_uuid: &str,
         public_key_pem: &str,
     ) -> PatientResult<bool> {
-        let clinical_dir = clinical_data_path();
+        let data_dir = self.cfg.patient_data_dir().to_path_buf();
+        let clinical_dir = data_dir.join(CLINICAL_DIR_NAME);
 
         let clinical_uuid = UuidService::parse(clinical_uuid)?;
         let patient_dir = clinical_uuid.sharded_dir(&clinical_dir);
@@ -322,15 +329,6 @@ impl ClinicalService {
     }
 }
 
-fn rm_version_from_env_or_latest() -> PatientResult<openehr::RmVersion> {
-    let version = std::env::var("RM_SYSTEM_VERSION")
-        .ok()
-        .map(|v| v.parse::<openehr::RmVersion>())
-        .transpose()?;
-
-    Ok(version.unwrap_or(LATEST_RM))
-}
-
 fn verifying_key_from_public_key_or_cert_pem(pem_or_cert: &str) -> PatientResult<VerifyingKey> {
     if pem_or_cert.contains("-----BEGIN CERTIFICATE-----") {
         let (_, pem) = x509_parser::pem::parse_x509_pem(pem_or_cert.as_bytes())
@@ -377,126 +375,46 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-fn resolve_ehr_template_dir() -> PatientResult<PathBuf> {
-    fn looks_like_template_dir(path: &Path) -> bool {
-        path.join(".ehr").is_dir()
-    }
-
-    if let Ok(path) = std::env::var("VPR_EHR_TEMPLATE_DIR") {
-        let template_dir = PathBuf::from(path);
-        if template_dir.is_dir() && looks_like_template_dir(&template_dir) {
-            return Ok(template_dir);
-        }
-        return Err(PatientError::InvalidInput);
-    }
-
-    let cwd_relative = PathBuf::from(EHR_TEMPLATE_DIR);
-    if cwd_relative.is_dir() && looks_like_template_dir(&cwd_relative) {
-        return Ok(cwd_relative);
-    }
-
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    for ancestor in manifest_dir.ancestors() {
-        let candidate = ancestor.join(EHR_TEMPLATE_DIR);
-        if candidate.is_dir() && looks_like_template_dir(&candidate) {
-            return Ok(candidate);
-        }
-    }
-
-    Err(PatientError::InvalidInput)
-}
-
-fn validate_ehr_template_dir_safe_to_copy(template_dir: &Path) -> PatientResult<()> {
-    // Guardrails for environment overrides without hardcoding expected folder names.
-    //
-    // Goals:
-    // - allow templates to evolve (e.g. add bloods/) without code changes
-    // - prevent accidental "copy the world" when VPR_EHR_TEMPLATE_DIR is set to something broad
-    // - avoid copying unsafe filesystem entries like symlinks or device files
-
-    const MAX_FILES: usize = 2_000;
-    const MAX_TOTAL_BYTES: u64 = 50 * 1024 * 1024; // 50 MiB
-    const MAX_DEPTH: usize = 20;
-
-    fn scan_dir(
-        path: &Path,
-        depth: usize,
-        files: &mut usize,
-        bytes: &mut u64,
-    ) -> PatientResult<()> {
-        if depth > MAX_DEPTH {
-            return Err(PatientError::InvalidInput);
-        }
-
-        for entry in fs::read_dir(path).map_err(PatientError::FileRead)? {
-            let entry = entry.map_err(PatientError::FileRead)?;
-            let entry_path = entry.path();
-            let metadata = fs::symlink_metadata(&entry_path).map_err(PatientError::FileRead)?;
-            let file_type = metadata.file_type();
-
-            if file_type.is_symlink() {
-                return Err(PatientError::InvalidInput);
-            }
-
-            if file_type.is_file() {
-                *files = files.saturating_add(1);
-                *bytes = bytes.saturating_add(metadata.len());
-
-                if *files > MAX_FILES || *bytes > MAX_TOTAL_BYTES {
-                    return Err(PatientError::InvalidInput);
-                }
-            } else if file_type.is_dir() {
-                scan_dir(&entry_path, depth + 1, files, bytes)?;
-            } else {
-                // Reject special files (devices, fifos, sockets, etc).
-                return Err(PatientError::InvalidInput);
-            }
-        }
-
-        Ok(())
-    }
-
-    // Minimal sanity check: templates must at least contain the hidden .ehr folder.
-    // This prevents common foot-guns like VPR_EHR_TEMPLATE_DIR=".".
-    if !template_dir.join(".ehr").is_dir() {
-        return Err(PatientError::InvalidInput);
-    }
-
-    let mut files = 0usize;
-    let mut bytes = 0u64;
-    scan_dir(template_dir, 0, &mut files, &mut bytes)
-}
-
 /// Recursively add all files in a directory to a Git index
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{
+        resolve_ehr_template_dir, rm_system_version_from_env_value,
+        validate_ehr_template_dir_safe_to_copy,
+    };
+    use crate::CoreConfig;
     use p256::ecdsa::SigningKey;
     use p256::pkcs8::{EncodePrivateKey, EncodePublicKey};
     use rcgen::{CertificateParams, KeyPair};
-    use std::env;
-    use std::sync::{Mutex, OnceLock};
+    use std::path::Path;
+    use std::sync::Arc;
     use tempfile::TempDir;
 
-    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("lock poisoned")
+    fn test_cfg(patient_data_dir: &Path) -> Arc<CoreConfig> {
+        let ehr_template_dir =
+            resolve_ehr_template_dir(None).expect("resolve_ehr_template_dir should succeed");
+        validate_ehr_template_dir_safe_to_copy(&ehr_template_dir)
+            .expect("template dir should be safe to copy");
+
+        let rm_system_version = rm_system_version_from_env_value(None)
+            .expect("rm_system_version_from_env_value should succeed");
+
+        Arc::new(
+            CoreConfig::new(
+                patient_data_dir.to_path_buf(),
+                ehr_template_dir,
+                rm_system_version,
+                "vpr.dev.1".into(),
+            )
+            .expect("CoreConfig::new should succeed"),
+        )
     }
 
     #[test]
     fn test_initialise_creates_clinical_record() {
-        let _lock = env_lock();
-        // Save original env var
-        let original_env = env::var("PATIENT_DATA_DIR").ok();
-
         // Create a temporary directory for testing
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let temp_path = temp_dir.path().to_str().unwrap();
-
-        // Set PATIENT_DATA_DIR to the temp directory
-        env::set_var("PATIENT_DATA_DIR", temp_path);
 
         // Create a test author
         let author = Author {
@@ -508,8 +426,8 @@ mod tests {
             certificate: None,
         };
 
-        // Initialise clinical service
-        let service = ClinicalService;
+        let cfg = test_cfg(temp_dir.path());
+        let service = ClinicalService::new(cfg);
 
         // Call initialise
         let result = service.initialise(author, "Test Hospital".to_string());
@@ -558,26 +476,12 @@ mod tests {
             commit.message().unwrap(),
             "record:init: Clinical record created\n\nAuthor-Name: Test Author\nAuthor-Role: Clinician\nCare-Location: Test Hospital"
         );
-
-        // Clean up environment variable
-        env::remove_var("PATIENT_DATA_DIR");
-        if let Some(original) = original_env {
-            env::set_var("PATIENT_DATA_DIR", original);
-        }
     }
 
     #[test]
     fn test_link_to_demographics_updates_ehr_status() {
-        let _lock = env_lock();
-        // Save original env var
-        let original_env = env::var("PATIENT_DATA_DIR").ok();
-
         // Create a temporary directory for testing
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let temp_path = temp_dir.path().to_str().unwrap();
-
-        // Set PATIENT_DATA_DIR to the temp directory
-        env::set_var("PATIENT_DATA_DIR", temp_path);
 
         // Create a test author
         let author = Author {
@@ -590,7 +494,8 @@ mod tests {
         };
 
         // Initialise clinical service
-        let service = ClinicalService;
+        let cfg = test_cfg(temp_dir.path());
+        let service = ClinicalService::new(cfg);
 
         // First, initialise a clinical record
         let result = service.initialise(author, "Test Hospital".to_string());
@@ -629,26 +534,12 @@ mod tests {
         assert_eq!(subject_external_refs.len(), 1);
         assert_eq!(subject_external_refs[0].namespace, "vpr://vpr.dev.1/mpi");
         assert_eq!(subject_external_refs[0].id, expected_subject_uuid);
-
-        // Clean up environment variable
-        env::remove_var("PATIENT_DATA_DIR");
-        if let Some(original) = original_env {
-            env::set_var("PATIENT_DATA_DIR", original);
-        }
     }
 
     #[test]
     fn test_get_first_commit_time() {
-        let _lock = env_lock();
-        // Save original env var
-        let original_env = env::var("PATIENT_DATA_DIR").ok();
-
         // Create a temporary directory for testing
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let temp_path = temp_dir.path().to_str().unwrap();
-
-        // Set PATIENT_DATA_DIR to the temp directory
-        env::set_var("PATIENT_DATA_DIR", temp_path);
 
         // Create a test author
         let author = Author {
@@ -661,7 +552,8 @@ mod tests {
         };
 
         // Initialise clinical service
-        let service = ClinicalService;
+        let cfg = test_cfg(temp_dir.path());
+        let service = ClinicalService::new(cfg);
 
         // Call initialise to create a record
         let clinical_uuid = service
@@ -677,24 +569,12 @@ mod tests {
         let now = Utc::now();
         let diff = now.signed_duration_since(timestamp);
         assert!(diff.num_seconds() < 60, "timestamp should be recent");
-
-        // Clean up environment variable
-        env::remove_var("PATIENT_DATA_DIR");
-        if let Some(original) = original_env {
-            env::set_var("PATIENT_DATA_DIR", original);
-        }
     }
 
     #[test]
     fn test_verify_commit_signature() {
-        let _lock = env_lock();
-        // Save original env var
-        let original_env = env::var("PATIENT_DATA_DIR").ok();
-
         // Create a temporary directory for testing
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let temp_path = temp_dir.path().to_str().unwrap();
-        env::set_var("PATIENT_DATA_DIR", temp_path);
 
         // Generate a key pair for signing
         let signing_key = SigningKey::random(&mut rand::thread_rng());
@@ -710,7 +590,8 @@ mod tests {
             .to_public_key_pem(p256::pkcs8::LineEnding::LF)
             .expect("Failed to encode public key");
 
-        let service = ClinicalService;
+        let cfg = test_cfg(temp_dir.path());
+        let service = ClinicalService::new(cfg);
         let author = Author {
             name: "Test Author".to_string(),
             role: "Clinician".to_string(),
@@ -745,22 +626,11 @@ mod tests {
             !wrong_verify.unwrap(),
             "signature should be invalid with wrong key"
         );
-
-        // Clean up environment variable
-        env::remove_var("PATIENT_DATA_DIR");
-        if let Some(original) = original_env {
-            env::set_var("PATIENT_DATA_DIR", original);
-        }
     }
 
     #[test]
     fn test_verify_commit_signature_offline_with_embedded_public_key() {
-        let _lock = env_lock();
-        let original_env = env::var("PATIENT_DATA_DIR").ok();
-
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let temp_path = temp_dir.path().to_str().unwrap();
-        env::set_var("PATIENT_DATA_DIR", temp_path);
 
         let signing_key = SigningKey::random(&mut rand::thread_rng());
         let verifying_key = signing_key.verifying_key();
@@ -772,7 +642,8 @@ mod tests {
             .to_public_key_pem(p256::pkcs8::LineEnding::LF)
             .expect("Failed to encode public key");
 
-        let service = ClinicalService;
+        let cfg = test_cfg(temp_dir.path());
+        let service = ClinicalService::new(cfg);
         let author = Author {
             name: "Test Author".to_string(),
             role: "Clinician".to_string(),
@@ -797,21 +668,11 @@ mod tests {
             .verify_commit_signature(&clinical_uuid, &public_key_pem)
             .expect("verify_commit_signature should succeed");
         assert!(ok, "verification with explicit public key should succeed");
-
-        env::remove_var("PATIENT_DATA_DIR");
-        if let Some(original) = original_env {
-            env::set_var("PATIENT_DATA_DIR", original);
-        }
     }
 
     #[test]
     fn test_initialise_rejects_mismatched_author_certificate() {
-        let _lock = env_lock();
-        let original_env = env::var("PATIENT_DATA_DIR").ok();
-
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let temp_path = temp_dir.path().to_str().unwrap();
-        env::set_var("PATIENT_DATA_DIR", temp_path);
 
         // Signing key used for commit.
         let signing_key = SigningKey::random(&mut rand::thread_rng());
@@ -834,7 +695,8 @@ mod tests {
             .expect("self_signed should succeed");
         let cert_pem = cert.pem();
 
-        let service = ClinicalService;
+        let cfg = test_cfg(temp_dir.path());
+        let service = ClinicalService::new(cfg);
         let author = Author {
             name: "Test Author".to_string(),
             role: "Clinician".to_string(),
@@ -851,28 +713,19 @@ mod tests {
             err,
             PatientError::AuthorCertificatePublicKeyMismatch
         ));
-
-        env::remove_var("PATIENT_DATA_DIR");
-        if let Some(original) = original_env {
-            env::set_var("PATIENT_DATA_DIR", original);
-        }
     }
 
     #[test]
     fn test_extract_embedded_commit_signature_from_head_commit() {
-        let _lock = env_lock();
-        let original_env = env::var("PATIENT_DATA_DIR").ok();
-
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let temp_path = temp_dir.path().to_str().unwrap();
-        env::set_var("PATIENT_DATA_DIR", temp_path);
 
         let signing_key = SigningKey::random(&mut rand::thread_rng());
         let private_key_pem = signing_key
             .to_pkcs8_pem(p256::pkcs8::LineEnding::LF)
             .expect("Failed to encode private key");
 
-        let service = ClinicalService;
+        let cfg = test_cfg(temp_dir.path());
+        let service = ClinicalService::new(cfg);
         let author = Author {
             name: "Test Author".to_string(),
             role: "Clinician".to_string(),
@@ -900,10 +753,5 @@ mod tests {
         assert_eq!(embedded.signature.len(), 64);
         assert!(!embedded.public_key.is_empty());
         assert!(embedded.certificate.is_none());
-
-        env::remove_var("PATIENT_DATA_DIR");
-        if let Some(original) = original_env {
-            env::set_var("PATIENT_DATA_DIR", original);
-        }
     }
 }

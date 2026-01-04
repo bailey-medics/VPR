@@ -14,9 +14,11 @@
 pub use api_shared::pb;
 
 use api_shared::{auth, HealthService};
+use std::sync::Arc;
 use tonic::{Request, Response, Status};
 use vpr_core::{
     clinical::ClinicalService, demographics::DemographicsService, Author, AuthorRegistration,
+    CoreConfig,
 };
 
 /// Authentication interceptor for gRPC requests.
@@ -58,9 +60,19 @@ use api_shared::pb::{vpr_server::Vpr, CreatePatientReq, CreatePatientRes, Health
 /// to patient data operations. It uses the PatientService from the core crate
 /// for actual data operations while handling gRPC protocol concerns and
 /// authentication.
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct VprService {
+    cfg: Arc<CoreConfig>,
     demographics_service: DemographicsService,
+}
+
+impl VprService {
+    pub fn new(cfg: Arc<CoreConfig>) -> Self {
+        Self {
+            demographics_service: DemographicsService::new(cfg.clone()),
+            cfg,
+        }
+    }
 }
 
 #[tonic::async_trait]
@@ -131,7 +143,7 @@ impl Vpr for VprService {
             },
             certificate: None,
         };
-        let clinical_service = ClinicalService;
+        let clinical_service = ClinicalService::new(self.cfg.clone());
         match clinical_service.initialise(author, req.care_location) {
             Ok(uuid) => {
                 let resp = pb::CreatePatientRes {

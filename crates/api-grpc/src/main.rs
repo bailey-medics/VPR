@@ -15,6 +15,13 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use api_grpc::{auth_interceptor, pb::vpr_server::VprServer, VprService};
 use api_shared::FILE_DESCRIPTOR_SET;
+use std::path::Path;
+use std::sync::Arc;
+use vpr_core::config::{
+    resolve_ehr_template_dir, rm_system_version_from_env_value,
+    validate_ehr_template_dir_safe_to_copy,
+};
+use vpr_core::CoreConfig;
 
 /// Main entry point for the VPR gRPC server
 ///
@@ -38,6 +45,34 @@ use api_shared::FILE_DESCRIPTOR_SET;
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
 
+    let patient_data_dir = std::env::var("PATIENT_DATA_DIR")
+        .unwrap_or_else(|_| vpr_core::DEFAULT_PATIENT_DATA_DIR.into());
+    let patient_data_path = Path::new(&patient_data_dir);
+    if !patient_data_path.exists() {
+        anyhow::bail!(
+            "Patient data directory does not exist: {}",
+            patient_data_path.display()
+        );
+    }
+
+    let template_override = std::env::var("VPR_EHR_TEMPLATE_DIR")
+        .ok()
+        .map(std::path::PathBuf::from);
+    let ehr_template_dir = resolve_ehr_template_dir(template_override)?;
+    validate_ehr_template_dir_safe_to_copy(&ehr_template_dir)?;
+
+    let rm_system_version =
+        rm_system_version_from_env_value(std::env::var("RM_SYSTEM_VERSION").ok())?;
+
+    let vpr_namespace = std::env::var("VPR_NAMESPACE").unwrap_or_else(|_| "vpr.dev.1".into());
+
+    let cfg = Arc::new(CoreConfig::new(
+        patient_data_path.to_path_buf(),
+        ehr_template_dir,
+        rm_system_version,
+        vpr_namespace,
+    )?);
+
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::from_default_env().add_directive("vpr=info".parse()?))
         .with(tracing_subscriber::fmt::layer())
@@ -49,7 +84,7 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("-- Starting VPR gRPC on {}", addr);
 
-    let svc = VprService::default();
+    let svc = VprService::new(cfg);
     let mut server_builder =
         Server::builder().add_service(VprServer::with_interceptor(svc, auth_interceptor));
 

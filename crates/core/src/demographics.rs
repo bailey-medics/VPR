@@ -6,6 +6,7 @@
 //! version control using Git. Demographic updates include name and birth date
 //! modifications.
 
+use crate::config::CoreConfig;
 use crate::git::{GitService, VprCommitAction, VprCommitDomain, VprCommitMessage};
 use crate::Author;
 use chrono;
@@ -13,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tracing;
 
 use crate::{PatientError, PatientResult};
@@ -39,8 +41,16 @@ struct Name {
 }
 
 /// Service for managing patient demographics operations.
-#[derive(Default, Clone)]
-pub struct DemographicsService;
+#[derive(Clone)]
+pub struct DemographicsService {
+    cfg: Arc<CoreConfig>,
+}
+
+impl DemographicsService {
+    pub fn new(cfg: Arc<CoreConfig>) -> Self {
+        Self { cfg }
+    }
+}
 
 impl DemographicsService {
     /// Initialises a new patient demographics record.
@@ -66,8 +76,7 @@ impl DemographicsService {
     /// - `patient.json` cannot be written,
     /// - Git repository initialisation or the initial commit fails.
     pub fn initialise(&self, author: Author, care_location: String) -> PatientResult<String> {
-        // Determine storage directory from environment
-        let data_dir = crate::patient_data_path();
+        let data_dir = self.cfg.patient_data_dir();
 
         let demographics_uuid = crate::uuid::UuidService::new();
         let created_at = chrono::Utc::now().to_rfc3339();
@@ -139,7 +148,7 @@ impl DemographicsService {
         last_name: &str,
         birth_date: &str,
     ) -> PatientResult<()> {
-        let data_dir = crate::patient_data_path();
+        let data_dir = self.cfg.patient_data_dir();
         let demographics_dir = data_dir.join(crate::constants::DEMOGRAPHICS_DIR_NAME);
 
         let demographics_uuid = crate::uuid::UuidService::parse(demographics_uuid)?;
@@ -168,7 +177,8 @@ impl DemographicsService {
 
     /// Lists all patient records from the file system.
     ///
-    /// This method traverses the sharded directory structure under `PATIENT_DATA_DIR`
+    /// This method traverses the sharded directory structure under the patient data directory
+    /// configured in `CoreConfig`.
     /// and reads all `patient.json` files to reconstruct patient records.
     ///
     /// # Returns
@@ -176,10 +186,10 @@ impl DemographicsService {
     /// patient file cannot be parsed, it will be logged as a warning and skipped.
     ///
     /// # Directory Structure
-    /// Expects patients stored in: `<PATIENT_DATA_DIR>/demographics/<s1>/<s2>/<32hex-uuid>/patient.json`
+    /// Expects patients stored in: `<patient_data_dir>/demographics/<s1>/<s2>/<32hex-uuid>/patient.json`
     /// where s1/s2 are the first 4 hex characters of the UUID.
     pub fn list_patients(&self) -> Vec<crate::pb::Patient> {
-        let data_dir = crate::patient_data_path();
+        let data_dir = self.cfg.patient_data_dir();
 
         let mut patients = Vec::new();
 

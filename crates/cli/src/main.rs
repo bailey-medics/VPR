@@ -7,13 +7,20 @@
 use clap::{Parser, Subcommand};
 use vpr_certificates::Certificate;
 use vpr_core::{
-    clinical::ClinicalService, constants, demographics::DemographicsService, Author,
-    AuthorRegistration, PatientService,
+    clinical::ClinicalService,
+    config::{
+        resolve_ehr_template_dir, rm_system_version_from_env_value,
+        validate_ehr_template_dir_safe_to_copy,
+    },
+    constants,
+    demographics::DemographicsService,
+    Author, AuthorRegistration, CoreConfig, PatientService,
 };
 
 use base64::{engine::general_purpose, Engine as _};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 ///
 /// This struct defines the CLI structure using clap for parsing command line arguments.
 #[derive(Parser)]
@@ -258,10 +265,11 @@ fn clear_dir_contents(path: &Path) -> Result<(), io::Error> {
 /// Returns `Ok(())` on successful execution, or an error if something fails.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
+    let cfg = build_core_config_from_env()?;
 
     match cli.command {
         Some(Commands::List) => {
-            let service = DemographicsService;
+            let service = DemographicsService::new(cfg.clone());
             let patients = service.list_patients();
             if patients.is_empty() {
                 println!("No patients found.");
@@ -297,7 +305,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 signature,
                 certificate: None,
             };
-            let demographics_service = DemographicsService;
+            let demographics_service = DemographicsService::new(cfg.clone());
             match demographics_service.initialise(author, care_location) {
                 Ok(uuid) => println!("Initialised demographics with UUID: {}", uuid),
                 Err(e) => eprintln!("Error initialising demographics: {}", e),
@@ -326,7 +334,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 signature,
                 certificate: None,
             };
-            let clinical_service = ClinicalService;
+            let clinical_service = ClinicalService::new(cfg.clone());
             match clinical_service.initialise(author, care_location) {
                 Ok(uuid) => println!("Initialised clinical with UUID: {}", uuid),
                 Err(e) => eprintln!("Error initialising clinical: {}", e),
@@ -337,7 +345,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             demographics_uuid,
             namespace,
         }) => {
-            let clinical_service = ClinicalService;
+            let clinical_service = ClinicalService::new(cfg.clone());
             match clinical_service.link_to_demographics(
                 &clinical_uuid,
                 &demographics_uuid,
@@ -357,7 +365,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .split(',')
                 .map(|s| s.trim().to_string())
                 .collect();
-            let demographics_service = DemographicsService;
+            let demographics_service = DemographicsService::new(cfg.clone());
             match demographics_service.update(
                 &demographics_uuid,
                 given_names_vec,
@@ -412,7 +420,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .split(',')
                 .map(|s| s.trim().to_string())
                 .collect();
-            let service = PatientService::new();
+            let service = PatientService::new(cfg.clone());
             match service.initialise_full_record(
                 author,
                 care_location,
@@ -429,7 +437,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Some(Commands::GetFirstCommitTime { clinical_uuid }) => {
-            let clinical_service = ClinicalService;
+            let clinical_service = ClinicalService::new(cfg.clone());
             match clinical_service.get_first_commit_time(&clinical_uuid, None) {
                 Ok(timestamp) => println!(
                     "First commit time for clinical UUID {}: {}",
@@ -471,7 +479,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
-            let clinical_service = ClinicalService;
+            let clinical_service = ClinicalService::new(cfg.clone());
             match clinical_service.verify_commit_signature(&clinical_uuid, &public_key_pem) {
                 Ok(true) => println!("Signature VALID for clinical UUID: {}", clinical_uuid),
                 Ok(false) => println!("Signature INVALID for clinical UUID: {}", clinical_uuid),
@@ -537,4 +545,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+fn build_core_config_from_env() -> Result<Arc<CoreConfig>, Box<dyn std::error::Error>> {
+    let patient_data_dir = std::env::var("PATIENT_DATA_DIR")
+        .unwrap_or_else(|_| vpr_core::DEFAULT_PATIENT_DATA_DIR.into());
+    let patient_data_path = Path::new(&patient_data_dir);
+    if !patient_data_path.exists() {
+        return Err(format!(
+            "Patient data directory does not exist: {}",
+            patient_data_path.display()
+        )
+        .into());
+    }
+
+    let template_override = std::env::var("VPR_EHR_TEMPLATE_DIR")
+        .ok()
+        .map(PathBuf::from);
+    let ehr_template_dir = resolve_ehr_template_dir(template_override)?;
+    validate_ehr_template_dir_safe_to_copy(&ehr_template_dir)?;
+
+    let rm_system_version =
+        rm_system_version_from_env_value(std::env::var("RM_SYSTEM_VERSION").ok())?;
+    let vpr_namespace = std::env::var("VPR_NAMESPACE").unwrap_or_else(|_| "vpr.dev.1".into());
+
+    Ok(Arc::new(CoreConfig::new(
+        patient_data_path.to_path_buf(),
+        ehr_template_dir,
+        rm_system_version,
+        vpr_namespace,
+    )?))
 }

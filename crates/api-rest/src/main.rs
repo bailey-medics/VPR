@@ -21,8 +21,12 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 use api_shared::pb;
+use std::path::Path;
+use std::path::PathBuf;
 use vpr_core::{
-    clinical::ClinicalService, demographics::DemographicsService, Author, AuthorRegistration,
+    clinical::ClinicalService, config::resolve_ehr_template_dir,
+    config::rm_system_version_from_env_value, config::validate_ehr_template_dir_safe_to_copy,
+    demographics::DemographicsService, Author, AuthorRegistration, CoreConfig,
 };
 
 /// Application state for the REST API server
@@ -31,6 +35,7 @@ use vpr_core::{
 /// including the PatientService instance for data operations.
 #[derive(Clone)]
 struct AppState {
+    clinical_service: Arc<ClinicalService>,
     demographics_service: Arc<DemographicsService>,
 }
 
@@ -76,8 +81,36 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("-- Starting VPR REST API on {}", addr);
 
+    let patient_data_dir = std::env::var("PATIENT_DATA_DIR")
+        .unwrap_or_else(|_| vpr_core::DEFAULT_PATIENT_DATA_DIR.into());
+    let patient_data_path = Path::new(&patient_data_dir);
+    if !patient_data_path.exists() {
+        anyhow::bail!(
+            "Patient data directory does not exist: {}",
+            patient_data_path.display()
+        );
+    }
+
+    let template_override = std::env::var("VPR_EHR_TEMPLATE_DIR")
+        .ok()
+        .map(PathBuf::from);
+    let ehr_template_dir = resolve_ehr_template_dir(template_override)?;
+    validate_ehr_template_dir_safe_to_copy(&ehr_template_dir)?;
+
+    let rm_system_version =
+        rm_system_version_from_env_value(std::env::var("RM_SYSTEM_VERSION").ok())?;
+    let vpr_namespace = std::env::var("VPR_NAMESPACE").unwrap_or_else(|_| "vpr.dev.1".into());
+
+    let cfg = Arc::new(CoreConfig::new(
+        patient_data_path.to_path_buf(),
+        ehr_template_dir,
+        rm_system_version,
+        vpr_namespace,
+    )?);
+
     let state = AppState {
-        demographics_service: Arc::new(DemographicsService),
+        clinical_service: Arc::new(ClinicalService::new(cfg.clone())),
+        demographics_service: Arc::new(DemographicsService::new(cfg)),
     };
 
     let app = Router::new()
@@ -175,7 +208,7 @@ async fn list_patients(
 /// - clinical initialisation fails.
 #[axum::debug_handler]
 async fn create_patient(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Json(req): Json<pb::CreatePatientReq>,
 ) -> Result<Json<pb::CreatePatientRes>, (StatusCode, &'static str)> {
     let registrations: Vec<AuthorRegistration> = req
@@ -199,8 +232,7 @@ async fn create_patient(
         },
         certificate: None,
     };
-    let clinical_service = ClinicalService;
-    match clinical_service.initialise(author, req.care_location) {
+    match state.clinical_service.initialise(author, req.care_location) {
         Ok(uuid) => {
             let resp = pb::CreatePatientRes {
                 filename: "".to_string(),
