@@ -3,11 +3,13 @@
 //! This module handles the initialisation and management of clinical records
 //! for patients.
 
-use crate::config::CoreConfig;
+use crate::config::{validate_ehr_template_dir_safe_to_copy, CoreConfig};
 use crate::constants::{CLINICAL_DIR_NAME, EHR_STATUS_FILENAME};
 use crate::git::{GitService, VprCommitAction, VprCommitDomain, VprCommitMessage};
 use crate::uuid::UuidService;
-use crate::{Author, PatientError, PatientResult};
+use crate::{
+    copy_dir_recursive, extract_embedded_commit_signature, Author, PatientError, PatientResult,
+};
 use chrono::{DateTime, Utc};
 use git2;
 use std::fs;
@@ -87,11 +89,10 @@ impl ClinicalService {
             // Defensive guard: ensure the template directory is safe to copy.
             // This should normally be validated once at startup when `CoreConfig` is created,
             // but validating here prevents unsafe copying if an invalid config slips through.
-            crate::config::validate_ehr_template_dir_safe_to_copy(&template_dir)?;
+            validate_ehr_template_dir_safe_to_copy(&template_dir)?;
 
             // Copy EHR template to patient directory
-            crate::copy_dir_recursive(&template_dir, &patient_dir)
-                .map_err(PatientError::FileWrite)?;
+            copy_dir_recursive(&template_dir, &patient_dir).map_err(PatientError::FileWrite)?;
 
             // Create initial EHR status YAML file
             let filename = patient_dir.join(EHR_STATUS_FILENAME);
@@ -255,7 +256,7 @@ impl ClinicalService {
         let head = repo.head().map_err(PatientError::GitHead)?;
         let commit = head.peel_to_commit().map_err(PatientError::GitPeel)?;
 
-        let embedded = match crate::extract_embedded_commit_signature(&commit) {
+        let embedded = match extract_embedded_commit_signature(&commit) {
             Ok(v) => v,
             Err(_) => return Ok(false),
         };
