@@ -17,5 +17,8 @@ pub const EHR_TEMPLATE_DIR: &str = "ehr-template";
 
 /// Directory name for demographics records storage.
 pub const DEMOGRAPHICS_DIR_NAME: &str = "demographics";
+
+/// Latest supported openEHR RM module version.
+pub const LATEST_RM: &str = "rm_1_1_0";
 /// Filename for patient JSON files.
 pub const PATIENT_JSON_FILENAME: &str = "patient.json";
