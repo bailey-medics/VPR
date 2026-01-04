@@ -58,8 +58,8 @@ impl ClinicalService {
         validate_ehr_template_dir_safe_to_copy(&template_dir)?;
 
         let clinical_dir = clinical_data_path();
-        let mut clinical_uuid: Option<UuidService> = None;
-        let mut patient_dir: Option<PathBuf> = None;
+        let mut clinical_uuid_allocating: Option<UuidService> = None;
+        let mut patient_dir_allocating: Option<PathBuf> = None;
 
         // Allocate a new UUID, but guard against pathological UUID collisions (or pre-existing
         // directories from external interference) by limiting retries.
@@ -77,8 +77,8 @@ impl ClinicalService {
 
             match fs::create_dir(&candidate) {
                 Ok(()) => {
-                    clinical_uuid = Some(uuid);
-                    patient_dir = Some(candidate);
+                    clinical_uuid_allocating = Some(uuid);
+                    patient_dir_allocating = Some(candidate);
                     break;
                 }
                 Err(e) if e.kind() == ErrorKind::AlreadyExists => continue,
@@ -86,13 +86,15 @@ impl ClinicalService {
             }
         }
 
-        let clinical_uuid = clinical_uuid.ok_or_else(|| {
+        let clinical_uuid = clinical_uuid_allocating.ok_or_else(|| {
             PatientError::PatientDirCreation(io::Error::new(
                 ErrorKind::AlreadyExists,
                 "failed to allocate a unique patient directory after 5 attempts",
             ))
         })?;
-        let patient_dir = patient_dir.expect("patient_dir must be set when clinical_uuid is set");
+
+        let patient_dir =
+            patient_dir_allocating.expect("patient_dir must be set when clinical_uuid is set");
 
         let result: PatientResult<String> = (|| {
             // Initialise Git repository early so failures don't leave partially-created records.
