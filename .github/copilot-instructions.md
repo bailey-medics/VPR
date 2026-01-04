@@ -50,6 +50,14 @@ Conventions and patterns to follow
 - File I/O: Direct `std::fs` operations with `serde_json`/`serde_yaml` for patient data; no database layer.
 - Git versioning: Each patient directory is a Git repo; commits signed with X.509 certificates from author.signature.
 - EHR template: `ehr-template/` directory copied to new patient clinical dirs; validated at startup.
+
+Defensive programming (clinical safety)
+- Treat defensive programming as a non-negotiable requirement.
+- Validate inputs and configuration early and fail fast (arguments, environment variables, parsed identifiers) before doing filesystem/Git side effects.
+- Prefer bounded work over unbounded behaviour (retry limits, traversal depth, file counts/sizes, timeouts where applicable).
+- Avoid silent fallbacks and “best effort” behaviour in core logic: return a typed error when something is invalid.
+- Avoid `panic!`/`expect()` on paths influenced by inputs or environment; reserve them for internal invariants only.
+- When partial work has occurred, attempt cleanup/rollback and do not ignore cleanup failures.
 - Spelling: Use British English (en-GB) for documentation and other prose (mdBook pages, README, Rustdoc/comments).
 - Documentation style:
   - Use **Rustdoc** (doc comments) with standard section headings.
