@@ -84,6 +84,8 @@ Defensive programming (clinical safety)
   - For each module, start the file with `//!` module-level Rustdoc that outlines what the module does and what it is intended to do.
 - Imports and naming:
   - Prefer adding clear `use` imports (for example, `use crate::uuid::UuidService;`) rather than repeating long paths like `crate::...` throughout the file.
+  - Prefer calling imported items directly (e.g. `copy_dir_recursive(...)`) instead of qualifying call sites with `crate::copy_dir_recursive(...)`.
+    - Exception: keep fully-qualified paths only when needed to disambiguate names.
   - For constants, prefer importing the specific items by name (for example `use crate::constants::{EHR_STATUS_FILENAME, LATEST_RM};`) so call sites don’t need `constants::...` prefixes.
   - Avoid glob imports (`use crate::foo::*;`) unless there is a strong reason.
   - Keep imports scoped to what the file uses; remove unused imports to satisfy clippy `-D warnings`.
