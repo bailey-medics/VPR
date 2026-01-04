@@ -104,6 +104,7 @@ impl ClinicalService {
             Ok(clinical_uuid.into_string())
         })();
 
+        // On error, attempt to clean up the partially-created patient directory.
         match result {
             Ok(v) => Ok(v),
             Err(init_error) => match remove_patient_dir_all(&patient_dir) {
