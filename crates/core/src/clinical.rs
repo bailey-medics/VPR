@@ -3,10 +3,12 @@
 //! This module handles the initialisation and management of clinical records
 //! for patients.
 
-use crate::constants;
+use crate::constants::{
+    CLINICAL_DIR_NAME, DEFAULT_PATIENT_DATA_DIR, EHR_STATUS_FILENAME, EHR_TEMPLATE_DIR, LATEST_RM,
+};
 use crate::git::{GitService, VprCommitAction, VprCommitDomain, VprCommitMessage};
 use crate::uuid::UuidService;
-use crate::{clinical_data_path, yaml_write, Author, PatientError, PatientResult};
+use crate::{clinical_data_path, Author, PatientError, PatientResult};
 use chrono::{DateTime, Utc};
 use git2;
 use std::fs;
@@ -59,13 +61,12 @@ impl ClinicalService {
             .parent()
             .and_then(|p| p.parent())
             .ok_or(PatientError::InvalidInput)?;
-        let template_dir = workspace_root.join(constants::EHR_TEMPLATE_DIR);
+        let template_dir = workspace_root.join(EHR_TEMPLATE_DIR);
         copy_dir_recursive(&template_dir, &patient_dir).map_err(PatientError::FileWrite)?;
 
         // Create initial EHR status YAML file
-        let filename = patient_dir.join(constants::EHR_STATUS_FILENAME);
-        let wire = openehr::vpr::ehr_status_from_domain_parts(clinical_uuid.uuid(), None);
-        yaml_write(&filename, &wire)?;
+        let filename = patient_dir.join(EHR_STATUS_FILENAME);
+        openehr::ehr_status_write(LATEST_RM, &filename, clinical_uuid.uuid(), None)?;
 
         // Initialise Git repository for the patient
         let repo = GitService::init(&patient_dir)?;
@@ -116,18 +117,17 @@ impl ClinicalService {
         let clinical_uuid = UuidService::parse(clinical_uuid)?;
         let patient_dir = clinical_uuid.sharded_dir(&clinical_dir);
 
-        let filename = patient_dir.join(constants::EHR_STATUS_FILENAME);
+        let filename = patient_dir.join(EHR_STATUS_FILENAME);
 
         // Create updated EHR status with linking information
         let subject_id =
             uuid::Uuid::parse_str(demographics_uuid).map_err(|_| PatientError::InvalidInput)?;
 
-        let subject = Some(vec![openehr::vpr::SubjectExternalRef {
+        let subject = Some(vec![openehr::SubjectExternalRef {
             namespace: format!("vpr://{}/mpi", namespace),
             id: subject_id,
         }]);
-        let wire = openehr::vpr::ehr_status_from_domain_parts(clinical_uuid.uuid(), subject);
-        yaml_write(&filename, &wire)?;
+        openehr::ehr_status_write(LATEST_RM, &filename, clinical_uuid.uuid(), subject)?;
 
         Ok(())
     }
@@ -159,9 +159,9 @@ impl ClinicalService {
         let base = base_dir
             .map(|p| p.to_string_lossy().to_string())
             .or_else(|| std::env::var("PATIENT_DATA_DIR").ok())
-            .unwrap_or_else(|| constants::DEFAULT_PATIENT_DATA_DIR.into());
+            .unwrap_or_else(|| DEFAULT_PATIENT_DATA_DIR.into());
         let data_dir = Path::new(&base);
-        let clinical_dir = data_dir.join(constants::CLINICAL_DIR_NAME);
+        let clinical_dir = data_dir.join(CLINICAL_DIR_NAME);
 
         let clinical_uuid = UuidService::parse(clinical_uuid)?;
         let patient_dir = clinical_uuid.sharded_dir(&clinical_dir);
@@ -363,7 +363,7 @@ mod tests {
         assert_eq!(clinical_uuid.len(), 32, "UUID should be 32 characters");
 
         // Verify directory structure exists
-        let clinical_dir = temp_dir.path().join(constants::CLINICAL_DIR_NAME);
+        let clinical_dir = temp_dir.path().join(CLINICAL_DIR_NAME);
         assert!(clinical_dir.exists(), "clinical directory should exist");
 
         // Extract sharding directories from UUID
@@ -447,11 +447,11 @@ mod tests {
         assert!(result.is_ok(), "link_to_demographics should succeed");
 
         // Verify ehr_status.yaml was updated with linking information
-        let clinical_dir = temp_dir.path().join(constants::CLINICAL_DIR_NAME);
+        let clinical_dir = temp_dir.path().join(CLINICAL_DIR_NAME);
         let patient_dir = UuidService::parse(&clinical_uuid)
             .expect("clinical_uuid should be canonical")
             .sharded_dir(&clinical_dir);
-        let ehr_status_file = patient_dir.join(constants::EHR_STATUS_FILENAME);
+        let ehr_status_file = patient_dir.join(EHR_STATUS_FILENAME);
 
         assert!(ehr_status_file.exists(), "ehr_status.yaml should exist");
 
@@ -459,8 +459,9 @@ mod tests {
         let content = fs::read_to_string(&ehr_status_file).expect("Failed to read ehr_status.yaml");
 
         let wire = openehr::read_ehr_status_yaml(&content).expect("Failed to parse openEHR YAML");
-        let (_ehr_id, subject_external_refs) = openehr::vpr::ehr_status_to_domain_parts(&wire)
-            .expect("Failed to translate wire to domain parts");
+        let (_ehr_id, subject_external_refs) =
+            openehr::rm_1_1_0::ehr_status::ehr_status_to_domain_parts(&wire)
+                .expect("Failed to translate wire to domain parts");
 
         assert_eq!(wire.archetype_node_id, "openEHR-EHR-STATUS.ehr_status.v1");
         assert_eq!(wire.name.value, "EHR Status");
@@ -729,7 +730,7 @@ mod tests {
             .initialise(author, "Test Hospital".to_string())
             .expect("initialise should succeed");
 
-        let clinical_dir = temp_dir.path().join(constants::CLINICAL_DIR_NAME);
+        let clinical_dir = temp_dir.path().join(CLINICAL_DIR_NAME);
         let patient_dir = UuidService::parse(&clinical_uuid)
             .expect("clinical_uuid should be canonical")
             .sharded_dir(&clinical_dir);

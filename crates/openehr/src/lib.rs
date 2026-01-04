@@ -7,7 +7,15 @@
 //! alignment only.
 
 pub mod rm_1_1_0;
-pub mod vpr;
+
+/// VPR domain primitive representing an external subject reference.
+///
+/// This is kept intentionally small to avoid coupling this crate to any upstream domain types.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SubjectExternalRef {
+    pub namespace: String,
+    pub id: uuid::Uuid,
+}
 
 use thiserror::Error;
 
@@ -16,6 +24,9 @@ use thiserror::Error;
 pub enum OpenehrError {
     #[error("invalid YAML: {0}")]
     InvalidYaml(#[from] serde_yaml::Error),
+
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
 
     #[error("missing YAML front matter header (expected '---' as first line)")]
     MissingFrontMatter,
@@ -31,6 +42,22 @@ pub enum OpenehrError {
 
     #[error("translation error: {0}")]
     Translation(String),
+
+    #[error("unsupported RM version: {0}")]
+    UnsupportedRmVersion(String),
+}
+
+/// Write an EHR_STATUS YAML file for the specified RM version.
+pub fn ehr_status_write(
+    version: &str,
+    filename: &std::path::Path,
+    ehr_id: uuid::Uuid,
+    subject: Option<Vec<SubjectExternalRef>>,
+) -> Result<(), OpenehrError> {
+    match version {
+        "rm_1_1_0" => rm_1_1_0::ehr_status::ehr_status_write(filename, ehr_id, subject),
+        _ => Err(OpenehrError::UnsupportedRmVersion(version.to_string())),
+    }
 }
 
 /// Read an RM 1.1.0 `EHR_STATUS` component from YAML.
