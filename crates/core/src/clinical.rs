@@ -52,6 +52,10 @@ impl ClinicalService {
     /// - writing `ehr_status.yaml` fails,
     /// - Git repository initialisation or the initial commit fails.
     pub fn initialise(&self, author: Author, care_location: String) -> PatientResult<String> {
+        // Preflight checks before any filesystem side-effects.
+        let rm_version = rm_version_from_env_or_latest()?;
+        let template_dir = resolve_ehr_template_dir()?;
+
         let clinical_dir = clinical_data_path();
         let mut clinical_uuid: Option<UuidService> = None;
         let mut patient_dir: Option<PathBuf> = None;
@@ -89,14 +93,11 @@ impl ClinicalService {
         })?;
         let patient_dir = patient_dir.expect("patient_dir must be set when clinical_uuid is set");
 
-        let rm_version = rm_version_from_env_or_latest()?;
-
         let result: PatientResult<String> = (|| {
             // Initialise Git repository early so failures don't leave partially-created records.
             let repo = GitService::init(&patient_dir)?;
 
             // Copy EHR template to patient directory
-            let template_dir = resolve_ehr_template_dir()?;
             copy_dir_recursive(&template_dir, &patient_dir).map_err(PatientError::FileWrite)?;
 
             // Create initial EHR status YAML file
