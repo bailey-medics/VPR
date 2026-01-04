@@ -17,8 +17,6 @@ use p256::ecdsa::{Signature, VerifyingKey};
 use p256::pkcs8::DecodePublicKey;
 use x509_parser::prelude::*;
 
-use crate::components::ehr_status::{EhrStatus, SubjectRef};
-
 /// Service for managing clinical record operations.
 #[derive(Default, Clone)]
 pub struct ClinicalService;
@@ -66,15 +64,7 @@ impl ClinicalService {
 
         // Create initial EHR status YAML file
         let filename = patient_dir.join(constants::EHR_STATUS_FILENAME);
-        let ehr_id = uuid::Uuid::parse_str(&clinical_uuid.to_string())
-            .map_err(|_| PatientError::InvalidInput)?;
-
-        let ehr_status = EhrStatus {
-            ehr_id,
-            subject: Vec::new(),
-        };
-
-        let wire = openehr::vpr::ehr_status_from_domain_parts(ehr_status.ehr_id, Vec::new());
+        let wire = openehr::vpr::ehr_status_from_domain_parts(clinical_uuid.uuid(), None);
         yaml_write(&filename, &wire)?;
 
         // Initialise Git repository for the patient
@@ -129,30 +119,14 @@ impl ClinicalService {
         let filename = patient_dir.join(constants::EHR_STATUS_FILENAME);
 
         // Create updated EHR status with linking information
-        let ehr_id = uuid::Uuid::parse_str(&clinical_uuid.to_string())
-            .map_err(|_| PatientError::InvalidInput)?;
         let subject_id =
             uuid::Uuid::parse_str(demographics_uuid).map_err(|_| PatientError::InvalidInput)?;
 
-        let ehr_status = EhrStatus {
-            ehr_id,
-            subject: vec![SubjectRef {
-                namespace: format!("vpr://{}/mpi", namespace),
-                id: subject_id,
-            }],
-        };
-
-        let wire = openehr::vpr::ehr_status_from_domain_parts(
-            ehr_status.ehr_id,
-            ehr_status
-                .subject
-                .iter()
-                .map(|subject_ref| openehr::vpr::SubjectExternalRef {
-                    namespace: subject_ref.namespace.clone(),
-                    id: subject_ref.id,
-                })
-                .collect(),
-        );
+        let subject = Some(vec![openehr::vpr::SubjectExternalRef {
+            namespace: format!("vpr://{}/mpi", namespace),
+            id: subject_id,
+        }]);
+        let wire = openehr::vpr::ehr_status_from_domain_parts(clinical_uuid.uuid(), subject);
         yaml_write(&filename, &wire)?;
 
         Ok(())

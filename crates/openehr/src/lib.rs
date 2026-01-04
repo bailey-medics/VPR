@@ -3,8 +3,8 @@
 //! This crate is responsible for translating between on-disk, Git-backed clinical file formats
 //! (YAML and Markdown with YAML front matter) and VPR internal record components.
 //!
-//! Clinical meaning lives in `vpr-core` under `vpr_core::components`. This crate handles file
-//! formats and standards alignment only.
+//! Clinical meaning lives in `vpr-core`. This crate handles file formats and standards
+//! alignment only.
 
 pub mod rm_1_1_0;
 pub mod vpr;

@@ -24,8 +24,9 @@ pub struct SubjectExternalRef {
 /// Applies RM-required defaults in the wire layer.
 pub fn ehr_status_from_domain_parts(
     ehr_id: uuid::Uuid,
-    subject_external_refs: Vec<SubjectExternalRef>,
+    subject: Option<Vec<SubjectExternalRef>>,
 ) -> wire::EhrStatus {
+    let subject = subject.unwrap_or_default();
     wire::EhrStatus {
         ehr_id: wire::HierObjectId {
             value: ehr_id.simple().to_string(),
@@ -36,7 +37,7 @@ pub fn ehr_status_from_domain_parts(
         },
         subject: wire::PartySelf {
             external_ref: wire::ExternalRefs(
-                subject_external_refs
+                subject
                     .into_iter()
                     .map(|subject_ref| wire::PartyRef {
                         id: wire::ObjectId {

@@ -109,6 +109,14 @@ impl UuidService {
         self.0
     }
 
+    /// Returns the UUID as a `uuid::Uuid`.
+    ///
+    /// `UuidService` guarantees that the stored string is in canonical UUID form, so this
+    /// conversion should be infallible.
+    pub(crate) fn uuid(&self) -> Uuid {
+        Uuid::parse_str(&self.0).expect("UuidService invariant violated: stored UUID is invalid")
+    }
+
     /// Returns true if `input` is in VPR's canonical UUID form.
     ///
     /// This is a purely syntactic check:
