@@ -777,6 +777,32 @@ mod tests {
     }
 
     #[test]
+    fn rejects_missing_care_location() {
+        let err = VprCommitMessage::new(
+            VprCommitDomain::Record,
+            VprCommitAction::Init,
+            "Patient record created",
+            "   ",
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, PatientError::MissingCareLocation));
+    }
+
+    #[test]
+    fn rejects_multiline_care_location() {
+        let err = VprCommitMessage::new(
+            VprCommitDomain::Record,
+            VprCommitAction::Init,
+            "Patient record created",
+            "St Elsewhere\nHospital",
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, PatientError::InvalidCareLocation));
+    }
+
+    #[test]
     fn rejects_invalid_trailer_key() {
         let err = VprCommitTrailer::new("Bad:Key", "Value").unwrap_err();
         assert!(matches!(err, PatientError::InvalidInput));

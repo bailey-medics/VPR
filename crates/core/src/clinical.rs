@@ -429,6 +429,48 @@ mod tests {
     }
 
     #[test]
+    fn test_initialise_rejects_missing_care_location_and_creates_no_files() {
+        let patient_data_dir = TempDir::new().expect("Failed to create temp dir");
+        let ehr_template_dir = TempDir::new().expect("Failed to create template temp dir");
+        fs::create_dir_all(ehr_template_dir.path().join(".ehr"))
+            .expect("Failed to create .ehr directory");
+
+        let rm_system_version = rm_system_version_from_env_value(None)
+            .expect("rm_system_version_from_env_value should succeed");
+
+        let cfg = Arc::new(
+            CoreConfig::new(
+                patient_data_dir.path().to_path_buf(),
+                ehr_template_dir.path().to_path_buf(),
+                rm_system_version,
+                "vpr.dev.1".into(),
+            )
+            .expect("CoreConfig::new should succeed"),
+        );
+
+        let service = ClinicalService::new(cfg);
+
+        let author = Author {
+            name: "Test Author".to_string(),
+            role: "Clinician".to_string(),
+            email: "test@example.com".to_string(),
+            registrations: vec![],
+            signature: None,
+            certificate: None,
+        };
+
+        let err = service
+            .initialise(author, " \t\n".to_string())
+            .expect_err("initialise should fail for missing care location");
+        assert!(matches!(err, PatientError::MissingCareLocation));
+
+        assert!(
+            !patient_data_dir.path().join(CLINICAL_DIR_NAME).exists(),
+            "initialise should not perform filesystem side-effects when validation fails"
+        );
+    }
+
+    #[test]
     fn test_initialise_creates_clinical_record() {
         // Create a temporary directory for testing
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
