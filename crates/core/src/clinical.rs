@@ -53,6 +53,15 @@ impl ClinicalService {
     /// - Git repository initialisation or the initial commit fails.
     /// - cleanup of a partially-created record directory fails.
     pub fn initialise(&self, author: Author, care_location: String) -> PatientResult<String> {
+        // Validate user-supplied inputs before any filesystem/Git side-effects.
+        author.validate_commit_author()?;
+        let msg = VprCommitMessage::new(
+            VprCommitDomain::Record,
+            VprCommitAction::Init,
+            "Clinical record created",
+            care_location,
+        )?;
+
         // Preflight checks before any filesystem side-effects.
         let rm_version = rm_version_from_env_or_latest()?;
         let template_dir = resolve_ehr_template_dir()?;
@@ -109,12 +118,6 @@ impl ClinicalService {
             openehr::ehr_status_write(rm_version, &filename, clinical_uuid.uuid(), None)?;
 
             // Initial commit
-            let msg = VprCommitMessage::new(
-                VprCommitDomain::Record,
-                VprCommitAction::Init,
-                "Clinical record created",
-                care_location,
-            )?;
             repo.commit_all(&author, &msg)?;
 
             Ok(clinical_uuid.into_string())
