@@ -61,7 +61,6 @@ impl ClinicalService {
     /// - Git repository initialisation or the initial commit fails.
     /// - cleanup of a partially-created record directory fails.
     pub fn initialise(&self, author: Author, care_location: String) -> PatientResult<String> {
-        // Validate user-supplied inputs before any filesystem/Git side-effects.
         author.validate_commit_author()?;
         let msg = VprCommitMessage::new(
             VprCommitDomain::Record,
@@ -70,48 +69,13 @@ impl ClinicalService {
             care_location,
         )?;
 
-        // Preflight checks before any filesystem side-effects.
         let data_dir = self.cfg.patient_data_dir().to_path_buf();
         let rm_version = self.cfg.rm_system_version();
         let template_dir = self.cfg.ehr_template_dir().to_path_buf();
 
         let clinical_dir = data_dir.join(CLINICAL_DIR_NAME);
-        let mut clinical_uuid_allocating: Option<UuidService> = None;
-        let mut patient_dir_allocating: Option<PathBuf> = None;
-
-        // Allocate a new UUID, but guard against pathological UUID collisions (or pre-existing
-        // directories from external interference) by limiting retries.
-        for _attempt in 0..5 {
-            let uuid = UuidService::new();
-            let candidate = uuid.sharded_dir(&clinical_dir);
-
-            if candidate.exists() {
-                continue;
-            }
-
-            if let Some(parent) = candidate.parent() {
-                fs::create_dir_all(parent).map_err(PatientError::PatientDirCreation)?;
-            }
-
-            match fs::create_dir(&candidate) {
-                Ok(()) => {
-                    clinical_uuid_allocating = Some(uuid);
-                    patient_dir_allocating = Some(candidate);
-                    break;
-                }
-                Err(e) if e.kind() == ErrorKind::AlreadyExists => continue,
-                Err(e) => return Err(PatientError::PatientDirCreation(e)),
-            }
-        }
-
-        let clinical_uuid = clinical_uuid_allocating.ok_or_else(|| {
-            PatientError::PatientDirCreation(io::Error::new(
-                ErrorKind::AlreadyExists,
-                "failed to allocate a unique patient directory after 5 attempts",
-            ))
-        })?;
-
-        let patient_dir = patient_dir_allocating.ok_or(PatientError::InvalidInput)?;
+        let (clinical_uuid, patient_dir) =
+            allocate_unique_patient_dir(&clinical_dir, UuidService::new)?;
 
         let result: PatientResult<String> = (|| {
             // Initialise Git repository early so failures don't leave partially-created records.
@@ -334,6 +298,37 @@ impl ClinicalService {
     }
 }
 
+fn allocate_unique_patient_dir(
+    clinical_dir: &Path,
+    mut uuid_source: impl FnMut() -> UuidService,
+) -> PatientResult<(UuidService, PathBuf)> {
+    // Allocate a new UUID, but guard against pathological UUID collisions (or pre-existing
+    // directories from external interference) by limiting retries.
+    for _attempt in 0..5 {
+        let uuid = uuid_source();
+        let candidate = uuid.sharded_dir(clinical_dir);
+
+        if candidate.exists() {
+            continue;
+        }
+
+        if let Some(parent) = candidate.parent() {
+            fs::create_dir_all(parent).map_err(PatientError::PatientDirCreation)?;
+        }
+
+        match fs::create_dir(&candidate) {
+            Ok(()) => return Ok((uuid, candidate)),
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(PatientError::PatientDirCreation(e)),
+        }
+    }
+
+    Err(PatientError::PatientDirCreation(io::Error::new(
+        ErrorKind::AlreadyExists,
+        "failed to allocate a unique patient directory after 5 attempts",
+    )))
+}
+
 fn verifying_key_from_public_key_or_cert_pem(pem_or_cert: &str) -> PatientResult<VerifyingKey> {
     if pem_or_cert.contains("-----BEGIN CERTIFICATE-----") {
         let (_, pem) = x509_parser::pem::parse_x509_pem(pem_or_cert.as_bytes())
@@ -384,6 +379,120 @@ mod tests {
             )
             .expect("CoreConfig::new should succeed"),
         )
+    }
+
+    #[test]
+    fn allocate_unique_patient_dir_creates_first_available_candidate() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let clinical_dir = temp_dir.path().join(CLINICAL_DIR_NAME);
+
+        let uuids = vec![UuidService::parse("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+            .expect("uuid should be canonical")];
+        let mut iter = uuids.into_iter();
+
+        let (uuid, patient_dir) =
+            allocate_unique_patient_dir(&clinical_dir, || iter.next().unwrap())
+                .expect("allocation should succeed");
+
+        assert_eq!(uuid.to_string(), "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        assert_eq!(
+            patient_dir,
+            clinical_dir
+                .join("aa")
+                .join("aa")
+                .join("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        );
+        assert!(patient_dir.exists(), "patient directory should exist");
+    }
+
+    #[test]
+    fn allocate_unique_patient_dir_skips_existing_candidate() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let clinical_dir = temp_dir.path().join(CLINICAL_DIR_NAME);
+
+        let first = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let second = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let first_dir = clinical_dir
+            .join("aa")
+            .join("aa")
+            .join("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        fs::create_dir_all(&first_dir).expect("Failed to pre-create first candidate dir");
+
+        let uuids = vec![
+            UuidService::parse(first).expect("uuid should be canonical"),
+            UuidService::parse(second).expect("uuid should be canonical"),
+        ];
+        let mut iter = uuids.into_iter();
+
+        let (uuid, patient_dir) =
+            allocate_unique_patient_dir(&clinical_dir, || iter.next().unwrap())
+                .expect("allocation should succeed");
+
+        assert_eq!(uuid.to_string(), second);
+        assert_eq!(
+            patient_dir,
+            clinical_dir
+                .join("bb")
+                .join("bb")
+                .join("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+        );
+        assert!(patient_dir.exists(), "patient directory should exist");
+    }
+
+    #[test]
+    fn allocate_unique_patient_dir_fails_after_five_attempts() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let clinical_dir = temp_dir.path().join(CLINICAL_DIR_NAME);
+
+        let ids = [
+            "11111111111111111111111111111111",
+            "22222222222222222222222222222222",
+            "33333333333333333333333333333333",
+            "44444444444444444444444444444444",
+            "55555555555555555555555555555555",
+        ];
+
+        for id in ids {
+            let dir = clinical_dir.join(&id[0..2]).join(&id[2..4]).join(id);
+            fs::create_dir_all(&dir).expect("Failed to pre-create candidate dir");
+        }
+
+        let uuids = ids
+            .into_iter()
+            .map(|s| UuidService::parse(s).expect("uuid should be canonical"))
+            .collect::<Vec<_>>();
+        let mut iter = uuids.into_iter();
+
+        let err = allocate_unique_patient_dir(&clinical_dir, || iter.next().unwrap())
+            .expect_err("allocation should fail");
+
+        match err {
+            PatientError::PatientDirCreation(e) => {
+                assert_eq!(e.kind(), ErrorKind::AlreadyExists);
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn allocate_unique_patient_dir_returns_error_if_parent_dir_creation_fails() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let clinical_dir = temp_dir.path().join(CLINICAL_DIR_NAME);
+
+        // For UUID "aa..", the shard prefix directories are "aa/aa".
+        // Create a *file* at "clinical_dir/aa" so creating "clinical_dir/aa/aa" fails.
+        fs::create_dir_all(&clinical_dir).expect("Failed to create clinical_dir");
+        let blocking_path = clinical_dir.join("aa");
+        fs::write(&blocking_path, b"not a directory").expect("Failed to create blocking file");
+
+        let uuids = vec![UuidService::parse("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+            .expect("uuid should be canonical")];
+        let mut iter = uuids.into_iter();
+
+        let err = allocate_unique_patient_dir(&clinical_dir, || iter.next().unwrap())
+            .expect_err("allocation should fail when parent dir creation fails");
+
+        assert!(matches!(err, PatientError::PatientDirCreation(_)));
     }
 
     #[test]
