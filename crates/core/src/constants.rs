@@ -6,7 +6,7 @@
 /// Directory name for clinical records storage.
 pub const CLINICAL_DIR_NAME: &str = "clinical";
 
-/// Default directory for patient data storage if PATIENT_DATA_DIR is not set.
+/// Default directory for patient data storage when no explicit directory is configured.
 pub const DEFAULT_PATIENT_DATA_DIR: &str = "patient_data";
 
 /// Filename for EHR status YAML files.

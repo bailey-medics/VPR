@@ -20,6 +20,7 @@ Overview
 Important files to reference
 - `src/main.rs` — Main binary that performs startup validation (checks for patient_data, ehr-template directories; creates clinical/demographics subdirs), creates runtime constants, and starts both gRPC (port 50051) and REST (port 3000) servers concurrently using tokio::join.
 - `crates/core/src/lib.rs` — **PURE DATA OPERATIONS**: Services for file/folder operations (sharded storage, directory traversal, Git repos per patient). **NO API CODE**.
+- `crates/core/src/config.rs` — `CoreConfig` and helpers used to resolve/validate configuration **once at startup**.
 - `crates/core/src/clinical.rs` — ClinicalService: Initialises patients with EHR template copy, creates Git repo, signs commits with X.509.
 - `crates/core/src/demographics.rs` — DemographicsService: Updates patient demographics JSON, lists patients via directory traversal.
 - `crates/api-grpc/src/service.rs` — gRPC service implementation (VprService) with authentication, using core services.
@@ -39,8 +40,8 @@ Build and test workflows (concrete)
 
 Conventions and patterns to follow
 - Protobufs: Canonical proto in `crates/api-shared/vpr.proto`; generated Rust in `api_shared::pb` via build script.
-- Service wiring: `crates/api-grpc` implements `VprService` using core services; main.rs uses `api_grpc::VprService`.
-- Patient storage: Sharded under `PATIENT_DATA_DIR` (env var, defaults to `patient_data`): 
+- Service wiring: `crates/api-grpc` implements `VprService` using core services; binaries construct it via `VprService::new(Arc<CoreConfig>)`.
+- Patient storage: Sharded under the configured patient data directory (default: `patient_data`):
   - Clinical: `clinical/<s1>/<s2>/<32hex-uuid>/` (ehr_status.yaml, copied ehr-template files, Git repo)
   - Demographics: `demographics/<s1>/<s2>/<32hex-uuid>/patient.json` (FHIR-like JSON, Git repo)
   where s1/s2 are first 4 hex chars of UUID.
@@ -51,9 +52,23 @@ Conventions and patterns to follow
 - Git versioning: Each patient directory is a Git repo; commits signed with X.509 certificates from author.signature.
 - EHR template: `ehr-template/` directory copied to new patient clinical dirs; validated at startup.
 
+Runtime configuration and environment variables
+- Resolve environment variables **once at process startup** (or CLI startup) and pass configuration down.
+  - Create a `vpr_core::CoreConfig` (see `crates/core/src/config.rs`) in the binary entrypoints:
+    - `src/main.rs` (vpr-run)
+    - `crates/api-grpc/src/main.rs` (standalone gRPC)
+    - `crates/api-rest/src/main.rs` (standalone REST)
+    - `crates/cli/src/main.rs` (CLI)
+  - Typical env inputs: `PATIENT_DATA_DIR`, `VPR_EHR_TEMPLATE_DIR`, `RM_SYSTEM_VERSION`, `VPR_NAMESPACE`.
+  - Use the helpers in `crates/core/src/config.rs` to resolve/validate template and parse the RM version.
+- `crates/core` (vpr-core) must **not** read environment variables during operations.
+  - Do not call `std::env::var` in core service methods or helpers.
+  - Prefer constructors like `ClinicalService::new(Arc<CoreConfig>)` and `DemographicsService::new(Arc<CoreConfig>)`.
+  - This avoids rare-but-real process-wide env races and keeps behaviour consistent within a request.
+
 Defensive programming (clinical safety)
 - Treat defensive programming as a non-negotiable requirement.
-- Validate inputs and configuration early and fail fast (arguments, environment variables, parsed identifiers) before doing filesystem/Git side effects.
+- Validate inputs and configuration early and fail fast (arguments, resolved startup configuration, parsed identifiers) before doing filesystem/Git side effects.
 - Prefer bounded work over unbounded behaviour (retry limits, traversal depth, file counts/sizes, timeouts where applicable).
 - Avoid silent fallbacks and “best effort” behaviour in core logic: return a typed error when something is invalid.
 - Avoid `panic!`/`expect()` on paths influenced by inputs or environment; reserve them for internal invariants only.
@@ -85,12 +100,8 @@ Change policy and safety
 - Run `./scripts/check-all.sh` before proposing changes; fix clippy warnings.
 - When changing protos: Update `crates/api-shared/vpr.proto`, regenerate with `cargo build`.
 - Patient data paths: Hardcoded sharding logic in `core`; avoid changing without testing directory traversal in `list_patients`.
-- Environment config: Use env vars like `VPR_ADDR`, `PATIENT_DATA_DIR`; defaults in code.
+- Environment config: Env vars are read in binaries/CLI at startup to build `CoreConfig`; avoid adding env reads to `crates/core`.
 - Proto fields: Some fields (e.g., national_id) present but unused in current implementation.
-- **Architecture boundaries**: 
-  - Never add API concerns (auth, HTTP/gRPC) to `crates/core` - keep it pure data operations
-  - Shared API functionality goes in `crates/api-shared`, not individual API crates
-  - API-specific code stays in respective `api-grpc` or `api-rest` crates
 
 Examples (copyable snippets)
 - Start dev servers: `just start-dev b` (builds and runs Docker containers).
