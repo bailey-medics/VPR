@@ -1090,6 +1090,51 @@ mod tests {
     }
 
     #[test]
+    fn test_initialise_initialises_git_repo_before_template_validation_failure() {
+        let patient_data_dir = TempDir::new().expect("Failed to create temp dir");
+        let ehr_template_dir = TempDir::new().expect("Failed to create template temp dir");
+        // Intentionally do not create `.ehr/` so template validation fails.
+
+        let rm_system_version = rm_system_version_from_env_value(None)
+            .expect("rm_system_version_from_env_value should succeed");
+        let cfg = Arc::new(
+            CoreConfig::new(
+                patient_data_dir.path().to_path_buf(),
+                ehr_template_dir.path().to_path_buf(),
+                rm_system_version,
+                "vpr.dev.1".into(),
+            )
+            .expect("CoreConfig::new should succeed"),
+        );
+        let service = ClinicalService::new(cfg);
+
+        let author = Author {
+            name: "Test Author".to_string(),
+            role: "Clinician".to_string(),
+            email: "test@example.com".to_string(),
+            registrations: vec![],
+            signature: None,
+            certificate: None,
+        };
+
+        // Force cleanup to fail so we can inspect the partially-created directory.
+        FORCE_CLEANUP_ERROR.store(true, Ordering::SeqCst);
+        let err = service
+            .initialise(author, "Test Hospital".to_string())
+            .expect_err("initialise should fail");
+
+        match err {
+            PatientError::CleanupAfterInitialiseFailed { path, .. } => {
+                assert!(
+                    path.join(".git").is_dir(),
+                    "git repo should be initialised before template validation/copy"
+                );
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
     fn test_initialise_creates_clinical_record() {
         // Create a temporary directory for testing
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
@@ -1431,5 +1476,48 @@ mod tests {
         assert_eq!(embedded.signature.len(), 64);
         assert!(!embedded.public_key.is_empty());
         assert!(embedded.certificate.is_none());
+    }
+
+    #[test]
+    fn test_initialise_without_signature_creates_commit_without_embedded_signature() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        let cfg = test_cfg(temp_dir.path());
+        let service = ClinicalService::new(cfg);
+
+        let author = Author {
+            name: "Test Author".to_string(),
+            role: "Clinician".to_string(),
+            email: "test@example.com".to_string(),
+            registrations: vec![],
+            signature: None,
+            certificate: None,
+        };
+
+        let clinical_uuid = service
+            .initialise(author, "Test Hospital".to_string())
+            .expect("initialise should succeed");
+
+        let clinical_dir = temp_dir.path().join(CLINICAL_DIR_NAME);
+        let patient_dir = UuidService::parse(&clinical_uuid)
+            .expect("clinical_uuid should be canonical")
+            .sharded_dir(&clinical_dir);
+
+        let repo = git2::Repository::open(&patient_dir).expect("Failed to open Git repo");
+        let head = repo.head().expect("Failed to get HEAD");
+        let commit = head.peel_to_commit().expect("Failed to get commit");
+
+        assert!(
+            crate::extract_embedded_commit_signature(&commit).is_err(),
+            "unsigned commits should not contain an embedded signature payload"
+        );
+
+        let ok = service
+            .verify_commit_signature(&clinical_uuid, "")
+            .expect("verify_commit_signature should succeed");
+        assert!(
+            !ok,
+            "verification should be false when no signature is embedded"
+        );
     }
 }
