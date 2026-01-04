@@ -16,6 +16,9 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+#[cfg(test)]
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use p256::ecdsa::signature::Verifier;
 use p256::ecdsa::{Signature, VerifyingKey};
 use p256::pkcs8::DecodePublicKey;
@@ -102,7 +105,7 @@ impl ClinicalService {
 
         match result {
             Ok(v) => Ok(v),
-            Err(init_error) => match fs::remove_dir_all(&patient_dir) {
+            Err(init_error) => match remove_patient_dir_all(&patient_dir) {
                 Ok(()) => Err(init_error),
                 Err(cleanup_error) => Err(PatientError::CleanupAfterInitialiseFailed {
                     path: patient_dir,
@@ -296,6 +299,23 @@ impl ClinicalService {
             .verify(buf_str.as_bytes(), &signature)
             .is_ok())
     }
+}
+
+#[cfg(test)]
+static FORCE_CLEANUP_ERROR: AtomicBool = AtomicBool::new(false);
+
+fn remove_patient_dir_all(patient_dir: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    {
+        if FORCE_CLEANUP_ERROR.swap(false, Ordering::SeqCst) {
+            return Err(io::Error::new(
+                ErrorKind::Other,
+                "forced cleanup failure (test hook)",
+            ));
+        }
+    }
+
+    fs::remove_dir_all(patient_dir)
 }
 
 fn allocate_unique_patient_dir(
@@ -865,6 +885,208 @@ mod tests {
             0,
             "initialise should clean up the patient directory on template validation failure"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_initialise_cleans_up_if_copy_fails_mid_way() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let patient_data_dir = TempDir::new().expect("Failed to create temp dir");
+        let ehr_template_dir = TempDir::new().expect("Failed to create template temp dir");
+        fs::create_dir_all(ehr_template_dir.path().join(".ehr"))
+            .expect("Failed to create .ehr directory");
+
+        // Make the template safe-to-copy, but include an unreadable file so copying fails.
+        fs::write(ehr_template_dir.path().join("ok.txt"), b"ok").expect("Failed to write ok.txt");
+        let unreadable = ehr_template_dir.path().join("unreadable.txt");
+        fs::write(&unreadable, b"nope").expect("Failed to write unreadable.txt");
+        let mut perms = fs::metadata(&unreadable)
+            .expect("Failed to stat unreadable.txt")
+            .permissions();
+        perms.set_mode(0o000);
+        fs::set_permissions(&unreadable, perms).expect("Failed to chmod unreadable.txt");
+
+        let rm_system_version = rm_system_version_from_env_value(None)
+            .expect("rm_system_version_from_env_value should succeed");
+        let cfg = Arc::new(
+            CoreConfig::new(
+                patient_data_dir.path().to_path_buf(),
+                ehr_template_dir.path().to_path_buf(),
+                rm_system_version,
+                "vpr.dev.1".into(),
+            )
+            .expect("CoreConfig::new should succeed"),
+        );
+        let service = ClinicalService::new(cfg);
+
+        let author = Author {
+            name: "Test Author".to_string(),
+            role: "Clinician".to_string(),
+            email: "test@example.com".to_string(),
+            registrations: vec![],
+            signature: None,
+            certificate: None,
+        };
+
+        let err = service
+            .initialise(author, "Test Hospital".to_string())
+            .expect_err("initialise should fail when copy fails");
+        assert!(matches!(err, PatientError::FileWrite(_)));
+
+        let clinical_dir = patient_data_dir.path().join(CLINICAL_DIR_NAME);
+        assert_eq!(
+            count_allocated_patient_dirs(&clinical_dir),
+            0,
+            "initialise should clean up the patient directory when copy fails"
+        );
+    }
+
+    #[test]
+    fn test_initialise_cleans_up_if_ehr_status_write_fails() {
+        let patient_data_dir = TempDir::new().expect("Failed to create temp dir");
+        let ehr_template_dir = TempDir::new().expect("Failed to create template temp dir");
+        fs::create_dir_all(ehr_template_dir.path().join(".ehr"))
+            .expect("Failed to create .ehr directory");
+
+        // Force `ehr_status_write` to fail by ensuring the target path already exists as a dir.
+        fs::create_dir_all(ehr_template_dir.path().join(EHR_STATUS_FILENAME))
+            .expect("Failed to create ehr_status.yaml directory");
+
+        let rm_system_version = rm_system_version_from_env_value(None)
+            .expect("rm_system_version_from_env_value should succeed");
+        let cfg = Arc::new(
+            CoreConfig::new(
+                patient_data_dir.path().to_path_buf(),
+                ehr_template_dir.path().to_path_buf(),
+                rm_system_version,
+                "vpr.dev.1".into(),
+            )
+            .expect("CoreConfig::new should succeed"),
+        );
+        let service = ClinicalService::new(cfg);
+
+        let author = Author {
+            name: "Test Author".to_string(),
+            role: "Clinician".to_string(),
+            email: "test@example.com".to_string(),
+            registrations: vec![],
+            signature: None,
+            certificate: None,
+        };
+
+        let _err = service
+            .initialise(author, "Test Hospital".to_string())
+            .expect_err("initialise should fail when ehr_status_write fails");
+
+        let clinical_dir = patient_data_dir.path().join(CLINICAL_DIR_NAME);
+        assert_eq!(
+            count_allocated_patient_dirs(&clinical_dir),
+            0,
+            "initialise should clean up the patient directory when ehr_status_write fails"
+        );
+    }
+
+    #[test]
+    fn test_initialise_cleans_up_if_initial_commit_fails() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        // Signing key used for commit.
+        let signing_key = SigningKey::random(&mut rand::thread_rng());
+        let private_key_pem = signing_key
+            .to_pkcs8_pem(p256::pkcs8::LineEnding::LF)
+            .expect("Failed to encode private key");
+
+        // Different key used to create a certificate (mismatch).
+        let other_key = SigningKey::random(&mut rand::thread_rng());
+        let other_private_key_pem = other_key
+            .to_pkcs8_pem(p256::pkcs8::LineEnding::LF)
+            .expect("Failed to encode other private key");
+        let other_private_key_pem_str = other_private_key_pem.to_string();
+
+        let other_keypair = KeyPair::from_pem(&other_private_key_pem_str)
+            .expect("KeyPair::from_pem should succeed");
+        let params = CertificateParams::default();
+        let cert = params
+            .self_signed(&other_keypair)
+            .expect("self_signed should succeed");
+        let cert_pem = cert.pem();
+
+        let cfg = test_cfg(temp_dir.path());
+        let service = ClinicalService::new(cfg);
+        let author = Author {
+            name: "Test Author".to_string(),
+            role: "Clinician".to_string(),
+            email: "test@example.com".to_string(),
+            registrations: vec![],
+            signature: Some(private_key_pem.to_string()),
+            certificate: Some(cert_pem.into_bytes()),
+        };
+
+        let err = service
+            .initialise(author, "Test Hospital".to_string())
+            .expect_err("initialise should fail due to certificate mismatch");
+        assert!(matches!(
+            err,
+            PatientError::AuthorCertificatePublicKeyMismatch
+        ));
+
+        let clinical_dir = temp_dir.path().join(CLINICAL_DIR_NAME);
+        assert_eq!(
+            count_allocated_patient_dirs(&clinical_dir),
+            0,
+            "initialise should clean up the patient directory when the initial commit fails"
+        );
+    }
+
+    #[test]
+    fn test_initialise_returns_cleanup_after_initialise_failed_if_cleanup_fails() {
+        let patient_data_dir = TempDir::new().expect("Failed to create temp dir");
+        let ehr_template_dir = TempDir::new().expect("Failed to create template temp dir");
+        // Intentionally do not create `.ehr/` so template validation fails.
+
+        let rm_system_version = rm_system_version_from_env_value(None)
+            .expect("rm_system_version_from_env_value should succeed");
+        let cfg = Arc::new(
+            CoreConfig::new(
+                patient_data_dir.path().to_path_buf(),
+                ehr_template_dir.path().to_path_buf(),
+                rm_system_version,
+                "vpr.dev.1".into(),
+            )
+            .expect("CoreConfig::new should succeed"),
+        );
+        let service = ClinicalService::new(cfg);
+
+        let author = Author {
+            name: "Test Author".to_string(),
+            role: "Clinician".to_string(),
+            email: "test@example.com".to_string(),
+            registrations: vec![],
+            signature: None,
+            certificate: None,
+        };
+
+        FORCE_CLEANUP_ERROR.store(true, Ordering::SeqCst);
+        let err = service
+            .initialise(author, "Test Hospital".to_string())
+            .expect_err("initialise should fail");
+
+        match err {
+            PatientError::CleanupAfterInitialiseFailed {
+                path,
+                init_error,
+                cleanup_error,
+            } => {
+                assert!(
+                    matches!(*init_error, PatientError::InvalidInput),
+                    "expected init_error to be InvalidInput"
+                );
+                assert_eq!(cleanup_error.kind(), ErrorKind::Other);
+                assert!(path.exists(), "patient_dir should still exist");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 
     #[test]
