@@ -111,15 +111,20 @@ impl ClinicalService {
             ))
         })?;
 
-        let patient_dir =
-            patient_dir_allocating.expect("patient_dir must be set when clinical_uuid is set");
+        let patient_dir = patient_dir_allocating.ok_or(PatientError::InvalidInput)?;
 
         let result: PatientResult<String> = (|| {
             // Initialise Git repository early so failures don't leave partially-created records.
             let repo = GitService::init(&patient_dir)?;
 
+            // Defensive guard: ensure the template directory is safe to copy.
+            // This should normally be validated once at startup when `CoreConfig` is created,
+            // but validating here prevents unsafe copying if an invalid config slips through.
+            crate::config::validate_ehr_template_dir_safe_to_copy(&template_dir)?;
+
             // Copy EHR template to patient directory
-            copy_dir_recursive(&template_dir, &patient_dir).map_err(PatientError::FileWrite)?;
+            crate::copy_dir_recursive(&template_dir, &patient_dir)
+                .map_err(PatientError::FileWrite)?;
 
             // Create initial EHR status YAML file
             let filename = patient_dir.join(EHR_STATUS_FILENAME);
@@ -346,36 +351,6 @@ fn verifying_key_from_public_key_or_cert_pem(pem_or_cert: &str) -> PatientResult
     }
 }
 
-/// Recursively copy a directory and its contents to a destination
-fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
-    if !src.exists() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            format!("Source directory does not exist: {}", src.display()),
-        ));
-    }
-
-    // Create destination directory if it doesn't exist
-    fs::create_dir_all(dst)?;
-
-    for entry in fs::read_dir(src)? {
-        let entry = entry?;
-        let entry_path = entry.path();
-        let file_name = entry.file_name();
-
-        let dest_path = dst.join(file_name);
-
-        if entry_path.is_dir() {
-            copy_dir_recursive(&entry_path, &dest_path)?;
-        } else {
-            fs::copy(&entry_path, &dest_path)?;
-        }
-    }
-
-    Ok(())
-}
-
-/// Recursively add all files in a directory to a Git index
 #[cfg(test)]
 mod tests {
     use super::*;
