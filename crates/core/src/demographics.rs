@@ -60,8 +60,11 @@ impl DemographicsService {
     ///
     /// # Errors
     ///
-    /// Returns a `PatientError` if any step in the initialisation fails, such as
-    /// directory creation, file writing, or Git operations.
+    /// Returns a `PatientError` if:
+    /// - `patient.json` cannot be serialised,
+    /// - the patient directory cannot be created,
+    /// - `patient.json` cannot be written,
+    /// - Git repository initialisation or the initial commit fails.
     pub fn initialise(&self, author: Author, care_location: String) -> PatientResult<String> {
         // Determine storage directory from environment
         let data_dir = crate::patient_data_path();
@@ -124,8 +127,11 @@ impl DemographicsService {
     ///
     /// # Errors
     ///
-    /// Returns a `PatientError` if reading, deserializing, serializing, or writing
-    /// the file fails.
+    /// Returns a `PatientError` if:
+    /// - the UUID cannot be parsed,
+    /// - `patient.json` cannot be read,
+    /// - `patient.json` cannot be deserialised or serialised,
+    /// - `patient.json` cannot be written.
     pub fn update(
         &self,
         demographics_uuid: &str,

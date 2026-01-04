@@ -34,7 +34,9 @@ use vpr_core::{
 /// * `Err(Status)` - UNAUTHENTICATED status if API key is missing or invalid
 ///
 /// # Errors
-/// Returns `UNAUTHENTICATED` if the API key is missing or invalid.
+/// Returns `UNAUTHENTICATED` if:
+/// - the `x-api-key` header is missing, or
+/// - the provided API key does not match `API_KEY`.
 #[allow(clippy::result_large_err)]
 pub fn auth_interceptor(req: Request<()>) -> Result<Request<()>, Status> {
     let api_key = req

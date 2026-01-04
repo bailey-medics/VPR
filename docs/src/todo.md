@@ -9,3 +9,5 @@
 [ ] unit test src/main.rs
 
 [ ] add patient comments (? unsigned)
+
+[ ]  projections for speed optimisation

@@ -58,7 +58,10 @@ struct ApiDoc;
 /// * `Ok(())` - If server starts and runs successfully
 ///
 /// # Errors
-/// Returns an error if the server cannot be configured, bound, or started.
+/// Returns an error if:
+/// - the logging/tracing configuration cannot be initialised,
+/// - the server address cannot be bound, or
+/// - the HTTP server fails while running.
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::registry()
@@ -133,7 +136,8 @@ async fn health(State(_state): State<AppState>) -> Json<pb::HealthRes> {
 /// * `Err((StatusCode, &str))` - Internal server error if listing fails
 ///
 /// # Errors
-/// Returns `500 Internal Server Error` if patient listing fails.
+/// Returns `500 Internal Server Error` if:
+/// - patient listing fails.
 #[axum::debug_handler]
 async fn list_patients(
     State(state): State<AppState>,
@@ -167,7 +171,8 @@ async fn list_patients(
 /// * `Err((StatusCode, &str))` - Internal server error if initialisation fails
 ///
 /// # Errors
-/// Returns `500 Internal Server Error` if initialisation fails.
+/// Returns `500 Internal Server Error` if:
+/// - clinical initialisation fails.
 #[axum::debug_handler]
 async fn create_patient(
     State(_state): State<AppState>,

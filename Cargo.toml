@@ -6,6 +6,7 @@ members = [
 	"crates/core",
 	"crates/cli",
 	"crates/certificates",
+	"crates/openehr",
 ]
 resolver = "2"
 
