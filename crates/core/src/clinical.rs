@@ -51,6 +51,7 @@ impl ClinicalService {
     /// - file or directory operations fail while creating the record or copying templates,
     /// - writing `ehr_status.yaml` fails,
     /// - Git repository initialisation or the initial commit fails.
+    /// - cleanup of a partially-created record directory fails.
     pub fn initialise(&self, author: Author, care_location: String) -> PatientResult<String> {
         // Preflight checks before any filesystem side-effects.
         let rm_version = rm_version_from_env_or_latest()?;
@@ -119,11 +120,17 @@ impl ClinicalService {
             Ok(clinical_uuid.into_string())
         })();
 
-        if result.is_err() {
-            let _ = fs::remove_dir_all(&patient_dir);
+        match result {
+            Ok(v) => Ok(v),
+            Err(init_error) => match fs::remove_dir_all(&patient_dir) {
+                Ok(()) => Err(init_error),
+                Err(cleanup_error) => Err(PatientError::CleanupAfterInitialiseFailed {
+                    path: patient_dir,
+                    init_error: Box::new(init_error),
+                    cleanup_error,
+                }),
+            },
         }
-
-        result
     }
 
     /// Links the clinical record to the patient's demographics.
