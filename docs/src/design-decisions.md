@@ -80,6 +80,29 @@ At *application entrypoints* (for example a CLI binary), `anyhow` can still be a
 
 ---
 
+## Defensive programming as a clinical safety requirement
+
+VPR treats **defensive programming** as a baseline requirement for clinical-safe systems.
+
+Clinical record software must behave predictably under bad inputs, misconfiguration, partial filesystem failures, or unexpected environmental state. In this context, “defensive” means prioritising **safe failure** and **auditability** over convenience.
+
+In practice, VPR follows these principles:
+
+- **Validate before side effects**: inputs and configuration are checked up-front wherever feasible, before creating directories, writing files, or initialising repositories.
+- **Bounded work**: operations that could otherwise become unbounded (for example retries, directory traversal, or template copying) are explicitly limited to prevent pathological behaviour.
+- **No silent fallbacks**: invalid configuration or malformed inputs return a typed error rather than being coerced into a “best guess”.
+- **Explicit error contracts**: failures are represented as named enum variants (for example `PatientError`) to support consistent handling at API boundaries and reliable testing.
+- **Best-effort rollback with surfaced failures**: when partial work has been done, VPR attempts to clean up, and treats cleanup failures as meaningful (not something to quietly ignore).
+
+Concrete examples of defensive measures include:
+
+- Limiting UUID allocation retries when allocating a new patient directory.
+- Performing preflight checks (for example template resolution and safety checks) before creating patient directories.
+- Rejecting unsafe filesystem entries (such as symlinks) and applying size/depth limits when copying templates to avoid accidental “copy the world” behaviours.
+- Returning a distinct error when initialisation fails and cleanup also fails, so operators can detect and investigate residual on-disk state.
+
+These practices reduce the likelihood of corrupted or ambiguous record state, improve operational visibility when something goes wrong, and keep clinical behaviour deterministic.
+
 ## Signed Git commits in VPR (summary)
 
 VPR uses **cryptographically signed Git commits** to provide immutable, auditable authorship of clinical records.
