@@ -12,7 +12,9 @@ use crate::{clinical_data_path, Author, PatientError, PatientResult};
 use chrono::{DateTime, Utc};
 use git2;
 use std::fs;
-use std::path::Path;
+use std::io;
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
 
 use p256::ecdsa::signature::Verifier;
 use p256::ecdsa::{Signature, VerifyingKey};
@@ -45,40 +47,79 @@ impl ClinicalService {
     /// Returns a `PatientError` if:
     /// - required inputs or configuration are invalid (for example the EHR template cannot be
     ///   located),
+    /// - a unique patient directory cannot be allocated after 5 UUID attempts,
     /// - file or directory operations fail while creating the record or copying templates,
     /// - writing `ehr_status.yaml` fails,
     /// - Git repository initialisation or the initial commit fails.
     pub fn initialise(&self, author: Author, care_location: String) -> PatientResult<String> {
-        let clinical_uuid = UuidService::new();
-        let patient_dir = clinical_uuid.sharded_dir(&clinical_data_path());
-        fs::create_dir_all(&patient_dir).map_err(PatientError::PatientDirCreation)?;
+        let clinical_dir = clinical_data_path();
+        let mut clinical_uuid: Option<UuidService> = None;
+        let mut patient_dir: Option<PathBuf> = None;
 
-        // Copy EHR template to patient directory
-        // 1st navigate from core crate directory to workspace root
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
-            .unwrap_or_else(|_| env!("CARGO_MANIFEST_DIR").to_string());
-        let workspace_root = Path::new(&manifest_dir)
-            .parent()
-            .and_then(|p| p.parent())
-            .ok_or(PatientError::InvalidInput)?;
-        let template_dir = workspace_root.join(EHR_TEMPLATE_DIR);
-        copy_dir_recursive(&template_dir, &patient_dir).map_err(PatientError::FileWrite)?;
+        // Allocate a new UUID, but guard against pathological UUID collisions (or pre-existing
+        // directories from external interference) by limiting retries.
+        for _attempt in 0..5 {
+            let uuid = UuidService::new();
+            let candidate = uuid.sharded_dir(&clinical_dir);
 
-        // Create initial EHR status YAML file
-        let filename = patient_dir.join(EHR_STATUS_FILENAME);
-        openehr::ehr_status_write(LATEST_RM, &filename, clinical_uuid.uuid(), None)?;
+            if candidate.exists() {
+                continue;
+            }
 
-        // Initialise Git repository for the patient
-        let repo = GitService::init(&patient_dir)?;
-        let msg = VprCommitMessage::new(
-            VprCommitDomain::Record,
-            VprCommitAction::Init,
-            "Clinical record created",
-            care_location,
-        )?;
-        repo.commit_all(&author, &msg)?;
+            if let Some(parent) = candidate.parent() {
+                fs::create_dir_all(parent).map_err(PatientError::PatientDirCreation)?;
+            }
 
-        Ok(clinical_uuid.into_string())
+            match fs::create_dir(&candidate) {
+                Ok(()) => {
+                    clinical_uuid = Some(uuid);
+                    patient_dir = Some(candidate);
+                    break;
+                }
+                Err(e) if e.kind() == ErrorKind::AlreadyExists => continue,
+                Err(e) => return Err(PatientError::PatientDirCreation(e)),
+            }
+        }
+
+        let clinical_uuid = clinical_uuid.ok_or_else(|| {
+            PatientError::PatientDirCreation(io::Error::new(
+                ErrorKind::AlreadyExists,
+                "failed to allocate a unique patient directory after 5 attempts",
+            ))
+        })?;
+        let patient_dir = patient_dir.expect("patient_dir must be set when clinical_uuid is set");
+
+        let rm_version = rm_version_from_env_or_latest()?;
+
+        let result: PatientResult<String> = (|| {
+            // Initialise Git repository early so failures don't leave partially-created records.
+            let repo = GitService::init(&patient_dir)?;
+
+            // Copy EHR template to patient directory
+            let template_dir = resolve_ehr_template_dir()?;
+            copy_dir_recursive(&template_dir, &patient_dir).map_err(PatientError::FileWrite)?;
+
+            // Create initial EHR status YAML file
+            let filename = patient_dir.join(EHR_STATUS_FILENAME);
+            openehr::ehr_status_write(rm_version, &filename, clinical_uuid.uuid(), None)?;
+
+            // Initial commit
+            let msg = VprCommitMessage::new(
+                VprCommitDomain::Record,
+                VprCommitAction::Init,
+                "Clinical record created",
+                care_location,
+            )?;
+            repo.commit_all(&author, &msg)?;
+
+            Ok(clinical_uuid.into_string())
+        })();
+
+        if result.is_err() {
+            let _ = fs::remove_dir_all(&patient_dir);
+        }
+
+        result
     }
 
     /// Links the clinical record to the patient's demographics.
@@ -108,6 +149,8 @@ impl ClinicalService {
         demographics_uuid: &str,
         namespace: Option<String>,
     ) -> PatientResult<()> {
+        let rm_version = rm_version_from_env_or_latest()?;
+
         let namespace = namespace.unwrap_or_else(|| {
             std::env::var("VPR_NAMESPACE").unwrap_or_else(|_| "vpr.dev.1".into())
         });
@@ -127,7 +170,7 @@ impl ClinicalService {
             namespace: format!("vpr://{}/mpi", namespace),
             id: subject_id,
         }]);
-        openehr::ehr_status_write(LATEST_RM, &filename, clinical_uuid.uuid(), subject)?;
+        openehr::ehr_status_write(rm_version, &filename, clinical_uuid.uuid(), subject)?;
 
         Ok(())
     }
@@ -265,6 +308,15 @@ impl ClinicalService {
     }
 }
 
+fn rm_version_from_env_or_latest() -> PatientResult<openehr::RmVersion> {
+    let version = std::env::var("RM_SYSTEM_VERSION")
+        .ok()
+        .map(|v| v.parse::<openehr::RmVersion>())
+        .transpose()?;
+
+    Ok(version.unwrap_or(LATEST_RM))
+}
+
 fn verifying_key_from_public_key_or_cert_pem(pem_or_cert: &str) -> PatientResult<VerifyingKey> {
     if pem_or_cert.contains("-----BEGIN CERTIFICATE-----") {
         let (_, pem) = x509_parser::pem::parse_x509_pem(pem_or_cert.as_bytes())
@@ -309,6 +361,37 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
     }
 
     Ok(())
+}
+
+fn resolve_ehr_template_dir() -> PatientResult<PathBuf> {
+    fn has_content(path: &Path) -> bool {
+        fs::read_dir(path)
+            .map(|mut entries| entries.next().is_some())
+            .unwrap_or(false)
+    }
+
+    if let Ok(path) = std::env::var("VPR_EHR_TEMPLATE_DIR") {
+        let template_dir = PathBuf::from(path);
+        if template_dir.is_dir() && has_content(&template_dir) {
+            return Ok(template_dir);
+        }
+        return Err(PatientError::InvalidInput);
+    }
+
+    let cwd_relative = PathBuf::from(EHR_TEMPLATE_DIR);
+    if cwd_relative.is_dir() && has_content(&cwd_relative) {
+        return Ok(cwd_relative);
+    }
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for ancestor in manifest_dir.ancestors() {
+        let candidate = ancestor.join(EHR_TEMPLATE_DIR);
+        if candidate.is_dir() && has_content(&candidate) {
+            return Ok(candidate);
+        }
+    }
+
+    Err(PatientError::InvalidInput)
 }
 
 /// Recursively add all files in a directory to a Git index
