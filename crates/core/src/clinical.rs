@@ -55,6 +55,7 @@ impl ClinicalService {
         // Preflight checks before any filesystem side-effects.
         let rm_version = rm_version_from_env_or_latest()?;
         let template_dir = resolve_ehr_template_dir()?;
+        validate_ehr_template_dir_safe_to_copy(&template_dir)?;
 
         let clinical_dir = clinical_data_path();
         let mut clinical_uuid: Option<UuidService> = None;
@@ -365,34 +366,93 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
 }
 
 fn resolve_ehr_template_dir() -> PatientResult<PathBuf> {
-    fn has_content(path: &Path) -> bool {
-        fs::read_dir(path)
-            .map(|mut entries| entries.next().is_some())
-            .unwrap_or(false)
+    fn looks_like_template_dir(path: &Path) -> bool {
+        path.join(".ehr").is_dir()
     }
 
     if let Ok(path) = std::env::var("VPR_EHR_TEMPLATE_DIR") {
         let template_dir = PathBuf::from(path);
-        if template_dir.is_dir() && has_content(&template_dir) {
+        if template_dir.is_dir() && looks_like_template_dir(&template_dir) {
             return Ok(template_dir);
         }
         return Err(PatientError::InvalidInput);
     }
 
     let cwd_relative = PathBuf::from(EHR_TEMPLATE_DIR);
-    if cwd_relative.is_dir() && has_content(&cwd_relative) {
+    if cwd_relative.is_dir() && looks_like_template_dir(&cwd_relative) {
         return Ok(cwd_relative);
     }
 
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     for ancestor in manifest_dir.ancestors() {
         let candidate = ancestor.join(EHR_TEMPLATE_DIR);
-        if candidate.is_dir() && has_content(&candidate) {
+        if candidate.is_dir() && looks_like_template_dir(&candidate) {
             return Ok(candidate);
         }
     }
 
     Err(PatientError::InvalidInput)
+}
+
+fn validate_ehr_template_dir_safe_to_copy(template_dir: &Path) -> PatientResult<()> {
+    // Guardrails for environment overrides without hardcoding expected folder names.
+    //
+    // Goals:
+    // - allow templates to evolve (e.g. add bloods/) without code changes
+    // - prevent accidental "copy the world" when VPR_EHR_TEMPLATE_DIR is set to something broad
+    // - avoid copying unsafe filesystem entries like symlinks or device files
+
+    const MAX_FILES: usize = 2_000;
+    const MAX_TOTAL_BYTES: u64 = 50 * 1024 * 1024; // 50 MiB
+    const MAX_DEPTH: usize = 20;
+
+    fn scan_dir(
+        path: &Path,
+        depth: usize,
+        files: &mut usize,
+        bytes: &mut u64,
+    ) -> PatientResult<()> {
+        if depth > MAX_DEPTH {
+            return Err(PatientError::InvalidInput);
+        }
+
+        for entry in fs::read_dir(path).map_err(PatientError::FileRead)? {
+            let entry = entry.map_err(PatientError::FileRead)?;
+            let entry_path = entry.path();
+            let metadata = fs::symlink_metadata(&entry_path).map_err(PatientError::FileRead)?;
+            let file_type = metadata.file_type();
+
+            if file_type.is_symlink() {
+                return Err(PatientError::InvalidInput);
+            }
+
+            if file_type.is_file() {
+                *files = files.saturating_add(1);
+                *bytes = bytes.saturating_add(metadata.len());
+
+                if *files > MAX_FILES || *bytes > MAX_TOTAL_BYTES {
+                    return Err(PatientError::InvalidInput);
+                }
+            } else if file_type.is_dir() {
+                scan_dir(&entry_path, depth + 1, files, bytes)?;
+            } else {
+                // Reject special files (devices, fifos, sockets, etc).
+                return Err(PatientError::InvalidInput);
+            }
+        }
+
+        Ok(())
+    }
+
+    // Minimal sanity check: templates must at least contain the hidden .ehr folder.
+    // This prevents common foot-guns like VPR_EHR_TEMPLATE_DIR=".".
+    if !template_dir.join(".ehr").is_dir() {
+        return Err(PatientError::InvalidInput);
+    }
+
+    let mut files = 0usize;
+    let mut bytes = 0u64;
+    scan_dir(template_dir, 0, &mut files, &mut bytes)
 }
 
 /// Recursively add all files in a directory to a Git index
