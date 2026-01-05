@@ -198,6 +198,8 @@ impl ClinicalService {
             care_location,
         )?;
 
+        let rm_version = self.cfg.rm_system_version();
+
         let data_dir = self.cfg.patient_data_dir().to_path_buf();
         let clinical_dir = data_dir.join(CLINICAL_DIR_NAME);
         let patient_dir = clinical_uuid.sharded_dir(&clinical_dir);
@@ -214,7 +216,6 @@ impl ClinicalService {
             None
         };
 
-        let rm_version = self.cfg.rm_system_version();
         openehr::ehr_status_write(
             rm_version,
             &filename,
@@ -380,10 +381,7 @@ fn remove_patient_dir_all(patient_dir: &Path) -> io::Result<()> {
     #[cfg(test)]
     {
         if FORCE_CLEANUP_ERROR.swap(false, Ordering::SeqCst) {
-            return Err(io::Error::new(
-                ErrorKind::Other,
-                "forced cleanup failure (test hook)",
-            ));
+            return Err(io::Error::other("forced cleanup failure (test hook)"));
         }
     }
 
