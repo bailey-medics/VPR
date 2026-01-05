@@ -26,6 +26,37 @@ use p256::ecdsa::{Signature, VerifyingKey};
 use p256::pkcs8::DecodePublicKey;
 use x509_parser::prelude::*;
 
+fn validate_namespace_safe_for_uri(namespace: &str) -> PatientResult<()> {
+    // The namespace is embedded into an external-reference URI: `vpr://{namespace}/mpi`.
+    // Defensive guardrails:
+    // - reject empty/whitespace
+    // - bound size to avoid pathological inputs
+    // - restrict characters to a conservative ASCII set suitable for a URI authority
+    const MAX_NAMESPACE_LEN: usize = 253;
+
+    if namespace.trim().is_empty() {
+        return Err(PatientError::InvalidInput);
+    }
+
+    if namespace.len() > MAX_NAMESPACE_LEN {
+        return Err(PatientError::InvalidInput);
+    }
+
+    if !namespace.is_ascii() {
+        return Err(PatientError::InvalidInput);
+    }
+
+    let ok = namespace
+        .bytes()
+        .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z' | b'.' | b'-' | b'_'));
+
+    if !ok {
+        return Err(PatientError::InvalidInput);
+    }
+
+    Ok(())
+}
+
 /// Service for managing clinical record operations.
 #[derive(Clone)]
 pub struct ClinicalService {
@@ -75,8 +106,6 @@ impl ClinicalService {
         )?;
 
         let data_dir = self.cfg.patient_data_dir().to_path_buf();
-        let rm_version = self.cfg.rm_system_version();
-        let template_dir = self.cfg.ehr_template_dir().to_path_buf();
 
         let clinical_dir = data_dir.join(CLINICAL_DIR_NAME);
         let (clinical_uuid, patient_dir) =
@@ -89,6 +118,7 @@ impl ClinicalService {
             // Defensive guard: ensure the template directory is safe to copy.
             // This should normally be validated once at startup when `CoreConfig` is created,
             // but validating here prevents unsafe copying if an invalid config slips through.
+            let template_dir = self.cfg.ehr_template_dir().to_path_buf();
             validate_ehr_template_dir_safe_to_copy(&template_dir)?;
 
             // Copy EHR template to patient directory
@@ -96,6 +126,7 @@ impl ClinicalService {
 
             // Create initial EHR status YAML file
             let filename = patient_dir.join(EHR_STATUS_FILENAME);
+            let rm_version = self.cfg.rm_system_version();
             openehr::ehr_status_write(rm_version, &filename, clinical_uuid.uuid(), None)?;
 
             // Initial commit
@@ -125,6 +156,8 @@ impl ClinicalService {
     ///
     /// # Arguments
     ///
+    /// * `author` - The author information for the Git commit.
+    /// * `care_location` - High-level organisational location for the commit (e.g. hospital name).
     /// * `clinical_uuid` - The UUID of the clinical record.
     /// * `demographics_uuid` - The UUID of the associated patient demographics.
     /// * `namespace` - Optional namespace for the external reference; defaults to the
@@ -138,34 +171,71 @@ impl ClinicalService {
     ///
     /// Returns a `PatientError` if:
     /// - either UUID cannot be parsed,
+    /// - the namespace is invalid/unsafe for embedding into a `vpr://{namespace}/mpi` URI,
     /// - writing `ehr_status.yaml` fails.
     pub fn link_to_demographics(
         &self,
+        author: &Author,
+        care_location: String,
         clinical_uuid: &str,
         demographics_uuid: &str,
         namespace: Option<String>,
     ) -> PatientResult<()> {
-        let rm_version = self.cfg.rm_system_version();
+        let clinical_uuid = UuidService::parse(clinical_uuid)?;
+        let demographics_uuid = UuidService::parse(demographics_uuid)?;
 
-        let namespace = namespace.unwrap_or_else(|| self.cfg.vpr_namespace().to_string());
+        let namespace = namespace
+            .as_deref()
+            .unwrap_or(self.cfg.vpr_namespace())
+            .trim();
+        validate_namespace_safe_for_uri(namespace)?;
+
+        author.validate_commit_author()?;
+        let msg = VprCommitMessage::new(
+            VprCommitDomain::Record,
+            VprCommitAction::Update,
+            "EHR status linked to demographics",
+            care_location,
+        )?;
 
         let data_dir = self.cfg.patient_data_dir().to_path_buf();
         let clinical_dir = data_dir.join(CLINICAL_DIR_NAME);
-
-        let clinical_uuid = UuidService::parse(clinical_uuid)?;
         let patient_dir = clinical_uuid.sharded_dir(&clinical_dir);
-
         let filename = patient_dir.join(EHR_STATUS_FILENAME);
 
-        // Create updated EHR status with linking information
-        let subject_id =
-            uuid::Uuid::parse_str(demographics_uuid).map_err(|_| PatientError::InvalidInput)?;
-
-        let subject = Some(vec![openehr::SubjectExternalRef {
+        let external_reference = Some(vec![openehr::SubjectExternalRef {
             namespace: format!("vpr://{}/mpi", namespace),
-            id: subject_id,
+            id: demographics_uuid.uuid(),
         }]);
-        openehr::ehr_status_write(rm_version, &filename, clinical_uuid.uuid(), subject)?;
+
+        let before = if filename.exists() {
+            Some(fs::read_to_string(&filename).map_err(PatientError::FileRead)?)
+        } else {
+            None
+        };
+
+        let rm_version = self.cfg.rm_system_version();
+        openehr::ehr_status_write(
+            rm_version,
+            &filename,
+            clinical_uuid.uuid(),
+            external_reference,
+        )?;
+
+        let repo = GitService::open(&patient_dir)?;
+        let commit_result = repo.commit_paths(author, &msg, std::slice::from_ref(&filename));
+        if let Err(e) = commit_result {
+            // Best-effort rollback: avoid leaving uncommitted state when the commit fails.
+            match before {
+                Some(contents) => {
+                    let _ = fs::write(&filename, contents);
+                }
+                None => {
+                    let _ = fs::remove_file(&filename);
+                }
+            }
+            return Err(e);
+        }
 
         Ok(())
     }
@@ -1223,13 +1293,20 @@ mod tests {
         let service = ClinicalService::new(cfg);
 
         // First, initialise a clinical record
-        let result = service.initialise(author, "Test Hospital".to_string());
+        let care_location = "Test Hospital".to_string();
+        let result = service.initialise(author.clone(), care_location.clone());
         assert!(result.is_ok(), "initialise should succeed");
         let clinical_uuid = result.unwrap();
 
         // Now link to demographics
-        let demographics_uuid = "12345678-1234-1234-1234-123456789abc";
-        let result = service.link_to_demographics(&clinical_uuid, demographics_uuid, None);
+        let demographics_uuid = "12345678123412341234123456789abc";
+        let result = service.link_to_demographics(
+            &author,
+            care_location,
+            &clinical_uuid,
+            demographics_uuid,
+            None,
+        );
         assert!(result.is_ok(), "link_to_demographics should succeed");
 
         // Verify ehr_status.yaml was updated with linking information
@@ -1259,6 +1336,79 @@ mod tests {
         assert_eq!(subject_external_refs.len(), 1);
         assert_eq!(subject_external_refs[0].namespace, "vpr://vpr.dev.1/mpi");
         assert_eq!(subject_external_refs[0].id, expected_subject_uuid);
+    }
+
+    #[test]
+    fn test_link_to_demographics_rejects_unsafe_namespace_without_mutation() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        let author = Author {
+            name: "Test Author".to_string(),
+            role: "Clinician".to_string(),
+            email: "test@example.com".to_string(),
+            registrations: vec![],
+            signature: None,
+            certificate: None,
+        };
+
+        let cfg = test_cfg(temp_dir.path());
+        let service = ClinicalService::new(cfg);
+
+        let care_location = "Test Hospital".to_string();
+        let clinical_uuid = service
+            .initialise(author.clone(), care_location.clone())
+            .expect("initialise should succeed");
+
+        let clinical_dir = temp_dir.path().join(CLINICAL_DIR_NAME);
+        let patient_dir = UuidService::parse(&clinical_uuid)
+            .expect("clinical_uuid should be canonical")
+            .sharded_dir(&clinical_dir);
+        let ehr_status_file = patient_dir.join(EHR_STATUS_FILENAME);
+
+        let before = fs::read_to_string(&ehr_status_file).expect("Failed to read ehr_status.yaml");
+
+        let demographics_uuid = "12345678123412341234123456789abc";
+        let err = service
+            .link_to_demographics(
+                &author,
+                care_location,
+                &clinical_uuid,
+                demographics_uuid,
+                Some("bad/namespace".to_string()),
+            )
+            .expect_err("expected validation failure");
+        assert!(matches!(err, PatientError::InvalidInput));
+
+        let after = fs::read_to_string(&ehr_status_file).expect("Failed to read ehr_status.yaml");
+        assert_eq!(before, after, "ehr_status.yaml should not be modified");
+    }
+
+    #[test]
+    fn test_link_to_demographics_rejects_invalid_clinical_uuid() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let cfg = test_cfg(temp_dir.path());
+        let service = ClinicalService::new(cfg);
+
+        let author = Author {
+            name: "Test Author".to_string(),
+            role: "Clinician".to_string(),
+            email: "test@example.com".to_string(),
+            registrations: vec![],
+            signature: None,
+            certificate: None,
+        };
+        let care_location = "Test Hospital".to_string();
+
+        let err = service
+            .link_to_demographics(
+                &author,
+                care_location,
+                "not-a-canonical-uuid",
+                "12345678123412341234123456789abc",
+                None,
+            )
+            .expect_err("expected validation failure");
+        assert!(matches!(err, PatientError::InvalidInput));
     }
 
     #[test]

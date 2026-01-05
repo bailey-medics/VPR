@@ -39,7 +39,7 @@ struct Cli {
 enum Commands {
     /// List all patients
     List,
-    /// Initialise demographics: <name> <email> [--signature <ecdsa_private_key_pem>]
+    /// Initialise demographics: <name> <email> --role <role> --care-location <care_location> [--signature <ecdsa_private_key_pem>]
     InitialiseDemographics {
         /// Author name for Git commit
         name: String,
@@ -58,7 +58,7 @@ enum Commands {
         #[arg(long)]
         signature: Option<String>,
     },
-    /// Initialise clinical: <name> <email> [--signature <ecdsa_private_key_pem>]
+    /// Initialise clinical: <name> <email> --role <role> --care-location <care_location> [--signature <ecdsa_private_key_pem>]
     InitialiseClinical {
         /// Author name for Git commit
         name: String,
@@ -77,12 +77,30 @@ enum Commands {
         #[arg(long)]
         signature: Option<String>,
     },
-    /// Write EHR status: <clinical_uuid> <demographics_uuid> [--namespace <namespace>]
+    /// Write EHR status (and commit):
+    /// <clinical_uuid> <demographics_uuid> <name> <email> --role <role> --care-location <care_location>
+    /// [--signature <ecdsa_private_key_pem>] [--namespace <namespace>]
     WriteEhrStatus {
         /// Clinical repository UUID
         clinical_uuid: String,
         /// Demographics UUID
         demographics_uuid: String,
+        /// Author name for Git commit
+        name: String,
+        /// Author email for Git commit
+        email: String,
+        /// Mandatory author role for commit metadata
+        #[arg(long)]
+        role: String,
+        /// Declared professional registrations (repeatable): --registration <AUTHORITY> <NUMBER>
+        #[arg(long, value_names = ["AUTHORITY", "NUMBER"], num_args = 2, action = clap::ArgAction::Append)]
+        registration: Vec<String>,
+        /// Mandatory organisational location for the commit (e.g. hospital name, GP surgery)
+        #[arg(long)]
+        care_location: String,
+        /// ECDSA private key PEM for X.509 signing (optional, can be PEM string, base64-encoded PEM, or file path)
+        #[arg(long)]
+        signature: Option<String>,
         /// Organisation domain (optional)
         #[arg(long)]
         namespace: Option<String>,
@@ -343,10 +361,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(Commands::WriteEhrStatus {
             clinical_uuid,
             demographics_uuid,
+            name,
+            email,
+            role,
+            registration,
+            care_location,
+            signature,
             namespace,
         }) => {
             let clinical_service = ClinicalService::new(cfg.clone());
+            let registrations: Vec<AuthorRegistration> = registration
+                .chunks(2)
+                .map(|chunk| AuthorRegistration {
+                    authority: chunk.first().cloned().unwrap_or_default(),
+                    number: chunk.get(1).cloned().unwrap_or_default(),
+                })
+                .collect();
+            let author = Author {
+                name,
+                role,
+                email,
+                registrations,
+                signature,
+                certificate: None,
+            };
             match clinical_service.link_to_demographics(
+                &author,
+                care_location,
                 &clinical_uuid,
                 &demographics_uuid,
                 namespace,

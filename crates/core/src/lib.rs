@@ -418,10 +418,16 @@ impl PatientService {
 
         // Initialise clinical
         let clinical_service = crate::clinical::ClinicalService::new(self.cfg.clone());
-        let clinical_uuid = clinical_service.initialise(author, care_location)?;
+        let clinical_uuid = clinical_service.initialise(author.clone(), care_location.clone())?;
 
         // Link clinical to demographics
-        clinical_service.link_to_demographics(&clinical_uuid, &demographics_uuid, namespace)?;
+        clinical_service.link_to_demographics(
+            &author,
+            care_location,
+            &clinical_uuid,
+            &demographics_uuid,
+            namespace,
+        )?;
 
         Ok(FullRecord {
             demographics_uuid,
