@@ -19,7 +19,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 #[cfg(test)]
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::HashSet;
+
+#[cfg(test)]
+use std::sync::{LazyLock, Mutex};
 
 use p256::ecdsa::signature::Verifier;
 use p256::ecdsa::{Signature, VerifyingKey};
@@ -105,9 +108,7 @@ impl ClinicalService {
             care_location,
         )?;
 
-        let data_dir = self.cfg.patient_data_dir().to_path_buf();
-
-        let clinical_dir = data_dir.join(CLINICAL_DIR_NAME);
+        let clinical_dir = self.clinical_dir(None);
         let (clinical_uuid, patient_dir) =
             allocate_unique_patient_dir(&clinical_dir, UuidService::new)?;
 
@@ -200,9 +201,7 @@ impl ClinicalService {
 
         let rm_version = self.cfg.rm_system_version();
 
-        let data_dir = self.cfg.patient_data_dir().to_path_buf();
-        let clinical_dir = data_dir.join(CLINICAL_DIR_NAME);
-        let patient_dir = clinical_uuid.sharded_dir(&clinical_dir);
+        let patient_dir = self.clinical_patient_dir(&clinical_uuid, None);
         let filename = patient_dir.join(EHR_STATUS_FILENAME);
 
         let external_reference = Some(vec![openehr::SubjectExternalRef {
@@ -265,14 +264,8 @@ impl ClinicalService {
         clinical_uuid: &str,
         base_dir: Option<&Path>,
     ) -> PatientResult<DateTime<Utc>> {
-        let data_dir = match base_dir {
-            Some(dir) => dir.to_path_buf(),
-            None => self.cfg.patient_data_dir().to_path_buf(),
-        };
-        let clinical_dir = data_dir.join(CLINICAL_DIR_NAME);
-
         let clinical_uuid = UuidService::parse(clinical_uuid)?;
-        let patient_dir = clinical_uuid.sharded_dir(&clinical_dir);
+        let patient_dir = self.clinical_patient_dir(&clinical_uuid, base_dir);
 
         let repo = GitService::open(&patient_dir)?.into_repo();
         let head = repo.head().map_err(PatientError::GitHead)?;
@@ -317,11 +310,8 @@ impl ClinicalService {
         clinical_uuid: &str,
         public_key_pem: &str,
     ) -> PatientResult<bool> {
-        let data_dir = self.cfg.patient_data_dir().to_path_buf();
-        let clinical_dir = data_dir.join(CLINICAL_DIR_NAME);
-
         let clinical_uuid = UuidService::parse(clinical_uuid)?;
-        let patient_dir = clinical_uuid.sharded_dir(&clinical_dir);
+        let patient_dir = self.clinical_patient_dir(&clinical_uuid, None);
 
         let repo = GitService::open(&patient_dir)?.into_repo();
 
@@ -374,13 +364,47 @@ impl ClinicalService {
     }
 }
 
+impl ClinicalService {
+    fn clinical_dir(&self, base_dir: Option<&Path>) -> PathBuf {
+        let data_dir = match base_dir {
+            Some(dir) => dir.to_path_buf(),
+            None => self.cfg.patient_data_dir().to_path_buf(),
+        };
+
+        data_dir.join(CLINICAL_DIR_NAME)
+    }
+
+    fn clinical_patient_dir(
+        &self,
+        clinical_uuid: &UuidService,
+        base_dir: Option<&Path>,
+    ) -> PathBuf {
+        let clinical_dir = self.clinical_dir(base_dir);
+        clinical_uuid.sharded_dir(&clinical_dir)
+    }
+}
+
 #[cfg(test)]
-static FORCE_CLEANUP_ERROR: AtomicBool = AtomicBool::new(false);
+static FORCE_CLEANUP_ERROR_FOR_THREADS: LazyLock<Mutex<HashSet<std::thread::ThreadId>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
+#[cfg(test)]
+fn force_cleanup_error_for_current_thread() {
+    let mut guard = FORCE_CLEANUP_ERROR_FOR_THREADS
+        .lock()
+        .expect("FORCE_CLEANUP_ERROR_FOR_THREADS mutex poisoned");
+    guard.insert(std::thread::current().id());
+}
 
 fn remove_patient_dir_all(patient_dir: &Path) -> io::Result<()> {
     #[cfg(test)]
     {
-        if FORCE_CLEANUP_ERROR.swap(false, Ordering::SeqCst) {
+        let current_id = std::thread::current().id();
+        let mut guard = FORCE_CLEANUP_ERROR_FOR_THREADS
+            .lock()
+            .expect("FORCE_CLEANUP_ERROR_FOR_THREADS mutex poisoned");
+
+        if guard.remove(&current_id) {
             return Err(io::Error::other("forced cleanup failure (test hook)"));
         }
     }
@@ -1137,7 +1161,7 @@ mod tests {
             certificate: None,
         };
 
-        FORCE_CLEANUP_ERROR.store(true, Ordering::SeqCst);
+        force_cleanup_error_for_current_thread();
         let err = service
             .initialise(author, "Test Hospital".to_string())
             .expect_err("initialise should fail");
@@ -1188,7 +1212,7 @@ mod tests {
         };
 
         // Force cleanup to fail so we can inspect the partially-created directory.
-        FORCE_CLEANUP_ERROR.store(true, Ordering::SeqCst);
+        force_cleanup_error_for_current_thread();
         let err = service
             .initialise(author, "Test Hospital".to_string())
             .expect_err("initialise should fail");
