@@ -176,6 +176,7 @@ impl ClinicalService {
         let patient_dir = self.clinical_patient_dir(&clinical_uuid, None);
         let filename = patient_dir.join(EHR_STATUS_FILENAME);
 
+        // TODO: need to read existing external references and preserve them
         let external_reference = Some(vec![openehr::ExternalReference {
             namespace: format!("vpr://{}/mpi", namespace),
             id: demographics_uuid.uuid(),

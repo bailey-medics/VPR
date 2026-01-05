@@ -294,3 +294,7 @@ Both are essential. They answer different questions and are optimised for differ
 - CQRS-style separation keeps the system auditable, performant, and safe
 
 This design allows VPR to combine strong clinical governance with a responsive modern user experience, without compromising either.
+
+
+---
+

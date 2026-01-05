@@ -10,6 +10,7 @@
   - [Design Decisions](./design-decisions.md)
     - [openEHR file structure](./open-ehr/index.md)
       - [EHR Status file](./open-ehr/ehr-status.md)
+    - [Writing Workers](./design-decisions-writing-workers.md)
   - [Git](./git.md)
   - [messaging](./messaging.md)
 - [CLI](./cli.md)
