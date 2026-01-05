@@ -89,7 +89,7 @@ pub enum OpenehrError {
 /// * `version` - RM version identifier (for example `"rm_1_1_0"`).
 /// * `filename` - Path to the target `ehr_status.yaml` file.
 /// * `ehr_id` - EHR identifier for the record.
-/// * `subject` - Optional subject external references.
+/// * `external_reference` - Optional subject external references.
 ///
 /// # Returns
 ///
@@ -105,10 +105,12 @@ pub fn ehr_status_write(
     version: RmVersion,
     filename: &std::path::Path,
     ehr_id: uuid::Uuid,
-    subject: Option<Vec<SubjectExternalRef>>,
+    external_reference: Option<Vec<SubjectExternalRef>>,
 ) -> Result<(), OpenehrError> {
     match version {
-        RmVersion::rm_1_1_0 => rm_1_1_0::ehr_status::ehr_status_write(filename, ehr_id, subject),
+        RmVersion::rm_1_1_0 => {
+            rm_1_1_0::ehr_status::ehr_status_write(filename, ehr_id, external_reference)
+        }
     }
 }
 

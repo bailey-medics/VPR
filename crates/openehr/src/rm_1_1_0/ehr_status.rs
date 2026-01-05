@@ -210,7 +210,7 @@ fn merge_yaml_values(current: serde_yaml::Value, new_data: serde_yaml::Value) ->
 ///
 /// * `path` - Path to the target `ehr_status.yaml` file.
 /// * `ehr_id` - EHR identifier for the record (written in canonical UUID form).
-/// * `subject` - Optional subject external references.
+/// * `external_reference` - Optional subject external references.
 ///
 /// # Returns
 ///
@@ -225,9 +225,9 @@ fn merge_yaml_values(current: serde_yaml::Value, new_data: serde_yaml::Value) ->
 pub fn ehr_status_write(
     path: &Path,
     ehr_id: uuid::Uuid,
-    subject: Option<Vec<crate::SubjectExternalRef>>,
+    external_reference: Option<Vec<crate::SubjectExternalRef>>,
 ) -> Result<(), OpenehrError> {
-    let subject = subject.unwrap_or_default();
+    let external_reference = external_reference.unwrap_or_default();
 
     let wire = EhrStatus {
         ehr_id: HierObjectId {
@@ -239,7 +239,7 @@ pub fn ehr_status_write(
         },
         subject: PartySelf {
             external_ref: ExternalRefs(
-                subject
+                external_reference
                     .into_iter()
                     .map(|subject_ref| PartyRef {
                         id: ObjectId {
