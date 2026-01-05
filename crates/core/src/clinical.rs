@@ -29,37 +29,6 @@ use p256::ecdsa::{Signature, VerifyingKey};
 use p256::pkcs8::DecodePublicKey;
 use x509_parser::prelude::*;
 
-fn validate_namespace_safe_for_uri(namespace: &str) -> PatientResult<()> {
-    // The namespace is embedded into an external-reference URI: `vpr://{namespace}/mpi`.
-    // Defensive guardrails:
-    // - reject empty/whitespace
-    // - bound size to avoid pathological inputs
-    // - restrict characters to a conservative ASCII set suitable for a URI authority
-    const MAX_NAMESPACE_LEN: usize = 253;
-
-    if namespace.trim().is_empty() {
-        return Err(PatientError::InvalidInput);
-    }
-
-    if namespace.len() > MAX_NAMESPACE_LEN {
-        return Err(PatientError::InvalidInput);
-    }
-
-    if !namespace.is_ascii() {
-        return Err(PatientError::InvalidInput);
-    }
-
-    let ok = namespace
-        .bytes()
-        .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z' | b'.' | b'-' | b'_'));
-
-    if !ok {
-        return Err(PatientError::InvalidInput);
-    }
-
-    Ok(())
-}
-
 /// Service for managing clinical record operations.
 #[derive(Clone)]
 pub struct ClinicalService {
@@ -125,9 +94,11 @@ impl ClinicalService {
             // Copy EHR template to patient directory
             copy_dir_recursive(&template_dir, &patient_dir).map_err(PatientError::FileWrite)?;
 
+            let rm_version = self.cfg.rm_system_version();
+
             // Create initial EHR status YAML file
             let filename = patient_dir.join(EHR_STATUS_FILENAME);
-            let rm_version = self.cfg.rm_system_version();
+
             openehr::ehr_status_write(rm_version, &filename, clinical_uuid.uuid(), None)?;
 
             // Initial commit
@@ -182,15 +153,6 @@ impl ClinicalService {
         demographics_uuid: &str,
         namespace: Option<String>,
     ) -> PatientResult<()> {
-        let clinical_uuid = UuidService::parse(clinical_uuid)?;
-        let demographics_uuid = UuidService::parse(demographics_uuid)?;
-
-        let namespace = namespace
-            .as_deref()
-            .unwrap_or(self.cfg.vpr_namespace())
-            .trim();
-        validate_namespace_safe_for_uri(namespace)?;
-
         author.validate_commit_author()?;
         let msg = VprCommitMessage::new(
             VprCommitDomain::Record,
@@ -198,13 +160,23 @@ impl ClinicalService {
             "EHR status linked to demographics",
             care_location,
         )?;
+        let clinical_uuid = UuidService::parse(clinical_uuid)?;
+        let demographics_uuid = UuidService::parse(demographics_uuid)?;
+
+        // Use the caller-provided namespace if present; otherwise fall back to the configured
+        // default. Trim and validate before embedding into a `vpr://{namespace}/mpi` URI.
+        let namespace = namespace
+            .as_deref()
+            .unwrap_or(self.cfg.vpr_namespace())
+            .trim();
+        validate_namespace_safe_for_uri(namespace)?;
 
         let rm_version = self.cfg.rm_system_version();
 
         let patient_dir = self.clinical_patient_dir(&clinical_uuid, None);
         let filename = patient_dir.join(EHR_STATUS_FILENAME);
 
-        let external_reference = Some(vec![openehr::SubjectExternalRef {
+        let external_reference = Some(vec![openehr::ExternalReference {
             namespace: format!("vpr://{}/mpi", namespace),
             id: demographics_uuid.uuid(),
         }]);
@@ -382,6 +354,37 @@ impl ClinicalService {
         let clinical_dir = self.clinical_dir(base_dir);
         clinical_uuid.sharded_dir(&clinical_dir)
     }
+}
+
+fn validate_namespace_safe_for_uri(namespace: &str) -> PatientResult<()> {
+    // The namespace is embedded into an external-reference URI: `vpr://{namespace}/mpi`.
+    // Defensive guardrails:
+    // - reject empty/whitespace
+    // - bound size to avoid pathological inputs
+    // - restrict characters to a conservative ASCII set suitable for a URI authority
+    const MAX_NAMESPACE_LEN: usize = 253;
+
+    if namespace.trim().is_empty() {
+        return Err(PatientError::InvalidInput);
+    }
+
+    if namespace.len() > MAX_NAMESPACE_LEN {
+        return Err(PatientError::InvalidInput);
+    }
+
+    if !namespace.is_ascii() {
+        return Err(PatientError::InvalidInput);
+    }
+
+    let ok = namespace
+        .bytes()
+        .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z' | b'.' | b'-' | b'_'));
+
+    if !ok {
+        return Err(PatientError::InvalidInput);
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

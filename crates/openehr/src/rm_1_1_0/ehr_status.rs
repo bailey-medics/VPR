@@ -225,7 +225,7 @@ fn merge_yaml_values(current: serde_yaml::Value, new_data: serde_yaml::Value) ->
 pub fn ehr_status_write(
     path: &Path,
     ehr_id: uuid::Uuid,
-    external_reference: Option<Vec<crate::SubjectExternalRef>>,
+    external_reference: Option<Vec<crate::ExternalReference>>,
 ) -> Result<(), OpenehrError> {
     let external_reference = external_reference.unwrap_or_default();
 
@@ -287,7 +287,7 @@ pub fn ehr_status_write(
 /// - any `subject.external_ref.*.id.value` is not a valid UUID.
 pub fn ehr_status_to_domain_parts(
     wire: &EhrStatus,
-) -> Result<(uuid::Uuid, Vec<crate::SubjectExternalRef>), OpenehrError> {
+) -> Result<(uuid::Uuid, Vec<crate::ExternalReference>), OpenehrError> {
     let ehr_id = uuid::Uuid::parse_str(&wire.ehr_id.value)
         .map_err(|_| OpenehrError::Translation("ehr_id must be a valid UUID".to_string()))?;
 
@@ -299,7 +299,7 @@ pub fn ehr_status_to_domain_parts(
             )
         })?;
 
-        subject_external_refs.push(crate::SubjectExternalRef {
+        subject_external_refs.push(crate::ExternalReference {
             namespace: external_ref.namespace.clone(),
             id,
         });

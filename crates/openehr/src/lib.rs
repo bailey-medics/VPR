@@ -41,11 +41,11 @@ impl std::str::FromStr for RmVersion {
     }
 }
 
-/// VPR domain primitive representing an external subject reference.
+/// VPR domain primitive representing an external reference.
 ///
 /// This is intentionally small to avoid coupling this crate to any upstream domain types.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SubjectExternalRef {
+pub struct ExternalReference {
     /// URI-like namespace identifying the subject system (for example `vpr://vpr.dev.1/mpi`).
     pub namespace: String,
     /// Subject identifier.
@@ -105,7 +105,7 @@ pub fn ehr_status_write(
     version: RmVersion,
     filename: &std::path::Path,
     ehr_id: uuid::Uuid,
-    external_reference: Option<Vec<SubjectExternalRef>>,
+    external_reference: Option<Vec<ExternalReference>>,
 ) -> Result<(), OpenehrError> {
     match version {
         RmVersion::rm_1_1_0 => {
