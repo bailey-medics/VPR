@@ -1,4 +1,4 @@
-use crate::OpenehrError;
+use crate::OpenEhrError;
 use serde::{Deserialize, Serialize};
 
 /// RM 1.1.0 narrative component (wire model).
@@ -22,7 +22,7 @@ struct NarrativeFrontMatterWire {
 }
 
 /// Read an RM 1.1.0 narrative component from Markdown with YAML front matter.
-pub(crate) fn read_markdown(input: &str) -> Result<NarrativeComponent, OpenehrError> {
+pub(crate) fn read_markdown(input: &str) -> Result<NarrativeComponent, OpenEhrError> {
     let input = input.strip_prefix('\u{feff}').unwrap_or(input);
     let (front_matter, body) = split_yaml_front_matter(input)?;
 
@@ -31,7 +31,7 @@ pub(crate) fn read_markdown(input: &str) -> Result<NarrativeComponent, OpenehrEr
     } else {
         let yaml_value: serde_yaml::Value = serde_yaml::from_str(front_matter)?;
         if !matches!(yaml_value, serde_yaml::Value::Mapping(_)) {
-            return Err(OpenehrError::FrontMatterNotMapping);
+            return Err(OpenEhrError::FrontMatterNotMapping);
         }
         serde_yaml::from_value(yaml_value)?
     };
@@ -44,7 +44,7 @@ pub(crate) fn read_markdown(input: &str) -> Result<NarrativeComponent, OpenehrEr
 }
 
 /// Write an RM 1.1.0 narrative component to Markdown with YAML front matter.
-pub(crate) fn write_markdown(component: &NarrativeComponent) -> Result<String, OpenehrError> {
+pub(crate) fn write_markdown(component: &NarrativeComponent) -> Result<String, OpenEhrError> {
     let metadata = NarrativeFrontMatterWire {
         title: component.title.clone(),
         tags: component.tags.clone(),
@@ -62,13 +62,13 @@ pub(crate) fn write_markdown(component: &NarrativeComponent) -> Result<String, O
     Ok(out)
 }
 
-fn split_yaml_front_matter(input: &str) -> Result<(&str, &str), OpenehrError> {
+fn split_yaml_front_matter(input: &str) -> Result<(&str, &str), OpenEhrError> {
     let mut chunks = input.split_inclusive('\n');
 
-    let first = chunks.next().ok_or(OpenehrError::InvalidText)?;
+    let first = chunks.next().ok_or(OpenEhrError::InvalidText)?;
     let first_line = first.trim_end_matches(['\n', '\r']);
     if first_line != "---" {
-        return Err(OpenehrError::MissingFrontMatter);
+        return Err(OpenEhrError::MissingFrontMatter);
     }
 
     let mut offset = first.len();
@@ -84,7 +84,7 @@ fn split_yaml_front_matter(input: &str) -> Result<(&str, &str), OpenehrError> {
         offset += chunk.len();
     }
 
-    Err(OpenehrError::UnterminatedFrontMatter)
+    Err(OpenEhrError::UnterminatedFrontMatter)
 }
 
 #[cfg(test)]
@@ -103,6 +103,6 @@ mod tests {
     #[test]
     fn rejects_missing_front_matter() {
         let err = read_markdown("# No front matter").unwrap_err();
-        assert!(matches!(err, OpenehrError::MissingFrontMatter));
+        assert!(matches!(err, OpenEhrError::MissingFrontMatter));
     }
 }

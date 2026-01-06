@@ -287,7 +287,7 @@ pub enum PatientError {
     YamlDeserialization(serde_yaml::Error),
 
     #[error("openEHR error: {0}")]
-    Openehr(#[from] openehr::OpenehrError),
+    Openehr(#[from] openehr::OpenEhrError),
     #[error("failed to initialise git repository: {0}")]
     GitInit(git2::Error),
     #[error("failed to access git index: {0}")]

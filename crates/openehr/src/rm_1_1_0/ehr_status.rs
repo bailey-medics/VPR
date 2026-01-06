@@ -16,7 +16,7 @@
 //!   top-level mapping keys written by VPR are inserted/overwritten, while unrelated keys are
 //!   preserved.
 
-use crate::OpenehrError;
+use crate::OpenEhrError;
 use serde::{Deserialize, Serialize};
 use serde::{Deserializer, Serializer};
 use std::fs;
@@ -165,10 +165,10 @@ pub struct Element {
 ///
 /// # Errors
 ///
-/// Returns [`OpenehrError`] if:
+/// Returns [`OpenEhrError`] if:
 /// - the YAML is invalid or does not match the expected wire schema.
-pub fn read_yaml(yaml: &str) -> Result<EhrStatus, OpenehrError> {
-    Ok(serde_yaml::from_str(yaml)?)
+pub fn read_yaml(yaml: &str) -> Result<EhrStatus, OpenEhrError> {
+    ehr_status_parse_full(yaml)
 }
 
 /// Write an RM 1.1.0 `EHR_STATUS` wire component to YAML.
@@ -183,9 +183,48 @@ pub fn read_yaml(yaml: &str) -> Result<EhrStatus, OpenehrError> {
 ///
 /// # Errors
 ///
-/// Returns [`OpenehrError`] if serialisation fails.
-pub fn write_yaml(component: &EhrStatus) -> Result<String, OpenehrError> {
+/// Returns [`OpenEhrError`] if serialisation fails.
+pub fn write_yaml(component: &EhrStatus) -> Result<String, OpenEhrError> {
     Ok(serde_yaml::to_string(component)?)
+}
+
+/// Strictly parse an RM 1.1.0 `EHR_STATUS` from YAML text.
+///
+/// This uses `serde_path_to_error` to surface a best-effort "path" (e.g. `subject.external_ref`)
+/// to the failing field when the YAML does not match the `EhrStatus` wire schema.
+///
+/// # Arguments
+///
+/// * `yaml_text` - YAML text expected to represent an `EHR_STATUS` mapping.
+///
+/// # Returns
+///
+/// Returns a valid [`EhrStatus`] on success.
+///
+/// # Errors
+///
+/// Returns [`OpenEhrError`] if:
+/// - the YAML does not represent an `EHR_STATUS` mapping,
+/// - any field has an unexpected type,
+/// - any unknown keys are present (due to `#[serde(deny_unknown_fields)]`).
+pub fn ehr_status_parse_full(yaml_text: &str) -> Result<EhrStatus, OpenEhrError> {
+    let deserializer = serde_yaml::Deserializer::from_str(yaml_text);
+
+    match serde_path_to_error::deserialize(deserializer) {
+        Ok(parsed) => Ok(parsed),
+        Err(err) => {
+            let path = err.path().to_string();
+            let source = err.into_inner();
+            let path = if path.is_empty() {
+                "<root>"
+            } else {
+                path.as_str()
+            };
+            Err(OpenEhrError::Translation(format!(
+                "EHR_STATUS schema mismatch at {path}: {source}"
+            )))
+        }
+    }
 }
 
 fn merge_yaml_values(current: serde_yaml::Value, new_data: serde_yaml::Value) -> serde_yaml::Value {
@@ -218,7 +257,7 @@ fn merge_yaml_values(current: serde_yaml::Value, new_data: serde_yaml::Value) ->
 ///
 /// # Errors
 ///
-/// Returns [`OpenehrError`] if:
+/// Returns [`OpenEhrError`] if:
 /// - reading the existing YAML fails,
 /// - serialisation/deserialisation fails,
 /// - writing the updated YAML fails.
@@ -226,7 +265,7 @@ pub fn ehr_status_write(
     path: &Path,
     ehr_id: uuid::Uuid,
     external_reference: Option<Vec<crate::ExternalReference>>,
-) -> Result<(), OpenehrError> {
+) -> Result<(), OpenEhrError> {
     let external_reference = external_reference.unwrap_or_default();
 
     let wire = EhrStatus {
@@ -282,19 +321,19 @@ pub fn ehr_status_write(
 ///
 /// # Errors
 ///
-/// Returns [`OpenehrError`] if:
+/// Returns [`OpenEhrError`] if:
 /// - `ehr_id` is not a valid UUID,
 /// - any `subject.external_ref.*.id.value` is not a valid UUID.
 pub fn ehr_status_to_domain_parts(
     wire: &EhrStatus,
-) -> Result<(uuid::Uuid, Vec<crate::ExternalReference>), OpenehrError> {
+) -> Result<(uuid::Uuid, Vec<crate::ExternalReference>), OpenEhrError> {
     let ehr_id = uuid::Uuid::parse_str(&wire.ehr_id.value)
-        .map_err(|_| OpenehrError::Translation("ehr_id must be a valid UUID".to_string()))?;
+        .map_err(|_| OpenEhrError::Translation("ehr_id must be a valid UUID".to_string()))?;
 
     let mut subject_external_refs = Vec::new();
     for external_ref in &wire.subject.external_ref.0 {
         let id = uuid::Uuid::parse_str(&external_ref.id.value).map_err(|_| {
-            OpenehrError::Translation(
+            OpenEhrError::Translation(
                 "subject.external_ref.id.value must be a valid UUID".to_string(),
             )
         })?;
@@ -337,5 +376,62 @@ is_modifiable: true
         let output = write_yaml(&component).expect("write yaml");
         let reparsed = read_yaml(&output).expect("reparse yaml");
         assert_eq!(component, reparsed);
+    }
+
+    #[test]
+    fn strict_value_rejects_unknown_keys() {
+        let input = r#"ehr_id:
+    value: 1166765a406a4552ac9b8e141931a3dc
+
+archetype_node_id: openEHR-EHR-STATUS.ehr_status.v1
+
+name:
+    value: EHR Status
+
+subject:
+    external_ref:
+        id:
+            value: 2db695ed7cc04fc99b08e0c738069b71
+        namespace: vpr://vpr.dev.1/mpi
+        type: PERSON
+
+is_queryable: true
+is_modifiable: true
+
+unexpected_top_level_key: true
+"#;
+
+        let err = ehr_status_parse_full(input).expect_err("should reject unknown key");
+        match err {
+            OpenEhrError::Translation(msg) => {
+                assert!(msg.contains("unexpected_top_level_key"));
+                assert!(msg.contains("unknown field") || msg.contains("unknown variant"));
+            }
+            other => panic!("expected Translation error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn strict_value_rejects_wrong_types() {
+        let wrong_type = r#"ehr_id:
+    value: 1166765a406a4552ac9b8e141931a3dc
+
+archetype_node_id: openEHR-EHR-STATUS.ehr_status.v1
+
+name:
+    value: EHR Status
+
+is_queryable: "true"
+is_modifiable: true
+"#;
+
+        let err = ehr_status_parse_full(wrong_type).expect_err("should reject wrong type");
+        match err {
+            OpenEhrError::Translation(msg) => {
+                assert!(msg.contains("is_queryable"));
+                assert!(msg.contains("invalid type") || msg.contains("expected"));
+            }
+            other => panic!("expected Translation error, got {other:?}"),
+        }
     }
 }
