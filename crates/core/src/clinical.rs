@@ -186,24 +186,25 @@ impl ClinicalService {
             id: demographics_uuid.uuid(),
         }]);
 
-        let before = if filename.exists() {
+        let previous_data = if filename.exists() {
             Some(fs::read_to_string(&filename).map_err(PatientError::FileRead)?)
         } else {
             None
         };
 
-        openehr::ehr_status_write(
+        let yaml_content = openehr::ehr_status_render(
             rm_version,
-            &filename,
-            clinical_uuid.uuid(),
+            previous_data.as_deref(),
+            Some(&clinical_uuid.to_string()),
             external_reference,
         )?;
+        fs::write(&filename, yaml_content).map_err(PatientError::FileWrite)?;
 
         let repo = GitService::open(&patient_dir)?;
         let commit_result = repo.commit_paths(author, &msg, std::slice::from_ref(&filename));
         if let Err(e) = commit_result {
             // Best-effort rollback: avoid leaving uncommitted state when the commit fails.
-            match before {
+            match previous_data {
                 Some(contents) => {
                     let _ = fs::write(&filename, contents);
                 }
