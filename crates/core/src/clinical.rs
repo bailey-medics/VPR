@@ -201,7 +201,10 @@ impl ClinicalService {
         fs::write(&filename, yaml_content).map_err(PatientError::FileWrite)?;
 
         let repo = GitService::open(&patient_dir)?;
-        let commit_result = repo.commit_paths(author, &msg, std::slice::from_ref(&filename));
+        // Pass relative path to commit_paths to avoid path canonicalization mismatches
+        let relative_filename = PathBuf::from(EHR_STATUS_FILENAME);
+        let commit_result =
+            repo.commit_paths(author, &msg, std::slice::from_ref(&relative_filename));
         if let Err(e) = commit_result {
             // Best-effort rollback: avoid leaving uncommitted state when the commit fails.
             match previous_data {
@@ -371,15 +374,22 @@ fn validate_namespace_safe_for_uri(namespace: &str) -> PatientResult<()> {
     const MAX_NAMESPACE_LEN: usize = 253;
 
     if namespace.trim().is_empty() {
-        return Err(PatientError::InvalidInput);
+        return Err(PatientError::InvalidInput(
+            "namespace cannot be empty".into(),
+        ));
     }
 
     if namespace.len() > MAX_NAMESPACE_LEN {
-        return Err(PatientError::InvalidInput);
+        return Err(PatientError::InvalidInput(format!(
+            "namespace exceeds maximum length of {} characters",
+            MAX_NAMESPACE_LEN
+        )));
     }
 
     if !namespace.is_ascii() {
-        return Err(PatientError::InvalidInput);
+        return Err(PatientError::InvalidInput(
+            "namespace must contain only ASCII characters".into(),
+        ));
     }
 
     let ok = namespace
@@ -387,7 +397,10 @@ fn validate_namespace_safe_for_uri(namespace: &str) -> PatientResult<()> {
         .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z' | b'.' | b'-' | b'_'));
 
     if !ok {
-        return Err(PatientError::InvalidInput);
+        return Err(PatientError::InvalidInput(
+            "namespace contains invalid characters (only alphanumeric, '.', '-', '_' allowed)"
+                .into(),
+        ));
     }
 
     Ok(())
@@ -778,7 +791,7 @@ mod tests {
         let err = service
             .initialise(author, "Test Hospital".to_string())
             .expect_err("initialise should fail when template is invalid");
-        assert!(matches!(err, PatientError::InvalidInput));
+        assert!(matches!(err, PatientError::InvalidInput(_)));
 
         let clinical_dir = patient_data_dir.path().join(CLINICAL_DIR_NAME);
         assert_eq!(
@@ -830,7 +843,7 @@ mod tests {
         let err = service
             .initialise(author, "Test Hospital".to_string())
             .expect_err("initialise should fail when template contains a symlink");
-        assert!(matches!(err, PatientError::InvalidInput));
+        assert!(matches!(err, PatientError::InvalidInput(_)));
 
         let clinical_dir = patient_data_dir.path().join(CLINICAL_DIR_NAME);
         assert_eq!(
@@ -880,7 +893,7 @@ mod tests {
         let err = service
             .initialise(author, "Test Hospital".to_string())
             .expect_err("initialise should fail when template exceeds depth guardrail");
-        assert!(matches!(err, PatientError::InvalidInput));
+        assert!(matches!(err, PatientError::InvalidInput(_)));
 
         let clinical_dir = patient_data_dir.path().join(CLINICAL_DIR_NAME);
         assert_eq!(
@@ -929,7 +942,7 @@ mod tests {
         let err = service
             .initialise(author, "Test Hospital".to_string())
             .expect_err("initialise should fail when template exceeds file count guardrail");
-        assert!(matches!(err, PatientError::InvalidInput));
+        assert!(matches!(err, PatientError::InvalidInput(_)));
 
         let clinical_dir = patient_data_dir.path().join(CLINICAL_DIR_NAME);
         assert_eq!(
@@ -980,7 +993,7 @@ mod tests {
         let err = service
             .initialise(author, "Test Hospital".to_string())
             .expect_err("initialise should fail when template exceeds size guardrail");
-        assert!(matches!(err, PatientError::InvalidInput));
+        assert!(matches!(err, PatientError::InvalidInput(_)));
 
         let clinical_dir = patient_data_dir.path().join(CLINICAL_DIR_NAME);
         assert_eq!(
@@ -1182,7 +1195,7 @@ mod tests {
                 cleanup_error,
             } => {
                 assert!(
-                    matches!(*init_error, PatientError::InvalidInput),
+                    matches!(*init_error, PatientError::InvalidInput(_)),
                     "expected init_error to be InvalidInput"
                 );
                 assert_eq!(cleanup_error.kind(), ErrorKind::Other);
@@ -1408,7 +1421,7 @@ mod tests {
                 Some("bad/namespace".to_string()),
             )
             .expect_err("expected validation failure");
-        assert!(matches!(err, PatientError::InvalidInput));
+        assert!(matches!(err, PatientError::InvalidInput(_)));
 
         let after = fs::read_to_string(&ehr_status_file).expect("Failed to read ehr_status.yaml");
         assert_eq!(before, after, "ehr_status.yaml should not be modified");
@@ -1439,7 +1452,7 @@ mod tests {
                 None,
             )
             .expect_err("expected validation failure");
-        assert!(matches!(err, PatientError::InvalidInput));
+        assert!(matches!(err, PatientError::InvalidInput(_)));
     }
 
     #[test]

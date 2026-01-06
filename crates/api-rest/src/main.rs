@@ -237,7 +237,7 @@ async fn create_patient(
             let resp = pb::CreatePatientRes {
                 filename: "".to_string(),
                 patient: Some(pb::Patient {
-                    id: uuid,
+                    id: uuid.simple().to_string(),
                     first_name: "".to_string(),
                     last_name: "".to_string(),
                     created_at: "".to_string(),

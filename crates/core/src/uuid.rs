@@ -95,7 +95,10 @@ impl UuidService {
         if Self::is_canonical(input) {
             return Ok(Self(input.to_string()));
         }
-        Err(PatientError::InvalidInput)
+        Err(PatientError::InvalidInput(format!(
+            "UUID must be 32 lowercase hex characters without hyphens, got: '{}'",
+            input
+        )))
     }
 
     /// Returns the canonical UUID string, consuming `self`.

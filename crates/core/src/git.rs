@@ -173,7 +173,9 @@ impl VprCommitTrailer {
             || value.is_empty()
             || value.contains(['\n', '\r'])
         {
-            return Err(PatientError::InvalidInput);
+            return Err(PatientError::InvalidInput(
+                "commit trailer key/value must be non-empty and single-line (key cannot contain ':')".into()
+            ));
         }
 
         Ok(Self { key, value })
@@ -218,7 +220,9 @@ impl VprCommitMessage {
     ) -> PatientResult<Self> {
         let summary = summary.into().trim().to_string();
         if summary.is_empty() || summary.contains(['\n', '\r']) {
-            return Err(PatientError::InvalidInput);
+            return Err(PatientError::InvalidInput(
+                "commit summary must be non-empty and single-line".into(),
+            ));
         }
 
         let care_location = care_location.into().trim().to_string();
@@ -281,7 +285,9 @@ impl VprCommitMessage {
         // Defensively validate invariants so `VprCommitMessage` stays safe even if constructed
         // manually (e.g. via struct literal within the crate).
         if self.summary.trim().is_empty() || self.summary.contains(['\n', '\r']) {
-            return Err(PatientError::InvalidInput);
+            return Err(PatientError::InvalidInput(
+                "commit summary must be non-empty and single-line".into(),
+            ));
         }
 
         if self.care_location.trim().is_empty() {
@@ -311,7 +317,9 @@ impl VprCommitMessage {
                 || trailer.key().contains(':')
                 || trailer.value().contains(['\n', '\r'])
             {
-                return Err(PatientError::InvalidInput);
+                return Err(PatientError::InvalidInput(
+                    "commit trailer key/value must be non-empty and single-line (key cannot contain ':')".into()
+                ));
             }
 
             // Author trailers are rendered via `render_with_author` only.
@@ -429,18 +437,41 @@ impl GitService {
     /// Create a new repository at `workdir`.
     pub(crate) fn init(workdir: &Path) -> PatientResult<Self> {
         let repo = git2::Repository::init(workdir).map_err(PatientError::GitInit)?;
+        // Use the actual workdir from the repository to ensure path stripping works correctly.
+        let actual_workdir = repo
+            .workdir()
+            .ok_or_else(|| {
+                PatientError::GitInit(git2::Error::from_str("repository has no working directory"))
+            })?
+            .to_path_buf();
         Ok(Self {
             repo,
-            workdir: workdir.to_path_buf(),
+            workdir: actual_workdir,
         })
     }
 
     /// Open an existing repository at `workdir`.
+    ///
+    /// Uses `NO_SEARCH` flag to prevent git2 from searching parent directories for a `.git`
+    /// folder. This ensures we open exactly the repository at the specified path.
     pub(crate) fn open(workdir: &Path) -> PatientResult<Self> {
-        let repo = git2::Repository::open(workdir).map_err(PatientError::GitOpen)?;
+        let repo = git2::Repository::open_ext(
+            workdir,
+            git2::RepositoryOpenFlags::NO_SEARCH,
+            std::iter::empty::<&std::ffi::OsStr>(),
+        )
+        .map_err(PatientError::GitOpen)?;
+        // Use the actual workdir from the repository to ensure path stripping works correctly.
+        // git2 may resolve symlinks or canonicalize paths differently.
+        let actual_workdir = repo
+            .workdir()
+            .ok_or_else(|| {
+                PatientError::GitOpen(git2::Error::from_str("repository has no working directory"))
+            })?
+            .to_path_buf();
         Ok(Self {
             repo,
-            workdir: workdir.to_path_buf(),
+            workdir: actual_workdir,
         })
     }
 
@@ -510,7 +541,11 @@ impl GitService {
             // `git2::Index::add_path` requires repo-workdir-relative paths.
             let rel = if path.is_absolute() {
                 path.strip_prefix(&self.workdir)
-                    .map_err(|_| PatientError::InvalidInput)?
+                    .map_err(|_| {
+                        PatientError::InvalidInput(
+                            "path is outside the repository working directory".into(),
+                        )
+                    })?
                     .to_path_buf()
             } else {
                 path.to_path_buf()
@@ -520,7 +555,9 @@ impl GitService {
                 .components()
                 .any(|c| matches!(c, std::path::Component::ParentDir))
             {
-                return Err(PatientError::InvalidInput);
+                return Err(PatientError::InvalidInput(
+                    "path must not contain parent directory references (..)".into(),
+                ));
             }
 
             index.add_path(&rel).map_err(PatientError::GitAdd)?;
@@ -670,9 +707,11 @@ impl GitService {
                 if entry_path.is_dir() {
                     walk(&entry_path, base, out)?;
                 } else {
-                    let rel = entry_path
-                        .strip_prefix(base)
-                        .map_err(|_| PatientError::InvalidInput)?;
+                    let rel = entry_path.strip_prefix(base).map_err(|_| {
+                        PatientError::InvalidInput(
+                            "path is outside the repository working directory".into(),
+                        )
+                    })?;
                     out.push(rel.to_path_buf());
                 }
             }
@@ -773,7 +812,7 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(matches!(err, PatientError::InvalidInput));
+        assert!(matches!(err, PatientError::InvalidInput(_)));
     }
 
     #[test]
@@ -805,6 +844,6 @@ mod tests {
     #[test]
     fn rejects_invalid_trailer_key() {
         let err = VprCommitTrailer::new("Bad:Key", "Value").unwrap_err();
-        assert!(matches!(err, PatientError::InvalidInput));
+        assert!(matches!(err, PatientError::InvalidInput(_)));
     }
 }

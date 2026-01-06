@@ -27,7 +27,9 @@ impl CoreConfig {
         vpr_namespace: String,
     ) -> PatientResult<Self> {
         if vpr_namespace.trim().is_empty() {
-            return Err(PatientError::InvalidInput);
+            return Err(PatientError::InvalidInput(
+                "vpr_namespace cannot be empty".into(),
+            ));
         }
 
         Ok(Self {
@@ -77,7 +79,10 @@ pub fn resolve_ehr_template_dir(override_dir: Option<PathBuf>) -> PatientResult<
         if template_dir.is_dir() && looks_like_template_dir(&template_dir) {
             return Ok(template_dir);
         }
-        return Err(PatientError::InvalidInput);
+        return Err(PatientError::InvalidInput(
+            "VPR_EHR_TEMPLATE_DIR override is not a valid template directory (must contain .ehr/)"
+                .into(),
+        ));
     }
 
     let cwd_relative = PathBuf::from(EHR_TEMPLATE_DIR);
@@ -93,7 +98,9 @@ pub fn resolve_ehr_template_dir(override_dir: Option<PathBuf>) -> PatientResult<
         }
     }
 
-    Err(PatientError::InvalidInput)
+    Err(PatientError::InvalidInput(
+        "could not locate ehr-template/ directory with .ehr/ subfolder".into(),
+    ))
 }
 
 /// Validate that the resolved EHR template directory is safe to recursively copy.
@@ -118,7 +125,9 @@ pub fn validate_ehr_template_dir_safe_to_copy(template_dir: &Path) -> PatientRes
         bytes: &mut u64,
     ) -> PatientResult<()> {
         if depth > MAX_DEPTH {
-            return Err(PatientError::InvalidInput);
+            return Err(PatientError::InvalidInput(
+                "EHR template directory exceeds maximum nesting depth".into(),
+            ));
         }
 
         for entry in std::fs::read_dir(path).map_err(PatientError::FileRead)? {
@@ -129,7 +138,9 @@ pub fn validate_ehr_template_dir_safe_to_copy(template_dir: &Path) -> PatientRes
             let file_type = metadata.file_type();
 
             if file_type.is_symlink() {
-                return Err(PatientError::InvalidInput);
+                return Err(PatientError::InvalidInput(
+                    "EHR template directory must not contain symlinks".into(),
+                ));
             }
 
             if file_type.is_file() {
@@ -137,13 +148,17 @@ pub fn validate_ehr_template_dir_safe_to_copy(template_dir: &Path) -> PatientRes
                 *bytes = bytes.saturating_add(metadata.len());
 
                 if *files > MAX_FILES || *bytes > MAX_TOTAL_BYTES {
-                    return Err(PatientError::InvalidInput);
+                    return Err(PatientError::InvalidInput(
+                        "EHR template directory exceeds maximum file count or total size".into(),
+                    ));
                 }
             } else if file_type.is_dir() {
                 scan_dir(&entry_path, depth + 1, files, bytes)?;
             } else {
                 // Reject special files (devices, fifos, sockets, etc).
-                return Err(PatientError::InvalidInput);
+                return Err(PatientError::InvalidInput(
+                    "EHR template directory contains unsupported file types (devices, fifos, sockets)".into()
+                ));
             }
         }
 
@@ -153,7 +168,9 @@ pub fn validate_ehr_template_dir_safe_to_copy(template_dir: &Path) -> PatientRes
     // Minimal sanity check: templates must at least contain the hidden .ehr folder.
     // This prevents common foot-guns like template_dir=".".
     if !template_dir.join(".ehr").is_dir() {
-        return Err(PatientError::InvalidInput);
+        return Err(PatientError::InvalidInput(
+            "EHR template directory must contain .ehr/ subfolder".into(),
+        ));
     }
 
     let mut files = 0usize;
