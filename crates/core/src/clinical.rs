@@ -17,6 +17,7 @@ use std::io;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use uuid::Uuid;
 
 #[cfg(test)]
 use std::collections::HashSet;
@@ -68,7 +69,7 @@ impl ClinicalService {
     /// - writing `ehr_status.yaml` fails,
     /// - Git repository initialisation or the initial commit fails.
     /// - cleanup of a partially-created record directory fails.
-    pub fn initialise(&self, author: Author, care_location: String) -> PatientResult<String> {
+    pub fn initialise(&self, author: Author, care_location: String) -> PatientResult<Uuid> {
         author.validate_commit_author()?;
         let msg = VprCommitMessage::new(
             VprCommitDomain::Record,
@@ -81,7 +82,7 @@ impl ClinicalService {
         let (clinical_uuid, patient_dir) =
             allocate_unique_patient_dir(&clinical_dir, UuidService::new)?;
 
-        let result: PatientResult<String> = (|| {
+        let result: PatientResult<Uuid> = (|| {
             // Initialise Git repository early so failures don't leave partially-created records.
             let repo = GitService::init(&patient_dir)?;
 
@@ -98,13 +99,16 @@ impl ClinicalService {
 
             // Create initial EHR status YAML file
             let filename = patient_dir.join(EHR_STATUS_FILENAME);
+            let ehr_id_string = clinical_uuid.to_string();
 
-            openehr::ehr_status_write(rm_version, &filename, clinical_uuid.uuid(), None)?;
+            let yaml_content =
+                openehr::ehr_status_render(rm_version, None, Some(&ehr_id_string), None)?;
+            fs::write(&filename, yaml_content).map_err(PatientError::FileWrite)?;
 
             // Initial commit
             repo.commit_all(&author, &msg)?;
 
-            Ok(clinical_uuid.into_string())
+            Ok(clinical_uuid.uuid())
         })();
 
         // On error, attempt to clean up the partially-created patient directory.

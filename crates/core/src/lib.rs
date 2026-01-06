@@ -424,14 +424,14 @@ impl PatientService {
         clinical_service.link_to_demographics(
             &author,
             care_location,
-            &clinical_uuid,
-            &demographics_uuid,
+            &clinical_uuid.to_string(),
+            &demographics_uuid.to_string(),
             namespace,
         )?;
 
         Ok(FullRecord {
-            demographics_uuid,
-            clinical_uuid,
+            demographics_uuid: demographics_uuid.to_string(),
+            clinical_uuid: clinical_uuid.to_string(),
         })
     }
 }

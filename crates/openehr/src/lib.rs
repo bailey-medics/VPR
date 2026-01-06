@@ -114,6 +114,38 @@ pub fn ehr_status_write(
     }
 }
 
+/// Render an `EHR_STATUS` YAML string for the specified RM version.
+///
+/// # Arguments
+///
+/// * `version` - RM version identifier.
+/// * `previous_data` - Optional YAML text representing an existing `EHR_STATUS`.
+/// * `ehr_id_str` - Optional EHR identifier as a string.
+/// * `external_refs` - Optional subject external references.
+///
+/// # Returns
+///
+/// Returns a YAML string representation of the EHR_STATUS.
+///
+/// # Errors
+///
+/// Returns [`OpenEhrError`] if:
+/// - the RM version is not supported,
+/// - the previous_data YAML is invalid,
+/// - both previous_data and ehr_id_str are None.
+pub fn ehr_status_render(
+    version: RmVersion,
+    previous_data: Option<&str>,
+    ehr_id_str: Option<&str>,
+    external_refs: Option<Vec<ExternalReference>>,
+) -> Result<String, OpenEhrError> {
+    match version {
+        RmVersion::rm_1_1_0 => {
+            rm_1_1_0::ehr_status::ehr_status_render(previous_data, ehr_id_str, external_refs)
+        }
+    }
+}
+
 /// Read an RM 1.1.0 `EHR_STATUS` component from YAML.
 ///
 /// # Arguments
