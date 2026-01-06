@@ -257,8 +257,8 @@ mod author_tests {
 
 #[derive(Debug, thiserror::Error)]
 pub enum PatientError {
-    #[error("first_name and last_name are required")]
-    InvalidInput,
+    #[error("invalid input: {0}")]
+    InvalidInput(String),
     #[error("failed to create storage directory: {0}")]
     StorageDirCreation(std::io::Error),
     #[error("failed to create patient directory: {0}")]
@@ -424,14 +424,14 @@ impl PatientService {
         clinical_service.link_to_demographics(
             &author,
             care_location,
-            &clinical_uuid.to_string(),
-            &demographics_uuid.to_string(),
+            &clinical_uuid.simple().to_string(),
+            &demographics_uuid,
             namespace,
         )?;
 
         Ok(FullRecord {
-            demographics_uuid: demographics_uuid.to_string(),
-            clinical_uuid: clinical_uuid.to_string(),
+            demographics_uuid,
+            clinical_uuid: clinical_uuid.simple().to_string(),
         })
     }
 }

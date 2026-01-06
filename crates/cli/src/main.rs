@@ -354,7 +354,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             let clinical_service = ClinicalService::new(cfg.clone());
             match clinical_service.initialise(author, care_location) {
-                Ok(uuid) => println!("Initialised clinical with UUID: {}", uuid),
+                Ok(uuid) => println!("Initialised clinical with UUID: {}", uuid.simple()),
                 Err(e) => eprintln!("Error initialising clinical: {}", e),
             }
         }

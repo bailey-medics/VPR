@@ -323,7 +323,7 @@ async fn create_patient(
             let resp = CreatePatientRes {
                 filename: "".to_string(),
                 patient: Some(Patient {
-                    id: uuid.to_string(),
+                    id: uuid.simple().to_string(),
                     first_name: "".to_string(),
                     last_name: "".to_string(),
                     created_at: "".to_string(),

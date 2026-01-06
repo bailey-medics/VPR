@@ -149,7 +149,7 @@ impl Vpr for VprService {
                 let resp = pb::CreatePatientRes {
                     filename: "".to_string(), // No filename for initialise
                     patient: Some(pb::Patient {
-                        id: uuid.to_string(),
+                        id: uuid.simple().to_string(),
                         first_name: "".to_string(),
                         last_name: "".to_string(),
                         created_at: "".to_string(), // Could set to now, but empty for now
