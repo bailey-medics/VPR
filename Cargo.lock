@@ -1468,6 +1468,7 @@ name = "openehr"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_path_to_error",
  "serde_yaml",
  "thiserror 1.0.69",
  "uuid",

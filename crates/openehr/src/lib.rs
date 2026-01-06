@@ -31,12 +31,12 @@ impl RmVersion {
 }
 
 impl std::str::FromStr for RmVersion {
-    type Err = OpenehrError;
+    type Err = OpenEhrError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "rm_1_1_0" => Ok(RmVersion::rm_1_1_0),
-            _ => Err(OpenehrError::UnsupportedRmVersion(s.to_string())),
+            _ => Err(OpenEhrError::UnsupportedRmVersion(s.to_string())),
         }
     }
 }
@@ -56,7 +56,7 @@ use thiserror::Error;
 
 /// Errors returned by the `openehr` boundary crate.
 #[derive(Debug, Error)]
-pub enum OpenehrError {
+pub enum OpenEhrError {
     #[error("invalid YAML: {0}")]
     InvalidYaml(#[from] serde_yaml::Error),
 
@@ -97,7 +97,7 @@ pub enum OpenehrError {
 ///
 /// # Errors
 ///
-/// Returns [`OpenehrError`] if:
+/// Returns [`OpenEhrError`] if:
 /// - the RM version is not supported,
 /// - reading/writing the target file fails,
 /// - YAML serialisation/deserialisation fails.
@@ -106,7 +106,7 @@ pub fn ehr_status_write(
     filename: &std::path::Path,
     ehr_id: uuid::Uuid,
     external_reference: Option<Vec<ExternalReference>>,
-) -> Result<(), OpenehrError> {
+) -> Result<(), OpenEhrError> {
     match version {
         RmVersion::rm_1_1_0 => {
             rm_1_1_0::ehr_status::ehr_status_write(filename, ehr_id, external_reference)
@@ -126,8 +126,8 @@ pub fn ehr_status_write(
 ///
 /// # Errors
 ///
-/// Returns [`OpenehrError`] if the YAML is invalid or does not match the expected wire schema.
-pub fn read_ehr_status_yaml(yaml: &str) -> Result<rm_1_1_0::ehr_status::EhrStatus, OpenehrError> {
+/// Returns [`OpenEhrError`] if the YAML is invalid or does not match the expected wire schema.
+pub fn read_ehr_status_yaml(yaml: &str) -> Result<rm_1_1_0::ehr_status::EhrStatus, OpenEhrError> {
     rm_1_1_0::ehr_status::read_yaml(yaml)
 }
 
@@ -143,10 +143,10 @@ pub fn read_ehr_status_yaml(yaml: &str) -> Result<rm_1_1_0::ehr_status::EhrStatu
 ///
 /// # Errors
 ///
-/// Returns [`OpenehrError`] if serialisation fails.
+/// Returns [`OpenEhrError`] if serialisation fails.
 pub fn write_ehr_status_yaml(
     component: &rm_1_1_0::ehr_status::EhrStatus,
-) -> Result<String, OpenehrError> {
+) -> Result<String, OpenEhrError> {
     rm_1_1_0::ehr_status::write_yaml(component)
 }
 
@@ -162,10 +162,10 @@ pub fn write_ehr_status_yaml(
 ///
 /// # Errors
 ///
-/// Returns [`OpenehrError`] if the front matter is missing/invalid or parsing fails.
+/// Returns [`OpenEhrError`] if the front matter is missing/invalid or parsing fails.
 pub fn read_narrative_markdown(
     input: &str,
-) -> Result<rm_1_1_0::narrative::NarrativeComponent, OpenehrError> {
+) -> Result<rm_1_1_0::narrative::NarrativeComponent, OpenEhrError> {
     rm_1_1_0::narrative::read_markdown(input)
 }
 
@@ -181,9 +181,9 @@ pub fn read_narrative_markdown(
 ///
 /// # Errors
 ///
-/// Returns [`OpenehrError`] if serialisation fails.
+/// Returns [`OpenEhrError`] if serialisation fails.
 pub fn write_narrative_markdown(
     component: &rm_1_1_0::narrative::NarrativeComponent,
-) -> Result<String, OpenehrError> {
+) -> Result<String, OpenEhrError> {
     rm_1_1_0::narrative::write_markdown(component)
 }
