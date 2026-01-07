@@ -12,7 +12,7 @@ use crate::{
 };
 use chrono::{DateTime, Utc};
 use git2;
-use openehr::{ehr_status_render, EhrId, ExternalReference};
+use openehr::{ehr_status_render, extract_rm_version, EhrId, ExternalReference};
 use std::fs;
 use std::io;
 use std::io::ErrorKind;
@@ -175,7 +175,7 @@ impl ClinicalService {
             .trim();
         validate_namespace_safe_for_uri(namespace)?;
 
-        let rm_version = self.cfg.rm_system_version();
+        // let rm_version = self.cfg.rm_system_version();
 
         let patient_dir = self.clinical_patient_dir(&clinical_uuid, None);
         let filename = patient_dir.join(EHR_STATUS_FILENAME);
@@ -190,6 +190,8 @@ impl ClinicalService {
         } else {
             None
         };
+
+        let rm_version = extract_rm_version(previous_data.as_deref().unwrap_or(""))?;
 
         let yaml_content = ehr_status_render(
             rm_version,
