@@ -1367,9 +1367,16 @@ mod tests {
         let content = fs::read_to_string(&ehr_status_file).expect("Failed to read ehr_status.yaml");
 
         let wire = openehr::read_ehr_status_yaml(&content).expect("Failed to parse openEHR YAML");
-        let (_ehr_id, subject_external_refs) =
-            openehr::rm_1_1_0::ehr_status::ehr_status_to_domain_parts(&wire)
-                .expect("Failed to translate wire to domain parts");
+        let subject_external_refs: Vec<ExternalReference> = wire
+            .subject
+            .external_ref
+            .0
+            .iter()
+            .map(|pr| ExternalReference {
+                namespace: pr.namespace.clone(),
+                id: uuid::Uuid::parse_str(&pr.id.value).expect("should be valid uuid"),
+            })
+            .collect();
 
         assert_eq!(wire.archetype_node_id, "openEHR-EHR-STATUS.ehr_status.v1");
         assert_eq!(wire.name.value, "EHR Status");

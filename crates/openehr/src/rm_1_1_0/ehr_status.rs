@@ -14,12 +14,9 @@
 //!   alignment.
 
 use crate::{EhrId, ExternalReference, OpenEhrError};
-use serde::{Deserialize, Serialize};
-use serde::{Deserializer, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-const DEFAULT_ARCHETYPE_NODE_ID: &str = "openEHR-EHR-STATUS.ehr_status.v1";
-const DEFAULT_NAME: &str = "EHR Status";
-const DEFAULT_EXTERNAL_REF_TYPE: &str = "PERSON";
+use super::constants::{DEFAULT_ARCHETYPE_NODE_ID, DEFAULT_EXTERNAL_REF_TYPE, DEFAULT_NAME};
 
 /// RM 1.x-aligned wire representation of `EHR_STATUS` for VPR on-disk YAML.
 ///
@@ -707,12 +704,12 @@ is_modifiable: true
     #[test]
     fn ehr_status_render_rejects_both_none() {
         let err = ehr_status_render(None, None, None).expect_err(
-            "ehr_status_render should reject when both previous_data and ehr_id_str are None",
+            "ehr_status_render should reject when both previous_data and ehr_id are None",
         );
 
         match err {
             OpenEhrError::Translation(msg) => {
-                assert!(msg.contains("both previous_data and ehr_id_str are None"));
+                assert!(msg.contains("both previous_data and ehr_id are None"));
             }
             other => panic!("expected Translation error, got {other:?}"),
         }
@@ -726,12 +723,12 @@ is_modifiable: true
         };
 
         let err = ehr_status_render(None, None, Some(vec![external_ref])).expect_err(
-            "ehr_status_render should reject when previous_data is None but ehr_id_str is None",
+            "ehr_status_render should reject when previous_data is None but ehr_id is None",
         );
 
         match err {
             OpenEhrError::Translation(msg) => {
-                assert!(msg.contains("both previous_data and ehr_id_str are None"));
+                assert!(msg.contains("both previous_data and ehr_id are None"));
             }
             other => panic!("expected Translation error, got {other:?}"),
         }
