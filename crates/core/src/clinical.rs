@@ -1273,16 +1273,17 @@ mod tests {
         assert!(result.is_ok(), "initialise should succeed");
 
         let clinical_uuid = result.unwrap();
-        assert_eq!(clinical_uuid.len(), 32, "UUID should be 32 characters");
+        let clinical_uuid_str = clinical_uuid.simple().to_string();
+        assert_eq!(clinical_uuid_str.len(), 32, "UUID should be 32 characters");
 
         // Verify directory structure exists
         let clinical_dir = temp_dir.path().join(CLINICAL_DIR_NAME);
         assert!(clinical_dir.exists(), "clinical directory should exist");
 
         // Extract sharding directories from UUID
-        let s1 = &clinical_uuid[0..2];
-        let s2 = &clinical_uuid[2..4];
-        let patient_dir = clinical_dir.join(s1).join(s2).join(&clinical_uuid);
+        let s1 = &clinical_uuid_str[0..2];
+        let s2 = &clinical_uuid_str[2..4];
+        let patient_dir = clinical_dir.join(s1).join(s2).join(&clinical_uuid_str);
         assert!(patient_dir.exists(), "patient directory should exist");
 
         // Verify template files were copied
@@ -1341,13 +1342,14 @@ mod tests {
         let result = service.initialise(author.clone(), care_location.clone());
         assert!(result.is_ok(), "initialise should succeed");
         let clinical_uuid = result.unwrap();
+        let clinical_uuid_str = clinical_uuid.simple().to_string();
 
         // Now link to demographics
         let demographics_uuid = "12345678123412341234123456789abc";
         let result = service.link_to_demographics(
             &author,
             care_location,
-            &clinical_uuid,
+            &clinical_uuid_str,
             demographics_uuid,
             None,
         );
@@ -1355,7 +1357,7 @@ mod tests {
 
         // Verify ehr_status.yaml was updated with linking information
         let clinical_dir = temp_dir.path().join(CLINICAL_DIR_NAME);
-        let patient_dir = UuidService::parse(&clinical_uuid)
+        let patient_dir = UuidService::parse(&clinical_uuid_str)
             .expect("clinical_uuid should be canonical")
             .sharded_dir(&clinical_dir);
         let ehr_status_file = patient_dir.join(EHR_STATUS_FILENAME);
@@ -1402,9 +1404,10 @@ mod tests {
         let clinical_uuid = service
             .initialise(author.clone(), care_location.clone())
             .expect("initialise should succeed");
+        let clinical_uuid_str = clinical_uuid.simple().to_string();
 
         let clinical_dir = temp_dir.path().join(CLINICAL_DIR_NAME);
-        let patient_dir = UuidService::parse(&clinical_uuid)
+        let patient_dir = UuidService::parse(&clinical_uuid_str)
             .expect("clinical_uuid should be canonical")
             .sharded_dir(&clinical_dir);
         let ehr_status_file = patient_dir.join(EHR_STATUS_FILENAME);
@@ -1416,7 +1419,7 @@ mod tests {
             .link_to_demographics(
                 &author,
                 care_location,
-                &clinical_uuid,
+                &clinical_uuid_str,
                 demographics_uuid,
                 Some("bad/namespace".to_string()),
             )
@@ -1478,9 +1481,10 @@ mod tests {
         let clinical_uuid = service
             .initialise(author, "Test Hospital".to_string())
             .expect("initialise should succeed");
+        let clinical_uuid_str = clinical_uuid.simple().to_string();
 
         // Call get_first_commit_time
-        let result = service.get_first_commit_time(&clinical_uuid, Some(temp_dir.path()));
+        let result = service.get_first_commit_time(&clinical_uuid_str, Some(temp_dir.path()));
         assert!(result.is_ok(), "get_first_commit_time should succeed");
 
         let timestamp = result.unwrap();
@@ -1524,9 +1528,10 @@ mod tests {
         let result = service.initialise(author, "Test Hospital".to_string());
         assert!(result.is_ok(), "initialise should succeed");
         let clinical_uuid = result.unwrap();
+        let clinical_uuid_str = clinical_uuid.simple().to_string();
 
         // Verify the signature
-        let verify_result = service.verify_commit_signature(&clinical_uuid, &public_key_pem);
+        let verify_result = service.verify_commit_signature(&clinical_uuid_str, &public_key_pem);
         assert!(
             verify_result.is_ok(),
             "verify_commit_signature should succeed"
@@ -1539,7 +1544,7 @@ mod tests {
             .verifying_key()
             .to_public_key_pem(p256::pkcs8::LineEnding::LF)
             .expect("Failed to encode wrong public key");
-        let wrong_verify = service.verify_commit_signature(&clinical_uuid, &wrong_pub_pem);
+        let wrong_verify = service.verify_commit_signature(&clinical_uuid_str, &wrong_pub_pem);
         assert!(wrong_verify.is_ok(), "verify with wrong key should succeed");
         assert!(
             !wrong_verify.unwrap(),
@@ -1575,16 +1580,17 @@ mod tests {
         let clinical_uuid = service
             .initialise(author, "Test Hospital".to_string())
             .expect("initialise should succeed");
+        let clinical_uuid_str = clinical_uuid.simple().to_string();
 
         // Offline verification: no external key material is provided.
         let ok = service
-            .verify_commit_signature(&clinical_uuid, "")
+            .verify_commit_signature(&clinical_uuid_str, "")
             .expect("verify_commit_signature should succeed");
         assert!(ok, "embedded public key verification should succeed");
 
         // Compatibility: verification still works with an explicit public key.
         let ok = service
-            .verify_commit_signature(&clinical_uuid, &public_key_pem)
+            .verify_commit_signature(&clinical_uuid_str, &public_key_pem)
             .expect("verify_commit_signature should succeed");
         assert!(ok, "verification with explicit public key should succeed");
     }
@@ -1657,9 +1663,10 @@ mod tests {
         let clinical_uuid = service
             .initialise(author, "Test Hospital".to_string())
             .expect("initialise should succeed");
+        let clinical_uuid_str = clinical_uuid.simple().to_string();
 
         let clinical_dir = temp_dir.path().join(CLINICAL_DIR_NAME);
-        let patient_dir = UuidService::parse(&clinical_uuid)
+        let patient_dir = UuidService::parse(&clinical_uuid_str)
             .expect("clinical_uuid should be canonical")
             .sharded_dir(&clinical_dir);
 
@@ -1693,9 +1700,10 @@ mod tests {
         let clinical_uuid = service
             .initialise(author, "Test Hospital".to_string())
             .expect("initialise should succeed");
+        let clinical_uuid_str = clinical_uuid.simple().to_string();
 
         let clinical_dir = temp_dir.path().join(CLINICAL_DIR_NAME);
-        let patient_dir = UuidService::parse(&clinical_uuid)
+        let patient_dir = UuidService::parse(&clinical_uuid_str)
             .expect("clinical_uuid should be canonical")
             .sharded_dir(&clinical_dir);
 
@@ -1709,7 +1717,7 @@ mod tests {
         );
 
         let ok = service
-            .verify_commit_signature(&clinical_uuid, "")
+            .verify_commit_signature(&clinical_uuid_str, "")
             .expect("verify_commit_signature should succeed");
         assert!(
             !ok,

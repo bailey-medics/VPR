@@ -755,8 +755,8 @@ is_modifiable: true
         // Check default values
         assert_eq!(result.archetype_node_id, DEFAULT_ARCHETYPE_NODE_ID);
         assert_eq!(result.name.value, DEFAULT_NAME);
-        assert_eq!(result.is_queryable, true);
-        assert_eq!(result.is_modifiable, true);
+        assert!(result.is_queryable);
+        assert!(result.is_modifiable);
         assert!(result.other_details.is_none());
 
         // Check that external_ref was set
@@ -806,12 +806,12 @@ is_modifiable: true
     #[test]
     fn ehr_status_render_rejects_both_none() {
         let err = ehr_status_render(None, None, None).expect_err(
-            "ehr_status_render should reject when both previous_data and ehr_id are None",
+            "ehr_status_render should reject when both previous_data and ehr_id_str are None",
         );
 
         match err {
             OpenEhrError::Translation(msg) => {
-                assert!(msg.contains("both previous_data and ehr_id are None"));
+                assert!(msg.contains("both previous_data and ehr_id_str are None"));
             }
             other => panic!("expected Translation error, got {other:?}"),
         }
@@ -825,12 +825,12 @@ is_modifiable: true
         };
 
         let err = ehr_status_render(None, None, Some(vec![external_ref])).expect_err(
-            "ehr_status_render should reject when previous_data is None but ehr_id is None",
+            "ehr_status_render should reject when previous_data is None but ehr_id_str is None",
         );
 
         match err {
             OpenEhrError::Translation(msg) => {
-                assert!(msg.contains("both previous_data and ehr_id are None"));
+                assert!(msg.contains("both previous_data and ehr_id_str are None"));
             }
             other => panic!("expected Translation error, got {other:?}"),
         }
