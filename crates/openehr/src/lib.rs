@@ -203,3 +203,124 @@ pub fn write_narrative_markdown(
 ) -> Result<String, OpenEhrError> {
     rm_1_1_0::narrative::write_markdown(component)
 }
+
+/// Extract the RM version from a YAML string.
+///
+/// This function parses the provided YAML string and extracts the `rm_version` field,
+/// which should be the first field in VPR YAML documents.
+///
+/// # Arguments
+///
+/// * `yaml` - YAML string to parse.
+///
+/// # Returns
+///
+/// Returns the RM version found in the YAML.
+///
+/// # Errors
+///
+/// Returns [`OpenEhrError`] if:
+/// - the YAML is invalid,
+/// - the `rm_version` field is missing,
+/// - the `rm_version` value cannot be converted to a string,
+/// - the version string is not a supported RM version.
+pub fn extract_rm_version(yaml: &str) -> Result<RmVersion, OpenEhrError> {
+    use serde_yaml::Value;
+
+    // Parse the YAML to validate it's well-formed
+    let value: Value = serde_yaml::from_str(yaml)?;
+
+    // Extract the rm_version field and convert it to a string
+    let version_str = value
+        .get("rm_version")
+        .and_then(|v| match v {
+            Value::String(s) => Some(s.clone()),
+            Value::Number(n) => Some(n.to_string()),
+            _ => None,
+        })
+        .ok_or_else(|| {
+            OpenEhrError::Translation("rm_version field missing or not a valid value".to_string())
+        })?;
+
+    // Convert the string to RmVersion
+    version_str.parse::<RmVersion>()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_rm_version_extracts_valid_version() {
+        let yaml = r#"rm_version: rm_1_1_0
+ehr_id:
+    value: test-id
+"#;
+
+        let version = extract_rm_version(yaml).expect("should extract version");
+        assert_eq!(version, RmVersion::rm_1_1_0);
+    }
+
+    #[test]
+    fn extract_rm_version_rejects_invalid_yaml() {
+        let invalid_yaml = r#"rm_version: rm_1_1_0
+invalid: yaml: content:
+"#;
+
+        let err = extract_rm_version(invalid_yaml).expect_err("should reject invalid YAML");
+        match err {
+            OpenEhrError::InvalidYaml(_) => {} // Expected
+            other => panic!("expected InvalidYaml error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn extract_rm_version_rejects_missing_rm_version() {
+        let yaml_without_version = r#"ehr_id:
+    value: test-id
+"#;
+
+        let err =
+            extract_rm_version(yaml_without_version).expect_err("should reject missing rm_version");
+        match err {
+            OpenEhrError::Translation(msg) => {
+                assert!(msg.contains("rm_version field missing"));
+            }
+            other => panic!("expected Translation error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn extract_rm_version_rejects_non_string_rm_version() {
+        let yaml_with_non_string_version = r#"rm_version: 1.1.0
+ehr_id:
+    value: test-id
+"#;
+
+        let err = extract_rm_version(yaml_with_non_string_version)
+            .expect_err("should reject non-string rm_version");
+        match err {
+            OpenEhrError::UnsupportedRmVersion(version) => {
+                assert_eq!(version, "1.1.0");
+            }
+            other => panic!("expected UnsupportedRmVersion error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn extract_rm_version_rejects_unsupported_version() {
+        let yaml_with_unsupported_version = r#"rm_version: rm_2_0_0
+ehr_id:
+    value: test-id
+"#;
+
+        let err = extract_rm_version(yaml_with_unsupported_version)
+            .expect_err("should reject unsupported version");
+        match err {
+            OpenEhrError::UnsupportedRmVersion(version) => {
+                assert_eq!(version, "rm_2_0_0");
+            }
+            other => panic!("expected UnsupportedRmVersion error, got {:?}", other),
+        }
+    }
+}
