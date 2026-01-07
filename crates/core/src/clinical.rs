@@ -12,6 +12,7 @@ use crate::{
 };
 use chrono::{DateTime, Utc};
 use git2;
+use openehr::{ehr_status_render, EhrId, ExternalReference};
 use std::fs;
 use std::io;
 use std::io::ErrorKind;
@@ -99,10 +100,9 @@ impl ClinicalService {
 
             // Create initial EHR status YAML file
             let filename = patient_dir.join(EHR_STATUS_FILENAME);
-            let ehr_id_string = clinical_uuid.to_string();
+            let ehr_id = EhrId::from_uuid(clinical_uuid.uuid());
 
-            let yaml_content =
-                openehr::ehr_status_render(rm_version, None, Some(&ehr_id_string), None)?;
+            let yaml_content = ehr_status_render(rm_version, None, Some(&ehr_id), None)?;
             fs::write(&filename, yaml_content).map_err(PatientError::FileWrite)?;
 
             // Initial commit
@@ -180,8 +180,7 @@ impl ClinicalService {
         let patient_dir = self.clinical_patient_dir(&clinical_uuid, None);
         let filename = patient_dir.join(EHR_STATUS_FILENAME);
 
-        // TODO: need to read existing external references and preserve them
-        let external_reference = Some(vec![openehr::ExternalReference {
+        let external_reference = Some(vec![ExternalReference {
             namespace: format!("vpr://{}/mpi", namespace),
             id: demographics_uuid.uuid(),
         }]);
@@ -192,10 +191,10 @@ impl ClinicalService {
             None
         };
 
-        let yaml_content = openehr::ehr_status_render(
+        let yaml_content = ehr_status_render(
             rm_version,
             previous_data.as_deref(),
-            Some(&clinical_uuid.to_string()),
+            None,
             external_reference,
         )?;
         fs::write(&filename, yaml_content).map_err(PatientError::FileWrite)?;
