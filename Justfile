@@ -43,6 +43,14 @@ build_local:
     cargo build -p api-grpc
 
 
+alias c := check-all
+# Run all checks (linting, tests, etc.)
+check-all:
+    #!/usr/bin/env bash
+    {{initialise}} "check-all"
+    scripts/check-all.sh
+
+
 alias d := docs
 # Creates and serves the documentation site (clean: 'c' to clean)
 docs clean="":
@@ -76,6 +84,14 @@ enter-backend:
     #!/usr/bin/env bash
     {{initialise}} "enter-backend"
     docker exec -it vpr-dev /bin/sh
+
+
+alias f := format
+# Enter the backend container shell
+format:
+    #!/usr/bin/env bash
+    {{initialise}} "format"
+    cargo fmt
 
 
 alias g := gui
