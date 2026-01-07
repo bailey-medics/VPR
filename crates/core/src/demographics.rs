@@ -115,7 +115,7 @@ impl DemographicsService {
             &[PathBuf::from(crate::constants::PATIENT_JSON_FILENAME)],
         )?;
 
-        Ok(demographics_uuid.into_string())
+        Ok(demographics_uuid.to_string())
     }
 
     /// Updates the demographics of an existing patient.
