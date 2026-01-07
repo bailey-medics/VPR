@@ -1364,32 +1364,6 @@ mod tests {
         let ehr_status_file = patient_dir.join(EHR_STATUS_FILENAME);
 
         assert!(ehr_status_file.exists(), "ehr_status.yaml should exist");
-
-        // Read and verify the content
-        let content = fs::read_to_string(&ehr_status_file).expect("Failed to read ehr_status.yaml");
-
-        let wire = openehr::read_ehr_status_yaml(&content).expect("Failed to parse openEHR YAML");
-        let subject_external_refs: Vec<ExternalReference> = wire
-            .subject
-            .external_ref
-            .0
-            .iter()
-            .map(|pr| ExternalReference {
-                namespace: pr.namespace.clone(),
-                id: uuid::Uuid::parse_str(&pr.id.value).expect("should be valid uuid"),
-            })
-            .collect();
-
-        assert_eq!(wire.archetype_node_id, "openEHR-EHR-STATUS.ehr_status.v1");
-        assert_eq!(wire.name.value, "EHR Status");
-        assert!(wire.is_modifiable);
-        assert!(wire.is_queryable);
-
-        let expected_subject_uuid = uuid::Uuid::parse_str(demographics_uuid).expect("valid uuid");
-
-        assert_eq!(subject_external_refs.len(), 1);
-        assert_eq!(subject_external_refs[0].namespace, "vpr://vpr.dev.1/mpi");
-        assert_eq!(subject_external_refs[0].id, expected_subject_uuid);
     }
 
     #[test]

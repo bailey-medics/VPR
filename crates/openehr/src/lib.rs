@@ -1,14 +1,13 @@
 //! openEHR wire/boundary support.
 //!
-//! This crate provides **wire models** and **format/translation helpers** for VPR’s on-disk,
-//! Git-backed clinical record files:
+//! This crate provides **wire models** and **format/translation helpers** for on-disk,
+//! version-controlled clinical record files:
 //! - YAML components (for example `EHR_STATUS`)
-//! - Markdown with YAML front matter (narrative components)
 //!
-//! Clinical meaning and business rules live in `vpr-core`. This crate focuses on:
+//! This crate focuses on:
 //! - standards alignment (openEHR RM structures),
 //! - serialisation/deserialisation,
-//! - translation between VPR domain primitives and wire structs,
+//! - translation between domain primitives and wire structs,
 //! - version dispatch via small facade functions where needed.
 
 use uuid::Uuid;
@@ -45,51 +44,54 @@ impl std::str::FromStr for RmVersion {
     }
 }
 
+/// Represents an EHR identifier.
+///
+/// This is a simple wrapper around a string to provide type safety for EHR IDs.
 pub struct EhrId(String);
 
 impl EhrId {
+    /// Creates an `EhrId` from a UUID.
+    ///
+    /// # Arguments
+    ///
+    /// * `uuid` - The UUID to convert to an EHR identifier.
+    ///
+    /// # Returns
+    ///
+    /// Returns a new `EhrId` containing the string representation of the UUID.
     pub fn from_uuid(uuid: Uuid) -> Self {
         Self(uuid.to_string())
     }
 
+    /// Returns the EHR identifier as a string slice.
+    ///
+    /// # Returns
+    ///
+    /// Returns a reference to the underlying string.
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
-/// VPR domain primitive representing an external reference.
+/// Domain primitive representing an external reference.
 ///
 /// This is intentionally small to avoid coupling this crate to any upstream domain types.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExternalReference {
-    /// URI-like namespace identifying the subject system (for example `vpr://vpr.dev.1/mpi`).
+    /// URI-like namespace identifying the subject system (for example `ehr://example.com/mpi`).
     pub namespace: String,
     /// Subject identifier.
     pub id: uuid::Uuid,
 }
 
-use thiserror::Error;
-
 /// Errors returned by the `openehr` boundary crate.
-#[derive(Debug, Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum OpenEhrError {
     #[error("invalid YAML: {0}")]
     InvalidYaml(#[from] serde_yaml::Error),
 
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
-
-    #[error("missing YAML front matter header (expected '---' as first line)")]
-    MissingFrontMatter,
-
-    #[error("unterminated YAML front matter (missing closing '---' line)")]
-    UnterminatedFrontMatter,
-
-    #[error("front matter must be a YAML mapping")]
-    FrontMatterNotMapping,
-
-    #[error("invalid UTF-8 or text structure")]
-    InvalidText,
 
     #[error("translation error: {0}")]
     Translation(String),
@@ -130,84 +132,10 @@ pub fn ehr_status_render(
     }
 }
 
-/// Read an RM 1.1.0 `EHR_STATUS` component from YAML.
-///
-/// # Arguments
-///
-/// * `yaml` - YAML document containing an `EHR_STATUS` component.
-///
-/// # Returns
-///
-/// Returns a parsed RM 1.1.0 wire struct.
-///
-/// # Errors
-///
-/// Returns [`OpenEhrError`] if the YAML is invalid or does not match the expected wire schema.
-pub fn read_ehr_status_yaml(yaml: &str) -> Result<rm_1_1_0::ehr_status::EhrStatus, OpenEhrError> {
-    rm_1_1_0::ehr_status::read_yaml(yaml)
-}
-
-/// Write an RM 1.1.0 `EHR_STATUS` component to YAML.
-///
-/// # Arguments
-///
-/// * `component` - RM 1.1.0 wire struct to serialise.
-///
-/// # Returns
-///
-/// Returns a YAML string.
-///
-/// # Errors
-///
-/// Returns [`OpenEhrError`] if serialisation fails.
-pub fn write_ehr_status_yaml(
-    component: &rm_1_1_0::ehr_status::EhrStatus,
-) -> Result<String, OpenEhrError> {
-    rm_1_1_0::ehr_status::write_yaml(component)
-}
-
-/// Read an RM 1.1.0 narrative component from Markdown with YAML front matter.
-///
-/// # Arguments
-///
-/// * `input` - Markdown document with YAML front matter.
-///
-/// # Returns
-///
-/// Returns a parsed narrative wire struct.
-///
-/// # Errors
-///
-/// Returns [`OpenEhrError`] if the front matter is missing/invalid or parsing fails.
-pub fn read_narrative_markdown(
-    input: &str,
-) -> Result<rm_1_1_0::narrative::NarrativeComponent, OpenEhrError> {
-    rm_1_1_0::narrative::read_markdown(input)
-}
-
-/// Write an RM 1.1.0 narrative component to Markdown with YAML front matter.
-///
-/// # Arguments
-///
-/// * `component` - Narrative wire struct to serialise.
-///
-/// # Returns
-///
-/// Returns Markdown with YAML front matter.
-///
-/// # Errors
-///
-/// Returns [`OpenEhrError`] if serialisation fails.
-pub fn write_narrative_markdown(
-    component: &rm_1_1_0::narrative::NarrativeComponent,
-) -> Result<String, OpenEhrError> {
-    rm_1_1_0::narrative::write_markdown(component)
-}
-
 /// Extract the RM version from a YAML string.
 ///
 /// This function parses the provided YAML string and extracts the `rm_version` field,
-/// which should be the first field in VPR YAML documents.
+/// which should be the first field in openEHR YAML documents.
 ///
 /// # Arguments
 ///
@@ -249,6 +177,45 @@ pub fn extract_rm_version(yaml: &str) -> Result<RmVersion, OpenEhrError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rm_version_as_str_returns_correct_string() {
+        assert_eq!(RmVersion::rm_1_1_0.as_str(), "rm_1_1_0");
+    }
+
+    #[test]
+    fn rm_version_from_str_parses_valid_version() {
+        let version = "rm_1_1_0"
+            .parse::<RmVersion>()
+            .expect("should parse valid version");
+        assert_eq!(version, RmVersion::rm_1_1_0);
+    }
+
+    #[test]
+    fn rm_version_from_str_rejects_invalid_version() {
+        let err = "invalid_version"
+            .parse::<RmVersion>()
+            .expect_err("should reject invalid version");
+        match err {
+            OpenEhrError::UnsupportedRmVersion(version) => {
+                assert_eq!(version, "invalid_version");
+            }
+            other => panic!("expected UnsupportedRmVersion error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn ehr_id_from_uuid_creates_correct_id() {
+        let uuid = Uuid::parse_str("12345678-1234-1234-1234-123456789abc").unwrap();
+        let ehr_id = EhrId::from_uuid(uuid);
+        assert_eq!(ehr_id.as_str(), "12345678-1234-1234-1234-123456789abc");
+    }
+
+    #[test]
+    fn ehr_id_as_str_returns_underlying_string() {
+        let ehr_id = EhrId("test-id".to_string());
+        assert_eq!(ehr_id.as_str(), "test-id");
+    }
 
     #[test]
     fn extract_rm_version_extracts_valid_version() {
