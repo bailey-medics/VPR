@@ -82,38 +82,6 @@ pub enum OpenEhrError {
     UnsupportedRmVersion(String),
 }
 
-/// Write an `EHR_STATUS` YAML file for the specified RM version.
-///
-/// # Arguments
-///
-/// * `version` - RM version identifier (for example `"rm_1_1_0"`).
-/// * `filename` - Path to the target `ehr_status.yaml` file.
-/// * `ehr_id` - EHR identifier for the record.
-/// * `external_reference` - Optional subject external references.
-///
-/// # Returns
-///
-/// Returns `Ok(())` on success.
-///
-/// # Errors
-///
-/// Returns [`OpenEhrError`] if:
-/// - the RM version is not supported,
-/// - reading/writing the target file fails,
-/// - YAML serialisation/deserialisation fails.
-pub fn ehr_status_write(
-    version: RmVersion,
-    filename: &std::path::Path,
-    ehr_id: uuid::Uuid,
-    external_reference: Option<Vec<ExternalReference>>,
-) -> Result<(), OpenEhrError> {
-    match version {
-        RmVersion::rm_1_1_0 => {
-            rm_1_1_0::ehr_status::ehr_status_write(filename, ehr_id, external_reference)
-        }
-    }
-}
-
 /// Render an `EHR_STATUS` YAML string for the specified RM version.
 ///
 /// # Arguments
