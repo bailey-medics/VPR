@@ -13,10 +13,11 @@
 //! - Clinical meaning lives in `vpr-core`; this crate focuses on file formats and standards
 //!   alignment.
 
-use crate::{EhrId, ExternalReference, OpenEhrError};
+use crate::{EhrId, ExternalReference, OpenEhrError, RmVersion};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::constants::{DEFAULT_ARCHETYPE_NODE_ID, DEFAULT_EXTERNAL_REF_TYPE, DEFAULT_NAME};
+use super::CURRENT_RM_VERSION;
 
 /// RM 1.x-aligned wire representation of `EHR_STATUS` for VPR on-disk YAML.
 ///
@@ -28,6 +29,7 @@ use super::constants::{DEFAULT_ARCHETYPE_NODE_ID, DEFAULT_EXTERNAL_REF_TYPE, DEF
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct EhrStatus {
+    pub rm_version: RmVersion,
     pub ehr_id: HierObjectId,
     pub archetype_node_id: String,
     pub name: DvText,
@@ -323,6 +325,7 @@ pub fn ehr_status_init(ehr_id: &EhrId, external_refs: Option<Vec<ExternalReferen
     let external_refs = external_refs.unwrap_or_default();
 
     EhrStatus {
+        rm_version: CURRENT_RM_VERSION,
         ehr_id: HierObjectId {
             value: ehr_id.as_str().to_string(),
         },
@@ -394,7 +397,8 @@ mod tests {
 
     #[test]
     fn round_trips_sample_yaml() {
-        let input = r#"ehr_id:
+        let input = r#"rm_version: rm_1_1_0
+ehr_id:
     value: 1166765a406a4552ac9b8e141931a3dc
 
 archetype_node_id: openEHR-EHR-STATUS.ehr_status.v1
@@ -421,7 +425,8 @@ is_modifiable: true
 
     #[test]
     fn strict_value_rejects_unknown_keys() {
-        let input = r#"ehr_id:
+        let input = r#"rm_version: rm_1_1_0
+ehr_id:
     value: 1166765a406a4552ac9b8e141931a3dc
 
 archetype_node_id: openEHR-EHR-STATUS.ehr_status.v1
@@ -454,7 +459,8 @@ unexpected_top_level_key: true
 
     #[test]
     fn strict_value_rejects_wrong_types() {
-        let wrong_type = r#"ehr_id:
+        let wrong_type = r#"rm_version: rm_1_1_0
+ehr_id:
     value: 1166765a406a4552ac9b8e141931a3dc
 
 archetype_node_id: openEHR-EHR-STATUS.ehr_status.v1
@@ -478,7 +484,8 @@ is_modifiable: true
 
     #[test]
     fn parses_minimal_valid_yaml() {
-        let minimal = r#"ehr_id:
+        let minimal = r#"rm_version: rm_1_1_0
+ehr_id:
     value: 1166765a406a4552ac9b8e141931a3dc
 
 archetype_node_id: openEHR-EHR-STATUS.ehr_status.v1
@@ -497,7 +504,8 @@ is_modifiable: true
 
     #[test]
     fn parses_with_multiple_external_refs() {
-        let multiple_refs = r#"ehr_id:
+        let multiple_refs = r#"rm_version: rm_1_1_0
+ehr_id:
     value: 1166765a406a4552ac9b8e141931a3dc
 
 archetype_node_id: openEHR-EHR-STATUS.ehr_status.v1
@@ -526,7 +534,8 @@ is_modifiable: true
 
     #[test]
     fn rejects_invalid_uuid_in_domain_conversion() {
-        let invalid_uuid = r#"ehr_id:
+        let invalid_uuid = r#"rm_version: rm_1_1_0
+ehr_id:
     value: not-a-uuid
 
 archetype_node_id: openEHR-EHR-STATUS.ehr_status.v1
@@ -551,7 +560,8 @@ is_modifiable: true
 
     #[test]
     fn ehr_status_render_modifies_fields() {
-        let yaml = r#"ehr_id:
+        let yaml = r#"rm_version: rm_1_1_0
+ehr_id:
     value: 1166765a406a4552ac9b8e141931a3dc
 
 archetype_node_id: openEHR-EHR-STATUS.ehr_status.v1
@@ -602,7 +612,8 @@ is_modifiable: true
 
     #[test]
     fn ehr_status_render_handles_empty_external_refs() {
-        let yaml = r#"ehr_id:
+        let yaml = r#"rm_version: rm_1_1_0
+ehr_id:
     value: 1166765a406a4552ac9b8e141931a3dc
 
 archetype_node_id: openEHR-EHR-STATUS.ehr_status.v1

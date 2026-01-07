@@ -13,10 +13,12 @@
 
 use uuid::Uuid;
 
+use serde::{Deserialize, Serialize};
+
 pub mod rm_1_1_0;
 
 /// Supported openEHR RM versions.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[allow(non_camel_case_types)]
 pub enum RmVersion {
     /// openEHR RM 1.1.0.
