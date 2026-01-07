@@ -45,7 +45,7 @@ pub(crate) use ::uuid::Uuid;
 /// - Accepting a UUID string from *outside* the core (CLI input, API request, etc), or
 /// - Deriving a sharded storage path for a patient.
 ///
-/// Once you have a `UuidService`, you can safely assume the internal string is canonical.
+/// Once you have a `UuidService`, you can safely assume the internal UUID is valid.
 ///
 /// # Construction
 /// - [`UuidService::new`] generates a new canonical UUID (for new patient records).
@@ -61,7 +61,7 @@ pub(crate) use ::uuid::Uuid;
 /// // UuidService::parse("550e8400-e29b-41d4-a716-446655440000")?;
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct UuidService(String);
+pub(crate) struct UuidService(Uuid);
 
 impl UuidService {
     /// Generates a new UUID in VPR's canonical form.
@@ -72,7 +72,7 @@ impl UuidService {
     ///
     /// Returns a newly generated canonical UUID.
     pub(crate) fn new() -> Self {
-        Self(Uuid::new_v4().simple().to_string())
+        Self(Uuid::new_v4())
     }
 
     /// Validates and parses a UUID string that must already be in VPR's canonical form.
@@ -93,7 +93,9 @@ impl UuidService {
     /// Returns [`PatientError::InvalidInput`] if `input` is not in canonical form.
     pub(crate) fn parse(input: &str) -> PatientResult<Self> {
         if Self::is_canonical(input) {
-            return Ok(Self(input.to_string()));
+            // SAFETY: is_canonical guarantees valid hex, so parse_str will succeed
+            let uuid = Uuid::parse_str(input).expect("is_canonical guarantees valid UUID");
+            return Ok(Self(uuid));
         }
         Err(PatientError::InvalidInput(format!(
             "UUID must be 32 lowercase hex characters without hyphens, got: '{}'",
@@ -101,23 +103,13 @@ impl UuidService {
         )))
     }
 
-    /// Returns the canonical UUID string, consuming `self`.
-    ///
-    /// Prefer [`std::fmt::Display`] when you only need a borrowed view.
+    /// Returns the UUID as a `uuid::Uuid`.
     ///
     /// # Returns
     ///
-    /// Returns the inner canonical UUID string.
-    pub(crate) fn into_string(self) -> String {
-        self.0
-    }
-
-    /// Returns the UUID as a `uuid::Uuid`.
-    ///
-    /// `UuidService` guarantees that the stored string is in canonical UUID form, so this
-    /// conversion should be infallible.
+    /// Returns a copy of the inner UUID.
     pub(crate) fn uuid(&self) -> Uuid {
-        Uuid::parse_str(&self.0).expect("UuidService invariant violated: stored UUID is invalid")
+        self.0
     }
 
     /// Returns true if `input` is in VPR's canonical UUID form.
@@ -152,15 +144,17 @@ impl UuidService {
     ///
     /// Returns the fully qualified sharded directory path for this UUID.
     pub(crate) fn sharded_dir(&self, parent_dir: &Path) -> PathBuf {
-        let s1 = &self.0[0..2];
-        let s2 = &self.0[2..4];
-        parent_dir.join(s1).join(s2).join(&self.0)
+        let canonical = self.0.simple().to_string();
+        let s1 = &canonical[0..2];
+        let s2 = &canonical[2..4];
+        parent_dir.join(s1).join(s2).join(&canonical)
     }
 }
 
 impl fmt::Display for UuidService {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
+        // Display in canonical (simple) form
+        write!(f, "{}", self.0.simple())
     }
 }
 
