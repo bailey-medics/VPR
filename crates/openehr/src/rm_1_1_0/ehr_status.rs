@@ -14,8 +14,7 @@
 //!   alignment.
 
 use crate::{EhrId, ExternalReference, OpenEhrError};
-use serde::{Deserialize, Serialize};
-use serde::{Deserializer, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 const DEFAULT_ARCHETYPE_NODE_ID: &str = "openEHR-EHR-STATUS.ehr_status.v1";
 const DEFAULT_NAME: &str = "EHR Status";
