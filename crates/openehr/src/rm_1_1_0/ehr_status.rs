@@ -1,16 +1,16 @@
 //! RM 1.1.0 `EHR_STATUS` wire model and translation helpers.
 //!
-//! This module defines the on-disk YAML representation VPR uses for an openEHR `EHR_STATUS`
+//! This module defines the on-disk YAML representation used for an openEHR `EHR_STATUS`
 //! component, aligned to the openEHR RM 1.x structure.
 //!
 //! Responsibilities:
 //! - Define a strict wire model (`EhrStatus`) for serialisation/deserialisation.
 //! - Preserve legacy YAML shapes where `subject.external_ref` may be absent, a single object,
 //!   or a list.
-//! - Provide translation helpers between VPR domain primitives and the wire model.
+//! - Provide translation helpers between domain primitives and the wire model.
 //!
 //! Notes:
-//! - Clinical meaning lives in `vpr-core`; this crate focuses on file formats and standards
+//! - Clinical meaning lives in domain logic; this crate focuses on file formats and standards
 //!   alignment.
 
 use crate::{EhrId, ExternalReference, OpenEhrError, RmVersion};
@@ -19,12 +19,12 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use super::constants::{DEFAULT_ARCHETYPE_NODE_ID, DEFAULT_EXTERNAL_REF_TYPE, DEFAULT_NAME};
 use super::CURRENT_RM_VERSION;
 
-/// RM 1.x-aligned wire representation of `EHR_STATUS` for VPR on-disk YAML.
+/// RM 1.x-aligned wire representation of `EHR_STATUS` for on-disk YAML.
 ///
 /// Notes:
 /// - This is a wire model: it intentionally includes openEHR RM fields and types.
 /// - Optional RM fields are represented as `Option<T>`.
-/// - VPR persists an `ehr_id` wrapper at the top-level of this YAML, matching VPR's on-disk
+/// - An `ehr_id` wrapper is persisted at the top-level of this YAML, matching the on-disk
 ///   component layout.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -52,16 +52,20 @@ impl EhrStatus {
     ///
     /// Returns [`OpenEhrError`] if serialisation fails.
     pub fn to_string(&self) -> Result<String, OpenEhrError> {
-        write_yaml(self)
+        serde_yaml::to_string(self).map_err(|e| {
+            OpenEhrError::Translation(format!("Failed to serialize EHR_STATUS: {}", e))
+        })
     }
 }
 
+/// RM `HIER_OBJECT_ID` (simplified to a `value` string wrapper).
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct HierObjectId {
     pub value: String,
 }
 
+/// RM `DV_TEXT` (simplified to a `value` string wrapper).
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct DvText {
@@ -77,6 +81,9 @@ pub struct PartySelf {
 }
 
 impl PartySelf {
+    /// Returns true if this PartySelf has no external references.
+    ///
+    /// Used by serde's `skip_serializing_if` to omit empty `subject` fields in YAML.
     fn is_empty(&self) -> bool {
         self.external_ref.is_empty()
     }
@@ -84,16 +91,22 @@ impl PartySelf {
 
 /// `subject.external_ref` may be absent, a single object, or a list.
 ///
-/// VPR supports both forms to preserve compatibility with existing on-disk YAML.
+/// This supports both forms to preserve compatibility with existing on-disk YAML.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ExternalRefs(pub Vec<PartyRef>);
 
 impl ExternalRefs {
+    /// Returns true if this ExternalRefs contains no PartyRef entries.
+    ///
+    /// Used by serde's `skip_serializing_if` to omit empty `external_ref` fields in YAML.
     fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 }
 
+/// Internal enum for deserializing `subject.external_ref` as either a single `PartyRef` or a list.
+///
+/// This supports flexible YAML input where `external_ref` can be absent, a single object, or an array.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(untagged)]
 enum OneOrManyPartyRef {
@@ -101,6 +114,9 @@ enum OneOrManyPartyRef {
     Many(Vec<PartyRef>),
 }
 
+/// Custom deserializer for `ExternalRefs` to handle flexible YAML input.
+///
+/// Supports `external_ref` being absent (None), a single `PartyRef` object, or a list of `PartyRef`s.
 impl<'de> Deserialize<'de> for ExternalRefs {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -116,6 +132,9 @@ impl<'de> Deserialize<'de> for ExternalRefs {
     }
 }
 
+/// Custom serializer for `ExternalRefs` to handle flexible YAML output.
+///
+/// Serializes as `null` if empty, a single `PartyRef` object if one entry, or a list if multiple.
 impl Serialize for ExternalRefs {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -139,14 +158,14 @@ pub struct PartyRef {
     pub type_: String,
 }
 
-/// RM `OBJECT_ID` (simplified to a `value` string wrapper).
+/// RM `HIER_OBJECT_ID` (simplified to a `value` string wrapper).per).
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ObjectId {
     pub value: String,
 }
 
-/// RM `ITEM_STRUCTURE` (highly constrained to the needs of VPR YAML).
+/// RM `ITEM_STRUCTURE` (highly constrained to the needs of YAML representation).
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ItemStructure {
@@ -154,86 +173,12 @@ pub struct ItemStructure {
     pub items: Vec<Element>,
 }
 
-/// RM `ELEMENT` (constrained to `DV_TEXT` name/value for VPR YAML).
+/// RM `ELEMENT` (constrained to `DV_TEXT` name/value for YAML representation).
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Element {
     pub name: DvText,
     pub value: DvText,
-}
-
-/// Read an RM 1.1.0 `EHR_STATUS` wire component from YAML.
-///
-/// # Arguments
-///
-/// * `yaml` - YAML document containing an `EHR_STATUS` component.
-///
-/// # Returns
-///
-/// Returns a parsed [`EhrStatus`] wire struct.
-///
-/// # Errors
-///
-/// Returns [`OpenEhrError`] if:
-/// - the YAML is invalid or does not match the expected wire schema.
-pub fn read_yaml(yaml: &str) -> Result<EhrStatus, OpenEhrError> {
-    ehr_status_parse_full(yaml)
-}
-
-/// Write an RM 1.1.0 `EHR_STATUS` wire component to YAML.
-///
-/// # Arguments
-///
-/// * `component` - The wire struct to serialise.
-///
-/// # Returns
-///
-/// Returns a YAML string.
-///
-/// # Errors
-///
-/// Returns [`OpenEhrError`] if serialisation fails.
-pub fn write_yaml(component: &EhrStatus) -> Result<String, OpenEhrError> {
-    Ok(serde_yaml::to_string(component)?)
-}
-
-/// Strictly parse an RM 1.1.0 `EHR_STATUS` from YAML text.
-///
-/// This uses `serde_path_to_error` to surface a best-effort "path" (e.g. `subject.external_ref`)
-/// to the failing field when the YAML does not match the `EhrStatus` wire schema.
-///
-/// # Arguments
-///
-/// * `yaml_text` - YAML text expected to represent an `EHR_STATUS` mapping.
-///
-/// # Returns
-///
-/// Returns a valid [`EhrStatus`] on success.
-///
-/// # Errors
-///
-/// Returns [`OpenEhrError`] if:
-/// - the YAML does not represent an `EHR_STATUS` mapping,
-/// - any field has an unexpected type,
-/// - any unknown keys are present (due to `#[serde(deny_unknown_fields)]`).
-fn ehr_status_parse_full(yaml_text: &str) -> Result<EhrStatus, OpenEhrError> {
-    let deserializer = serde_yaml::Deserializer::from_str(yaml_text);
-
-    match serde_path_to_error::deserialize(deserializer) {
-        Ok(parsed) => Ok(parsed),
-        Err(err) => {
-            let path = err.path().to_string();
-            let source = err.into_inner();
-            let path = if path.is_empty() {
-                "<root>"
-            } else {
-                path.as_str()
-            };
-            Err(OpenEhrError::Translation(format!(
-                "EHR_STATUS schema mismatch at {path}: {source}"
-            )))
-        }
-    }
 }
 
 /// Parse an RM 1.1.0 `EHR_STATUS` from YAML text and validate against expected domain values.
@@ -305,6 +250,45 @@ pub(crate) fn ehr_status_render(
     }
 }
 
+/// Strictly parse an RM 1.1.0 `EHR_STATUS` from YAML text.
+///
+/// This uses `serde_path_to_error` to surface a best-effort "path" (e.g. `subject.external_ref`)
+/// to the failing field when the YAML does not match the `EhrStatus` wire schema.
+///
+/// # Arguments
+///
+/// * `yaml_text` - YAML text expected to represent an `EHR_STATUS` mapping.
+///
+/// # Returns
+///
+/// Returns a valid [`EhrStatus`] on success.
+///
+/// # Errors
+///
+/// Returns [`OpenEhrError`] if:
+/// - the YAML does not represent an `EHR_STATUS` mapping,
+/// - any field has an unexpected type,
+/// - any unknown keys are present (due to `#[serde(deny_unknown_fields)]`).
+fn ehr_status_parse_full(yaml_text: &str) -> Result<EhrStatus, OpenEhrError> {
+    let deserializer = serde_yaml::Deserializer::from_str(yaml_text);
+
+    match serde_path_to_error::deserialize(deserializer) {
+        Ok(parsed) => Ok(parsed),
+        Err(err) => {
+            let path = err.path().to_string();
+            let source = err.into_inner();
+            let path = if path.is_empty() {
+                "<root>"
+            } else {
+                path.as_str()
+            };
+            Err(OpenEhrError::Translation(format!(
+                "EHR_STATUS schema mismatch at {path}: {source}"
+            )))
+        }
+    }
+}
+
 /// Create a new RM 1.1.0 `EHR_STATUS` wire struct from domain primitives.
 ///
 /// This creates a new EhrStatus with default values for all fields except ehr_id and external_refs.
@@ -321,7 +305,7 @@ pub(crate) fn ehr_status_render(
 /// # Errors
 ///
 /// This function does not return errors.
-pub fn ehr_status_init(ehr_id: &EhrId, external_refs: Option<Vec<ExternalReference>>) -> EhrStatus {
+fn ehr_status_init(ehr_id: &EhrId, external_refs: Option<Vec<ExternalReference>>) -> EhrStatus {
     let external_refs = external_refs.unwrap_or_default();
 
     EhrStatus {
@@ -353,44 +337,6 @@ pub fn ehr_status_init(ehr_id: &EhrId, external_refs: Option<Vec<ExternalReferen
     }
 }
 
-/// Translate an RM 1.x `EHR_STATUS` wire struct into VPR domain primitives.
-///
-/// # Arguments
-///
-/// * `wire` - Parsed RM wire struct.
-///
-/// # Returns
-///
-/// Returns the `(ehr_id, subject_external_refs)` domain primitives.
-///
-/// # Errors
-///
-/// Returns [`OpenEhrError`] if:
-/// - `ehr_id` is not a valid UUID,
-/// - any `subject.external_ref.*.id.value` is not a valid UUID.
-pub fn ehr_status_to_domain_parts(
-    wire: &EhrStatus,
-) -> Result<(uuid::Uuid, Vec<ExternalReference>), OpenEhrError> {
-    let ehr_id = uuid::Uuid::parse_str(&wire.ehr_id.value)
-        .map_err(|_| OpenEhrError::Translation("ehr_id must be a valid UUID".to_string()))?;
-
-    let mut subject_external_refs = Vec::new();
-    for external_ref in &wire.subject.external_ref.0 {
-        let id = uuid::Uuid::parse_str(&external_ref.id.value).map_err(|_| {
-            OpenEhrError::Translation(
-                "subject.external_ref.id.value must be a valid UUID".to_string(),
-            )
-        })?;
-
-        subject_external_refs.push(ExternalReference {
-            namespace: external_ref.namespace.clone(),
-            id,
-        });
-    }
-
-    Ok((ehr_id, subject_external_refs))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -410,16 +356,16 @@ subject:
     external_ref:
         id:
             value: 2db695ed7cc04fc99b08e0c738069b71
-        namespace: vpr://vpr.dev.1/mpi
+        namespace: ehr://example.com/mpi
         type: PERSON
 
 is_queryable: true
 is_modifiable: true
 "#;
 
-        let component = read_yaml(input).expect("parse yaml");
-        let output = write_yaml(&component).expect("write yaml");
-        let reparsed = read_yaml(&output).expect("reparse yaml");
+        let component = ehr_status_parse_full(input).expect("parse yaml");
+        let output = serde_yaml::to_string(&component).expect("write yaml");
+        let reparsed = ehr_status_parse_full(&output).expect("reparse yaml");
         assert_eq!(component, reparsed);
     }
 
@@ -438,7 +384,7 @@ subject:
     external_ref:
         id:
             value: 2db695ed7cc04fc99b08e0c738069b71
-        namespace: vpr://vpr.dev.1/mpi
+        namespace: ehr://example.com/mpi
         type: PERSON
 
 is_queryable: true
@@ -517,7 +463,7 @@ subject:
     external_ref:
         - id:
             value: 2db695ed7cc04fc99b08e0c738069b71
-          namespace: vpr://vpr.dev.1/mpi
+          namespace: ehr://example.com/mpi
           type: PERSON
         - id:
             value: 3fc695ed7cc04fc99b08e0c738069b72
@@ -548,7 +494,8 @@ is_modifiable: true
 "#;
 
         let wire = ehr_status_parse_full(invalid_uuid).expect("should parse YAML structure");
-        let err = ehr_status_to_domain_parts(&wire)
+        let err = uuid::Uuid::parse_str(&wire.ehr_id.value)
+            .map_err(|_| OpenEhrError::Translation("ehr_id must be a valid UUID".to_string()))
             .expect_err("should reject invalid UUID in domain conversion");
         match err {
             OpenEhrError::Translation(msg) => {
@@ -573,7 +520,7 @@ subject:
     external_ref:
         id:
             value: 2db695ed7cc04fc99b08e0c738069b71
-        namespace: vpr://existing-namespace
+        namespace: ehr://existing-namespace
         type: PERSON
 
 is_queryable: true
@@ -582,7 +529,7 @@ is_modifiable: true
 
         let new_ehr_id = EhrId("2166765a406a4552ac9b8e141931a3dc".to_string());
         let new_external_ref = ExternalReference {
-            namespace: "vpr://new-namespace".to_string(),
+            namespace: "ehr://new-namespace".to_string(),
             id: uuid::Uuid::parse_str("3db695ed7cc04fc99b08e0c738069b71").unwrap(),
         };
 
@@ -593,7 +540,7 @@ is_modifiable: true
         )
         .expect("ehr_status_render should work");
 
-        let result = read_yaml(&result_yaml).expect("should parse returned YAML");
+        let result = ehr_status_parse_full(&result_yaml).expect("should parse returned YAML");
 
         // Check that the ehr_id was modified
         assert_eq!(result.ehr_id.value, "2166765a406a4552ac9b8e141931a3dc");
@@ -602,11 +549,11 @@ is_modifiable: true
         assert_eq!(result.subject.external_ref.0.len(), 2); // Should have 2 refs now
         assert_eq!(
             result.subject.external_ref.0[0].namespace,
-            "vpr://existing-namespace"
+            "ehr://existing-namespace"
         ); // Original preserved
         assert_eq!(
             result.subject.external_ref.0[1].namespace,
-            "vpr://new-namespace"
+            "ehr://new-namespace"
         ); // New one added
     }
 
@@ -625,7 +572,7 @@ subject:
     external_ref:
         id:
             value: 2db695ed7cc04fc99b08e0c738069b71
-        namespace: vpr://old-namespace
+        namespace: ehr://old-namespace
         type: PERSON
 
 is_queryable: true
@@ -637,7 +584,7 @@ is_modifiable: true
         let result_yaml = ehr_status_render(Some(yaml), Some(&new_ehr_id), None)
             .expect("ehr_status_render should work with None external_refs");
 
-        let result = read_yaml(&result_yaml).expect("should parse returned YAML");
+        let result = ehr_status_parse_full(&result_yaml).expect("should parse returned YAML");
 
         // Check that the ehr_id was modified
         assert_eq!(result.ehr_id.value, "3166765a406a4552ac9b8e141931a3dc");
@@ -646,7 +593,7 @@ is_modifiable: true
         assert_eq!(result.subject.external_ref.0.len(), 1);
         assert_eq!(
             result.subject.external_ref.0[0].namespace,
-            "vpr://old-namespace"
+            "ehr://old-namespace"
         );
     }
 
@@ -654,7 +601,7 @@ is_modifiable: true
     fn ehr_status_init_builds_new_struct() {
         let ehr_id = EhrId("1166765a406a4552ac9b8e141931a3dc".to_string());
         let external_ref = ExternalReference {
-            namespace: "vpr://test-namespace".to_string(),
+            namespace: "ehr://test-namespace".to_string(),
             id: uuid::Uuid::parse_str("2db695ed7cc04fc99b08e0c738069b71").unwrap(),
         };
 
@@ -674,7 +621,7 @@ is_modifiable: true
         assert_eq!(result.subject.external_ref.0.len(), 1);
         assert_eq!(
             result.subject.external_ref.0[0].namespace,
-            "vpr://test-namespace"
+            "ehr://test-namespace"
         );
         assert_eq!(
             result.subject.external_ref.0[0].id.value,
@@ -687,7 +634,7 @@ is_modifiable: true
     fn ehr_status_to_string_works() {
         let ehr_id = EhrId("1166765a406a4552ac9b8e141931a3dc".to_string());
         let external_ref = ExternalReference {
-            namespace: "vpr://test-namespace".to_string(),
+            namespace: "ehr://test-namespace".to_string(),
             id: uuid::Uuid::parse_str("2db695ed7cc04fc99b08e0c738069b71").unwrap(),
         };
 
@@ -703,12 +650,13 @@ is_modifiable: true
         assert!(yaml_string.contains("value: EHR Status"));
         assert!(yaml_string.contains("subject:"));
         assert!(yaml_string.contains("external_ref:"));
-        assert!(yaml_string.contains("namespace: vpr://test-namespace"));
+        assert!(yaml_string.contains("namespace: ehr://test-namespace"));
         assert!(yaml_string.contains("is_queryable: true"));
         assert!(yaml_string.contains("is_modifiable: true"));
 
         // Verify it can be parsed back
-        let reparsed = read_yaml(&yaml_string).expect("should parse the generated YAML");
+        let reparsed =
+            ehr_status_parse_full(&yaml_string).expect("should parse the generated YAML");
         assert_eq!(reparsed, ehr_status);
     }
 
@@ -729,19 +677,43 @@ is_modifiable: true
     #[test]
     fn ehr_status_render_rejects_none_previous_data_without_ehr_id() {
         let external_ref = ExternalReference {
-            namespace: "vpr://test-namespace".to_string(),
+            namespace: "ehr://test-namespace".to_string(),
             id: uuid::Uuid::parse_str("4db695ed7cc04fc99b08e0c738069b71").unwrap(),
         };
 
         let err = ehr_status_render(None, None, Some(vec![external_ref])).expect_err(
             "ehr_status_render should reject when previous_data is None but ehr_id is None",
         );
+    }
 
-        match err {
-            OpenEhrError::Translation(msg) => {
-                assert!(msg.contains("both previous_data and ehr_id are None"));
-            }
-            other => panic!("expected Translation error, got {other:?}"),
-        }
+    #[test]
+    fn ehr_status_render_creates_new_from_scratch() {
+        let ehr_id = EhrId("1166765a406a4552ac9b8e141931a3dc".to_string());
+        let external_ref = ExternalReference {
+            namespace: "ehr://test-namespace".to_string(),
+            id: uuid::Uuid::parse_str("2db695ed7cc04fc99b08e0c738069b71").unwrap(),
+        };
+
+        let result_yaml = ehr_status_render(None, Some(&ehr_id), Some(vec![external_ref.clone()]))
+            .expect("ehr_status_render should create new EHR_STATUS");
+
+        let result = ehr_status_parse_full(&result_yaml).expect("should parse the result");
+
+        assert_eq!(result.ehr_id.value, "1166765a406a4552ac9b8e141931a3dc");
+        assert_eq!(result.archetype_node_id, DEFAULT_ARCHETYPE_NODE_ID);
+        assert_eq!(result.name.value, DEFAULT_NAME);
+        assert!(result.is_queryable);
+        assert!(result.is_modifiable);
+        assert!(result.other_details.is_none());
+        assert_eq!(result.subject.external_ref.0.len(), 1);
+        assert_eq!(
+            result.subject.external_ref.0[0].namespace,
+            "ehr://test-namespace"
+        );
+        assert_eq!(
+            result.subject.external_ref.0[0].id.value,
+            "2db695ed7cc04fc99b08e0c738069b71"
+        );
+        assert_eq!(result.subject.external_ref.0[0].type_, "PERSON");
     }
 }
