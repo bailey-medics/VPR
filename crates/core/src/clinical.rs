@@ -1059,13 +1059,13 @@ mod tests {
     }
 
     #[test]
-    fn test_initialise_cleans_up_if_ehr_status_write_fails() {
+    fn test_initialise_cleans_up_if_ehr_status_file_write_fails() {
         let patient_data_dir = TempDir::new().expect("Failed to create temp dir");
         let ehr_template_dir = TempDir::new().expect("Failed to create template temp dir");
         fs::create_dir_all(ehr_template_dir.path().join(".ehr"))
             .expect("Failed to create .ehr directory");
 
-        // Force `ehr_status_write` to fail by ensuring the target path already exists as a dir.
+        // Force EHR status file write to fail by ensuring the target path already exists as a dir.
         fs::create_dir_all(ehr_template_dir.path().join(EHR_STATUS_FILENAME))
             .expect("Failed to create ehr_status.yaml directory");
 
@@ -1093,13 +1093,13 @@ mod tests {
 
         let _err = service
             .initialise(author, "Test Hospital".to_string())
-            .expect_err("initialise should fail when ehr_status_write fails");
+            .expect_err("initialise should fail when EHR status file write fails");
 
         let clinical_dir = patient_data_dir.path().join(CLINICAL_DIR_NAME);
         assert_eq!(
             count_allocated_patient_dirs(&clinical_dir),
             0,
-            "initialise should clean up the patient directory when ehr_status_write fails"
+            "initialise should clean up the patient directory when EHR status file write fails"
         );
     }
 

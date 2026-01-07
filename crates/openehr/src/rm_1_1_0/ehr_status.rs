@@ -12,16 +12,11 @@
 //! Notes:
 //! - Clinical meaning lives in `vpr-core`; this crate focuses on file formats and standards
 //!   alignment.
-//! - `ehr_status_write` performs a shallow YAML merge when the target file already exists:
-//!   top-level mapping keys written by VPR are inserted/overwritten, while unrelated keys are
-//!   preserved.
 
 use crate::ExternalReference;
 use crate::OpenEhrError;
 use serde::{Deserialize, Serialize};
 use serde::{Deserializer, Serializer};
-use std::fs;
-use std::path::Path;
 
 const DEFAULT_ARCHETYPE_NODE_ID: &str = "openEHR-EHR-STATUS.ehr_status.v1";
 const DEFAULT_NAME: &str = "EHR Status";
@@ -360,88 +355,6 @@ pub fn ehr_status_init(
         is_modifiable: true,
         other_details: None,
     }
-}
-
-fn merge_yaml_values(current: serde_yaml::Value, new_data: serde_yaml::Value) -> serde_yaml::Value {
-    match (current, new_data) {
-        (serde_yaml::Value::Null, new) => new,
-        (serde_yaml::Value::Mapping(mut current_map), serde_yaml::Value::Mapping(new_map)) => {
-            for (key, value) in new_map {
-                current_map.insert(key, value);
-            }
-            serde_yaml::Value::Mapping(current_map)
-        }
-        (_, new) => new,
-    }
-}
-
-/// Write an RM 1.x `EHR_STATUS` YAML file from VPR domain primitives.
-///
-/// Applies RM-required defaults in the wire layer and writes to disk.
-/// If the file already exists, a shallow YAML merge is performed to preserve unrelated keys.
-///
-/// # Arguments
-///
-/// * `path` - Path to the target `ehr_status.yaml` file.
-/// * `ehr_id` - EHR identifier for the record (written in canonical UUID form).
-/// * `external_reference` - Optional subject external references.
-///
-/// # Returns
-///
-/// Returns `Ok(())` on success.
-///
-/// # Errors
-///
-/// Returns [`OpenEhrError`] if:
-/// - reading the existing YAML fails,
-/// - serialisation/deserialisation fails,
-/// - writing the updated YAML fails.
-pub(crate) fn ehr_status_write(
-    path: &Path,
-    ehr_id: uuid::Uuid,
-    external_reference: Option<Vec<ExternalReference>>,
-) -> Result<(), OpenEhrError> {
-    let external_reference = external_reference.unwrap_or_default();
-
-    let wire = EhrStatus {
-        ehr_id: HierObjectId {
-            value: ehr_id.simple().to_string(),
-        },
-        archetype_node_id: DEFAULT_ARCHETYPE_NODE_ID.to_string(),
-        name: DvText {
-            value: DEFAULT_NAME.to_string(),
-        },
-        subject: PartySelf {
-            external_ref: ExternalRefs(
-                external_reference
-                    .into_iter()
-                    .map(|subject_ref| PartyRef {
-                        id: ObjectId {
-                            value: subject_ref.id.simple().to_string(),
-                        },
-                        namespace: subject_ref.namespace,
-                        type_: DEFAULT_EXTERNAL_REF_TYPE.to_string(),
-                    })
-                    .collect(),
-            ),
-        },
-        is_queryable: true,
-        is_modifiable: true,
-        other_details: None,
-    };
-
-    let new_value = serde_yaml::to_value(&wire)?;
-    let current = if path.exists() {
-        let yaml_str = fs::read_to_string(path)?;
-        serde_yaml::from_str(&yaml_str)?
-    } else {
-        serde_yaml::Value::Null
-    };
-
-    let merged_value = merge_yaml_values(current, new_value);
-    let yaml = serde_yaml::to_string(&merged_value)?;
-    fs::write(path, yaml)?;
-    Ok(())
 }
 
 /// Translate an RM 1.x `EHR_STATUS` wire struct into VPR domain primitives.
