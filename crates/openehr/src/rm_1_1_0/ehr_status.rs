@@ -13,8 +13,7 @@
 //! - Clinical meaning lives in `vpr-core`; this crate focuses on file formats and standards
 //!   alignment.
 
-use crate::ExternalReference;
-use crate::OpenEhrError;
+use crate::{EhrId, ExternalReference, OpenEhrError};
 use serde::{Deserialize, Serialize};
 use serde::{Deserializer, Serializer};
 
@@ -264,26 +263,24 @@ fn ehr_status_parse_full(yaml_text: &str) -> Result<EhrStatus, OpenEhrError> {
 /// - both `previous_data` and `ehr_id_str` are None (cannot create EHR_STATUS without data or ID).
 pub(crate) fn ehr_status_render(
     previous_data: Option<&str>,
-    ehr_id_str: Option<&str>,
+    ehr_id: Option<&EhrId>,
     external_refs: Option<Vec<ExternalReference>>,
 ) -> Result<String, OpenEhrError> {
     let previous_yaml = previous_data.map(ehr_status_parse_full).transpose()?;
 
-    let ehr_id = ehr_id_str.map(|id| HierObjectId {
-        value: id.to_string(),
-    });
-
     if previous_yaml.is_none() && ehr_id.is_none() {
         return Err(OpenEhrError::Translation(
-            "Cannot create EHR_STATUS: both previous_data and ehr_id_str are None".to_string(),
+            "Cannot create EHR_STATUS: both previous_data and ehr_id are None".to_string(),
         ));
     }
 
     match previous_yaml {
         Some(mut yaml) => {
             // Only update ehr_id if provided
-            if let Some(ref new_ehr_id) = ehr_id {
-                yaml.ehr_id = new_ehr_id.clone();
+            if let Some(new_ehr_id) = ehr_id {
+                yaml.ehr_id = HierObjectId {
+                    value: new_ehr_id.as_str().to_string(),
+                };
             }
 
             // Add to existing external refs instead of replacing
@@ -325,14 +322,13 @@ pub(crate) fn ehr_status_render(
 /// # Errors
 ///
 /// This function does not return errors.
-pub fn ehr_status_init(
-    ehr_id: HierObjectId,
-    external_refs: Option<Vec<ExternalReference>>,
-) -> EhrStatus {
+pub fn ehr_status_init(ehr_id: &EhrId, external_refs: Option<Vec<ExternalReference>>) -> EhrStatus {
     let external_refs = external_refs.unwrap_or_default();
 
     EhrStatus {
-        ehr_id,
+        ehr_id: HierObjectId {
+            value: ehr_id.as_str().to_string(),
+        },
         archetype_node_id: DEFAULT_ARCHETYPE_NODE_ID.to_string(),
         name: DvText {
             value: DEFAULT_NAME.to_string(),
@@ -577,9 +573,7 @@ is_queryable: true
 is_modifiable: true
 "#;
 
-        let new_ehr_id = HierObjectId {
-            value: "2166765a406a4552ac9b8e141931a3dc".to_string(),
-        };
+        let new_ehr_id = EhrId("2166765a406a4552ac9b8e141931a3dc".to_string());
         let new_external_ref = ExternalReference {
             namespace: "vpr://new-namespace".to_string(),
             id: uuid::Uuid::parse_str("3db695ed7cc04fc99b08e0c738069b71").unwrap(),
@@ -587,7 +581,7 @@ is_modifiable: true
 
         let result_yaml = ehr_status_render(
             Some(yaml),
-            Some(new_ehr_id.value.as_str()),
+            Some(&new_ehr_id),
             Some(vec![new_external_ref.clone()]),
         )
         .expect("ehr_status_render should work");
@@ -630,11 +624,9 @@ is_queryable: true
 is_modifiable: true
 "#;
 
-        let new_ehr_id = HierObjectId {
-            value: "3166765a406a4552ac9b8e141931a3dc".to_string(),
-        };
+        let new_ehr_id = EhrId("3166765a406a4552ac9b8e141931a3dc".to_string());
 
-        let result_yaml = ehr_status_render(Some(yaml), Some(new_ehr_id.value.as_str()), None)
+        let result_yaml = ehr_status_render(Some(yaml), Some(&new_ehr_id), None)
             .expect("ehr_status_render should work with None external_refs");
 
         let result = read_yaml(&result_yaml).expect("should parse returned YAML");
@@ -652,15 +644,13 @@ is_modifiable: true
 
     #[test]
     fn ehr_status_init_builds_new_struct() {
-        let ehr_id = HierObjectId {
-            value: "1166765a406a4552ac9b8e141931a3dc".to_string(),
-        };
+        let ehr_id = EhrId("1166765a406a4552ac9b8e141931a3dc".to_string());
         let external_ref = ExternalReference {
             namespace: "vpr://test-namespace".to_string(),
             id: uuid::Uuid::parse_str("2db695ed7cc04fc99b08e0c738069b71").unwrap(),
         };
 
-        let result = ehr_status_init(ehr_id.clone(), Some(vec![external_ref.clone()]));
+        let result = ehr_status_init(&ehr_id, Some(vec![external_ref.clone()]));
 
         // Check that the ehr_id was set
         assert_eq!(result.ehr_id.value, "1166765a406a4552ac9b8e141931a3dc");
@@ -687,15 +677,13 @@ is_modifiable: true
 
     #[test]
     fn ehr_status_to_string_works() {
-        let ehr_id = HierObjectId {
-            value: "1166765a406a4552ac9b8e141931a3dc".to_string(),
-        };
+        let ehr_id = EhrId("1166765a406a4552ac9b8e141931a3dc".to_string());
         let external_ref = ExternalReference {
             namespace: "vpr://test-namespace".to_string(),
             id: uuid::Uuid::parse_str("2db695ed7cc04fc99b08e0c738069b71").unwrap(),
         };
 
-        let ehr_status = ehr_status_init(ehr_id, Some(vec![external_ref]));
+        let ehr_status = ehr_status_init(&ehr_id, Some(vec![external_ref]));
 
         let yaml_string = ehr_status.to_string().expect("to_string should work");
 

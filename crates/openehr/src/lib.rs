@@ -11,6 +11,8 @@
 //! - translation between VPR domain primitives and wire structs,
 //! - version dispatch via small facade functions where needed.
 
+use uuid::Uuid;
+
 pub mod rm_1_1_0;
 
 /// Supported openEHR RM versions.
@@ -38,6 +40,18 @@ impl std::str::FromStr for RmVersion {
             "rm_1_1_0" => Ok(RmVersion::rm_1_1_0),
             _ => Err(OpenEhrError::UnsupportedRmVersion(s.to_string())),
         }
+    }
+}
+
+pub struct EhrId(String);
+
+impl EhrId {
+    pub fn from_uuid(uuid: Uuid) -> Self {
+        Self(uuid.to_string())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 
@@ -104,12 +118,12 @@ pub enum OpenEhrError {
 pub fn ehr_status_render(
     version: RmVersion,
     previous_data: Option<&str>,
-    ehr_id_str: Option<&str>,
+    ehr_id: Option<&EhrId>,
     external_refs: Option<Vec<ExternalReference>>,
 ) -> Result<String, OpenEhrError> {
     match version {
         RmVersion::rm_1_1_0 => {
-            rm_1_1_0::ehr_status::ehr_status_render(previous_data, ehr_id_str, external_refs)
+            rm_1_1_0::ehr_status::ehr_status_render(previous_data, ehr_id, external_refs)
         }
     }
 }
