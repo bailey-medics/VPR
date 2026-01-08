@@ -13,7 +13,7 @@ pub const DEFAULT_PATIENT_DATA_DIR: &str = "patient_data";
 pub const EHR_STATUS_FILENAME: &str = "ehr_status.yaml";
 
 /// Directory name for EHR templates.
-pub const EHR_TEMPLATE_DIR: &str = "ehr-template";
+pub const EHR_TEMPLATE_DIR: &str = "crates/core/templates/clinical";
 
 /// Directory name for demographics records storage.
 pub const DEMOGRAPHICS_DIR_NAME: &str = "demographics";

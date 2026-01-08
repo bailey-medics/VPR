@@ -5,7 +5,7 @@
 //! during request handling, which can lead to inconsistent behaviour in multi-threaded runtimes
 //! and test harnesses.
 
-use crate::constants::{CLINICAL_DIR_NAME, DEMOGRAPHICS_DIR_NAME, EHR_TEMPLATE_DIR};
+use crate::constants::{CLINICAL_DIR_NAME, DEMOGRAPHICS_DIR_NAME, EHR_TEMPLATE_DIR, LATEST_RM};
 use crate::{PatientError, PatientResult};
 use std::path::{Path, PathBuf};
 
@@ -189,5 +189,5 @@ pub fn rm_system_version_from_env_value(
         .filter(|v| !v.is_empty());
     let parsed = value.map(|v| v.parse::<openehr::RmVersion>()).transpose()?;
 
-    Ok(parsed.unwrap_or(crate::constants::LATEST_RM))
+    Ok(parsed.unwrap_or(LATEST_RM))
 }
