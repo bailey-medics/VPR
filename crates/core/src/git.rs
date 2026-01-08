@@ -7,6 +7,14 @@
 //! - commit signing is performed over the correct payload, and
 //! - branch/ref behaviour is correct when using `Repository::commit_signed`.
 //!
+//! ## Architecture Overview
+//!
+//! The module provides three main components:
+//!
+//! - **Commit Message Construction**: Structured commit messages with controlled vocabulary
+//! - **Repository Management**: High-level Git operations via `GitService`
+//! - **Cryptographic Signing**: ECDSA P-256 signature creation and verification
+//!
 //! ## Branch policy
 //!
 //! VPR standardises on `refs/heads/main`.
@@ -31,6 +39,37 @@
 //!
 //! The verifier in clinical code (`ClinicalService::verify_commit_signature`) expects this
 //! exact scheme.
+//!
+//! ## Usage Examples
+//!
+//! ### Creating a Commit
+//!
+//! ```rust,ignore
+//! use vpr_core::git::{GitService, VprCommitMessage, VprCommitDomain, VprCommitAction};
+//!
+//! let service = GitService::init(&patient_dir)?;
+//!
+//! let message = VprCommitMessage::new(
+//!     VprCommitDomain::Record,
+//!     VprCommitAction::Init,
+//!     "Initial patient record",
+//!     "St Elsewhere Hospital"
+//! )?;
+//!
+//! let oid = service.commit_all(&author, &message)?;
+//! ```
+//!
+//! ### Verifying Signatures
+//!
+//! ```rust,ignore
+//! use vpr_core::git::GitService;
+//!
+//! let is_valid = GitService::verify_commit_signature(
+//!     &clinical_dir,
+//!     "550e8400-e29b-41d4-a716-446655440000",
+//!     public_key_pem
+//! )?;
+//! ```
 
 use crate::uuid::UuidService;
 use crate::{Author, PatientError, PatientResult};
@@ -48,8 +87,12 @@ const MAIN_REF: &str = "refs/heads/main";
 
 /// Deterministic container for VPR commit signatures.
 ///
-/// This is serialized to JSON with a stable field order (struct order), then base64-encoded and
-/// stored as the `gpgsig` header value via `git2::Repository::commit_signed`.
+/// This struct holds the cryptographic components of a VPR commit signature.
+/// It is serialized to JSON with a stable field order (struct order), then base64-encoded
+/// and stored as the `gpgsig` header value via `git2::Repository::commit_signed`.
+///
+/// The container ensures that all signature metadata is embedded directly in the Git commit,
+/// making signatures self-contained and verifiable without external dependencies.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 struct VprCommitSignaturePayloadV1 {
     /// Base64 of raw 64-byte ECDSA P-256 signature (`r || s`).
@@ -61,6 +104,26 @@ struct VprCommitSignaturePayloadV1 {
     certificate: Option<String>,
 }
 
+/// Extract the SEC1-encoded public key bytes from an X.509 certificate.
+///
+/// Accepts both PEM and DER certificate formats. The certificate is parsed to extract
+/// the public key, which is then encoded in SEC1 format for use with ECDSA verification.
+///
+/// This function is used during commit signing to validate that the author's certificate
+/// matches their signing key.
+///
+/// # Arguments
+///
+/// * `cert_bytes` - Raw certificate bytes (PEM or DER format)
+///
+/// # Returns
+///
+/// SEC1-encoded public key bytes on success.
+///
+/// # Errors
+///
+/// Returns `PatientError::EcdsaPublicKeyParse` if the certificate cannot be parsed
+/// or the public key cannot be extracted.
 fn extract_cert_public_key_sec1(cert_bytes: &[u8]) -> PatientResult<Vec<u8>> {
     // Accept PEM or DER; treat as opaque bytes for storage but parse to validate key match.
     let cert_der: Vec<u8> = if cert_bytes
@@ -84,6 +147,7 @@ fn extract_cert_public_key_sec1(cert_bytes: &[u8]) -> PatientResult<Vec<u8>> {
 /// Controlled vocabulary for VPR commit message domains.
 ///
 /// These are intentionally small and stable, and should be treated as labels/indexes.
+/// They categorize the type of change being made to patient records.
 ///
 /// Safety/intent: Do not include patient identifiers or raw clinical data in commit messages.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
@@ -120,6 +184,9 @@ impl fmt::Display for VprCommitDomain {
 
 /// Controlled vocabulary for VPR commit message actions.
 ///
+/// These define the specific operation being performed on patient data.
+/// Actions are designed to be machine-readable and support audit trails.
+///
 /// Safety/intent: Do not include patient identifiers or raw clinical data in commit messages.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -155,7 +222,9 @@ impl fmt::Display for VprCommitAction {
 
 /// A single commit trailer line in standard Git trailer format.
 ///
-/// Renders as `Key: Value`.
+/// Renders as `Key: Value`. Trailers provide additional structured metadata
+/// beyond the main commit subject line. They follow Git's standard trailer
+/// conventions and are sorted deterministically in rendered output.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub(crate) struct VprCommitTrailer {
     key: String,
@@ -163,6 +232,16 @@ pub(crate) struct VprCommitTrailer {
 }
 
 impl VprCommitTrailer {
+    /// Create a new commit trailer with validation.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - Trailer key (cannot contain ':', newlines, or be empty)
+    /// * `value` - Trailer value (cannot contain newlines or be empty)
+    ///
+    /// # Errors
+    ///
+    /// Returns `PatientError::InvalidInput` if validation fails.
     #[allow(dead_code)]
     pub(crate) fn new(key: impl Into<String>, value: impl Into<String>) -> PatientResult<Self> {
         let key = key.into().trim().to_string();
@@ -182,10 +261,12 @@ impl VprCommitTrailer {
         Ok(Self { key, value })
     }
 
+    /// Get the trailer key.
     pub(crate) fn key(&self) -> &str {
         &self.key
     }
 
+    /// Get the trailer value.
     pub(crate) fn value(&self) -> &str {
         &self.value
     }
@@ -202,6 +283,22 @@ impl VprCommitTrailer {
 ///
 /// Safety/intent: Commit messages are labels and indexes; do not include patient identifiers or
 /// raw clinical data.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use vpr_core::git::{VprCommitMessage, VprCommitDomain, VprCommitAction};
+///
+/// let message = VprCommitMessage::new(
+///     VprCommitDomain::Record,
+///     VprCommitAction::Init,
+///     "Patient record created",
+///     "St Elsewhere Hospital"
+/// )?
+/// .with_trailer("Change-Reason", "New patient")?;
+///
+/// assert_eq!(message.render()?, "record:init: Patient record created\n\nCare-Location: St Elsewhere Hospital\nChange-Reason: New patient");
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct VprCommitMessage {
     domain: VprCommitDomain,
@@ -212,6 +309,20 @@ pub(crate) struct VprCommitMessage {
 }
 
 impl VprCommitMessage {
+    /// Create a new commit message with required fields.
+    ///
+    /// # Arguments
+    ///
+    /// * `domain` - The category of change (e.g., Record, Obs, Dx)
+    /// * `action` - The specific operation (e.g., Init, Add, Update)
+    /// * `summary` - Brief description of the change (single line, no newlines)
+    /// * `care_location` - Where the change occurred (e.g., "St Elsewhere Hospital")
+    ///
+    /// # Errors
+    ///
+    /// Returns `PatientError::InvalidInput` if summary contains newlines or is empty.
+    /// Returns `PatientError::MissingCareLocation` if care_location is empty.
+    /// Returns `PatientError::InvalidCareLocation` if care_location contains newlines.
     #[allow(dead_code)]
     pub(crate) fn new(
         domain: VprCommitDomain,
@@ -243,6 +354,21 @@ impl VprCommitMessage {
         })
     }
 
+    /// Add a trailer to the commit message.
+    ///
+    /// Trailers provide additional structured metadata. Certain trailer keys
+    /// are reserved (Author-* and Care-Location) and cannot be set manually.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - Trailer key (cannot contain ':', newlines, or be reserved)
+    /// * `value` - Trailer value (cannot contain newlines or be empty)
+    ///
+    /// # Errors
+    ///
+    /// Returns `PatientError::ReservedAuthorTrailerKey` for Author-* keys.
+    /// Returns `PatientError::ReservedCareLocationTrailerKey` for Care-Location key.
+    /// Returns `PatientError::InvalidInput` for invalid key/value format.
     #[allow(dead_code)]
     pub(crate) fn with_trailer(
         mut self,
@@ -261,26 +387,43 @@ impl VprCommitMessage {
         Ok(self)
     }
 
+    /// Get the commit domain.
     #[allow(dead_code)]
     pub(crate) fn domain(&self) -> VprCommitDomain {
         self.domain
     }
 
+    /// Get the commit action.
     #[allow(dead_code)]
     pub(crate) fn action(&self) -> VprCommitAction {
         self.action
     }
 
+    /// Get the commit summary.
     #[allow(dead_code)]
     pub(crate) fn summary(&self) -> &str {
         &self.summary
     }
 
+    /// Get the commit trailers.
     #[allow(dead_code)]
     pub(crate) fn trailers(&self) -> &[VprCommitTrailer] {
         &self.trailers
     }
 
+    /// Render the commit message without author information.
+    ///
+    /// Produces a standard Git commit message format with subject line and trailers.
+    /// Does not include Author-* trailers (use `render_with_author` for that).
+    ///
+    /// # Returns
+    ///
+    /// A properly formatted Git commit message string.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PatientError` if the message contains invalid data (should not happen
+    /// if constructed via `new()` and `with_trailer()`).
     #[allow(dead_code)]
     pub(crate) fn render(&self) -> PatientResult<String> {
         // Defensively validate invariants so `VprCommitMessage` stays safe even if constructed
@@ -349,6 +492,20 @@ impl VprCommitMessage {
     /// - `Author-Name`
     /// - `Author-Role`
     /// - `Author-Registration` (0..N; sorted)
+    ///
+    /// This is the method used by `GitService` for creating commits.
+    ///
+    /// # Arguments
+    ///
+    /// * `author` - Author information including name, role, and registrations
+    ///
+    /// # Returns
+    ///
+    /// A complete Git commit message with author metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PatientError` from author validation or message rendering.
     pub(crate) fn render_with_author(&self, author: &Author) -> PatientResult<String> {
         author.validate_commit_author()?;
 
@@ -812,6 +969,22 @@ impl GitService {
     }
 }
 
+/// Parse a public key from PEM format or extract it from an X.509 certificate.
+///
+/// This function handles both raw ECDSA public keys in PEM format and X.509 certificates.
+/// It's used during signature verification to parse trusted public keys provided by callers.
+///
+/// # Arguments
+///
+/// * `pem_or_cert` - Either a PEM-encoded public key or a PEM/DER-encoded X.509 certificate
+///
+/// # Returns
+///
+/// A `VerifyingKey` for ECDSA signature verification.
+///
+/// # Errors
+///
+/// Returns `PatientError::EcdsaPublicKeyParse` if parsing fails.
 fn verifying_key_from_public_key_or_cert_pem(pem_or_cert: &str) -> PatientResult<VerifyingKey> {
     if pem_or_cert.contains("-----BEGIN CERTIFICATE-----") {
         let (_, pem) = x509_parser::pem::parse_x509_pem(pem_or_cert.as_bytes())
