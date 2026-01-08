@@ -30,6 +30,13 @@
 //! `patient_data/clinical/55/0e/550e8400e29b41d4a716446655440000/`
 //!
 //! This scheme prevents very large fan-out in a single directory.
+//!
+//! ## Benefits of sharding
+//!
+//! - **Performance**: Limits directory size to prevent filesystem slowdowns
+//! - **Backup efficiency**: Allows incremental backups of specific shards
+//! - **Load distribution**: Spreads I/O across multiple directories
+//! - **Scalability**: Supports millions of patient records without performance degradation
 
 use crate::{PatientError, PatientResult};
 use std::path::{Path, PathBuf};
@@ -40,12 +47,18 @@ pub(crate) use ::uuid::Uuid;
 
 /// VPR's canonical UUID representation (32 lowercase hex characters, no hyphens).
 ///
+/// This wrapper type guarantees that once constructed, the contained UUID is in VPR's
+/// canonical format. It provides type safety for UUID operations and ensures consistent
+/// path derivation across the system.
+///
 /// # When to use this type
 /// Use this wrapper whenever you are:
 /// - Accepting a UUID string from *outside* the core (CLI input, API request, etc), or
 /// - Deriving a sharded storage path for a patient.
+/// - Generating new patient identifiers.
 ///
-/// Once you have a `UuidService`, you can safely assume the internal UUID is valid.
+/// Once you have a `UuidService`, you can safely assume the internal UUID is valid
+/// and in canonical form.
 ///
 /// # Construction
 /// - [`UuidService::new`] generates a new canonical UUID (for new patient records).
@@ -55,11 +68,9 @@ pub(crate) use ::uuid::Uuid;
 /// [`UuidService::parse`] returns [`PatientError::InvalidInput`] if the input is not already
 /// canonical.
 ///
-/// ```rust,ignore
-/// // Hyphenated or uppercase strings are rejected:
-/// // UuidService::parse("550E8400-E29B-41D4-A716-446655440000")?;
-/// // UuidService::parse("550e8400-e29b-41d4-a716-446655440000")?;
-/// ```
+/// # Display format
+/// When displayed or converted to string, `UuidService` always produces the canonical
+/// 32-character lowercase hex format without hyphens.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct UuidService(Uuid);
 
@@ -67,10 +78,11 @@ impl UuidService {
     /// Generates a new UUID in VPR's canonical form.
     ///
     /// This is suitable for allocating a fresh identifier during patient creation.
+    /// The generated UUID is cryptographically secure and follows RFC 4122 version 4.
     ///
     /// # Returns
     ///
-    /// Returns a newly generated canonical UUID.
+    /// Returns a newly generated canonical UUID wrapped in `UuidService`.
     pub(crate) fn new() -> Self {
         Self(Uuid::new_v4())
     }
@@ -78,11 +90,12 @@ impl UuidService {
     /// Validates and parses a UUID string that must already be in VPR's canonical form.
     ///
     /// This does **not** normalise other common UUID forms (for example, hyphenated or uppercase).
-    /// Callers must provide the canonical representation.
+    /// Callers must provide the canonical representation. This strict validation ensures
+    /// consistency and prevents issues with different UUID representations.
     ///
     /// # Arguments
     ///
-    /// * `input` - UUID string to validate and wrap.
+    /// * `input` - UUID string to validate and wrap. Must be exactly 32 lowercase hex characters.
     ///
     /// # Returns
     ///
@@ -105,18 +118,28 @@ impl UuidService {
 
     /// Returns the UUID as a `uuid::Uuid`.
     ///
+    /// This method provides access to the underlying `uuid::Uuid` for operations
+    /// that require the standard UUID library interface.
+    ///
     /// # Returns
     ///
     /// Returns a copy of the inner UUID.
+    ///
+    /// # Note
+    ///
+    /// The returned UUID is guaranteed to be valid since `UuidService` only
+    /// contains validated UUIDs.
     pub(crate) fn uuid(&self) -> Uuid {
         self.0
     }
 
     /// Returns true if `input` is in VPR's canonical UUID form.
     ///
-    /// This is a purely syntactic check:
-    /// - 32 bytes long
-    /// - lowercase hex only (`0-9` / `a-f`)
+    /// This is a purely syntactic check that validates:
+    /// - Exactly 32 bytes long
+    /// - Contains only lowercase hex characters (`0-9` and `a-f`)
+    ///
+    /// This method is fast and can be used for pre-validation before calling [`parse`].
     ///
     /// # Arguments
     ///
@@ -134,7 +157,13 @@ impl UuidService {
 
     /// Returns `parent_dir/<s1>/<s2>/<uuid>/` where `s1`/`s2` are derived from this UUID.
     ///
-    /// `s1` is the first two hex characters, `s2` is the next two.
+    /// This implements VPR's sharding scheme:
+    /// - `s1` is the first two hex characters of the UUID
+    /// - `s2` is the next two hex characters
+    /// - The full UUID forms the leaf directory
+    ///
+    /// This sharding prevents filesystem performance issues with large numbers of patient
+    /// directories in a single location.
     ///
     /// # Arguments
     ///
@@ -152,6 +181,9 @@ impl UuidService {
 }
 
 impl fmt::Display for UuidService {
+    /// Formats the UUID in canonical form (32 lowercase hex characters, no hyphens).
+    ///
+    /// This ensures consistent string representation across the application.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Display in canonical (simple) form
         write!(f, "{}", self.0.simple())
@@ -161,6 +193,13 @@ impl fmt::Display for UuidService {
 impl FromStr for UuidService {
     type Err = PatientError;
 
+    /// Parses a string into a `UuidService`, requiring canonical form.
+    ///
+    /// This is equivalent to calling [`UuidService::parse`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PatientError::InvalidInput`] if the string is not in canonical UUID form.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         UuidService::parse(s)
     }
