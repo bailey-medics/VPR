@@ -39,37 +39,6 @@
 //!
 //! The verifier in clinical code (`ClinicalService::verify_commit_signature`) expects this
 //! exact scheme.
-//!
-//! ## Usage Examples
-//!
-//! ### Creating a Commit
-//!
-//! ```rust,ignore
-//! use vpr_core::git::{GitService, VprCommitMessage, VprCommitDomain, VprCommitAction};
-//!
-//! let service = GitService::init(&patient_dir)?;
-//!
-//! let message = VprCommitMessage::new(
-//!     VprCommitDomain::Record,
-//!     VprCommitAction::Init,
-//!     "Initial patient record",
-//!     "St Elsewhere Hospital"
-//! )?;
-//!
-//! let oid = service.commit_all(&author, &message)?;
-//! ```
-//!
-//! ### Verifying Signatures
-//!
-//! ```rust,ignore
-//! use vpr_core::git::GitService;
-//!
-//! let is_valid = GitService::verify_commit_signature(
-//!     &clinical_dir,
-//!     "550e8400-e29b-41d4-a716-446655440000",
-//!     public_key_pem
-//! )?;
-//! ```
 
 use crate::uuid::UuidService;
 use crate::{Author, PatientError, PatientResult};
@@ -283,22 +252,6 @@ impl VprCommitTrailer {
 ///
 /// Safety/intent: Commit messages are labels and indexes; do not include patient identifiers or
 /// raw clinical data.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// use vpr_core::git::{VprCommitMessage, VprCommitDomain, VprCommitAction};
-///
-/// let message = VprCommitMessage::new(
-///     VprCommitDomain::Record,
-///     VprCommitAction::Init,
-///     "Patient record created",
-///     "St Elsewhere Hospital"
-/// )?
-/// .with_trailer("Change-Reason", "New patient")?;
-///
-/// assert_eq!(message.render()?, "record:init: Patient record created\n\nCare-Location: St Elsewhere Hospital\nChange-Reason: New patient");
-/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct VprCommitMessage {
     domain: VprCommitDomain,
@@ -586,7 +539,7 @@ impl VprCommitMessage {
 ///
 /// This bundles the repository handle and its workdir to make workflows like “initialise repo
 /// then commit files” ergonomic at call sites.
-pub(crate) struct GitService {
+pub struct GitService {
     repo: git2::Repository,
     workdir: PathBuf,
 }
@@ -1005,7 +958,6 @@ fn verifying_key_from_public_key_or_cert_pem(pem_or_cert: &str) -> PatientResult
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
     use tempfile::TempDir;
 
     #[test]
@@ -1091,15 +1043,9 @@ mod tests {
     }
 
     #[test]
-    fn render_without_trailers_is_single_line() {
+    fn domain_serialises_lowercase() {
         let s = serde_json::to_string(&VprCommitDomain::Record).unwrap();
         assert_eq!(s, "\"record\"");
-    }
-
-    #[test]
-    fn action_serialises_lowercase() {
-        let s = serde_json::to_string(&VprCommitAction::Init).unwrap();
-        assert_eq!(s, "\"init\"");
     }
 
     #[test]
