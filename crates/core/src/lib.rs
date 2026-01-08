@@ -14,7 +14,7 @@ pub mod clinical;
 pub mod config;
 pub mod constants;
 pub mod demographics;
-pub(crate) mod git;
+pub mod git;
 pub mod repo;
 pub(crate) mod uuid;
 pub mod validation;

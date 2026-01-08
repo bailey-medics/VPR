@@ -681,7 +681,7 @@ is_modifiable: true
             id: uuid::Uuid::parse_str("4db695ed7cc04fc99b08e0c738069b71").unwrap(),
         };
 
-        let err = ehr_status_render(None, None, Some(vec![external_ref])).expect_err(
+        let _err = ehr_status_render(None, None, Some(vec![external_ref])).expect_err(
             "ehr_status_render should reject when previous_data is None but ehr_id is None",
         );
     }
