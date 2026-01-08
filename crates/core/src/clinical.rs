@@ -13,11 +13,12 @@ use crate::{
 use chrono::{DateTime, Utc};
 use git2;
 use openehr::{ehr_status_render, extract_rm_version, EhrId, ExternalReference};
-use std::fs;
-use std::io;
-use std::io::ErrorKind;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::{
+    fs,
+    io::{self, ErrorKind},
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use uuid::Uuid;
 
 #[cfg(test)]
@@ -38,6 +39,15 @@ pub struct ClinicalService {
 }
 
 impl ClinicalService {
+    /// Creates a new `ClinicalService` instance.
+    ///
+    /// # Arguments
+    ///
+    /// * `cfg` - The core configuration for the service.
+    ///
+    /// # Returns
+    ///
+    /// Returns a new `ClinicalService` with the provided configuration.
     pub fn new(cfg: Arc<CoreConfig>) -> Self {
         Self { cfg }
     }
@@ -75,7 +85,7 @@ impl ClinicalService {
         let msg = VprCommitMessage::new(
             VprCommitDomain::Record,
             VprCommitAction::Init,
-            "Clinical record created",
+            "Initialised the clinical record",
             care_location,
         )?;
 
@@ -1315,7 +1325,7 @@ mod tests {
         let commit = head.peel_to_commit().expect("Failed to get commit");
         assert_eq!(
             commit.message().unwrap(),
-            "record:init: Clinical record created\n\nAuthor-Name: Test Author\nAuthor-Role: Clinician\nCare-Location: Test Hospital"
+            "record:init: Initialised the clinical record\n\nAuthor-Name: Test Author\nAuthor-Role: Clinician\nCare-Location: Test Hospital"
         );
     }
 
