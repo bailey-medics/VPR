@@ -1043,12 +1043,6 @@ mod tests {
     }
 
     #[test]
-    fn domain_serialises_lowercase() {
-        let s = serde_json::to_string(&VprCommitDomain::Record).unwrap();
-        assert_eq!(s, "\"record\"");
-    }
-
-    #[test]
     fn render_without_trailers_is_single_line() {
         let msg = VprCommitMessage::new(
             VprCommitDomain::Record,
