@@ -8,10 +8,7 @@ use crate::constants::{CLINICAL_DIR_NAME, EHR_STATUS_FILENAME};
 use crate::git::{GitService, VprCommitAction, VprCommitDomain, VprCommitMessage};
 use crate::repo::create_unique_shared_dir;
 use crate::uuid::UuidService;
-use crate::{
-    copy_dir_recursive, extract_embedded_commit_signature, Author, PatientError, PatientResult,
-};
-use git2;
+use crate::{copy_dir_recursive, Author, PatientError, PatientResult};
 use openehr::{ehr_status_render, extract_rm_version, EhrId, ExternalReference};
 use std::{
     fs, io,
@@ -28,11 +25,6 @@ use std::collections::HashSet;
 
 #[cfg(test)]
 use std::sync::{LazyLock, Mutex};
-
-use p256::ecdsa::signature::Verifier;
-use p256::ecdsa::{Signature, VerifyingKey};
-use p256::pkcs8::DecodePublicKey;
-use x509_parser::prelude::*;
 
 /// Service for managing clinical record operations.
 #[derive(Clone)]
@@ -233,90 +225,6 @@ impl ClinicalService {
 
         Ok(())
     }
-
-    /// Verifies the ECDSA signature of the latest commit in the patient's Git repository.
-    ///
-    /// VPR uses `git2::Repository::commit_signed` with an ECDSA P-256 signature over the
-    /// *unsigned commit buffer* produced by `commit_create_buffer`.
-    ///
-    /// The signature, signing public key, and optional X.509 certificate are embedded directly
-    /// in the commit object's `gpgsig` header as a base64-encoded JSON container.
-    ///
-    /// This method reconstructs the commit buffer and verifies the signature using the embedded
-    /// public key, optionally checking that `public_key_pem` (if provided) matches it.
-    ///
-    /// # Arguments
-    ///
-    /// * `clinical_uuid` - The UUID of the clinical record.
-    /// * `public_key_pem` - The PEM-encoded public key used for verification.
-    ///
-    /// # Returns
-    ///
-    /// Returns `true` if the signature is valid, `false` otherwise.
-    ///
-    /// # Errors
-    ///
-    /// Returns a `PatientError` if:
-    /// - the UUID cannot be parsed,
-    /// - the Git repository cannot be opened or the latest commit cannot be read,
-    /// - `public_key_pem` is provided but cannot be parsed as a public key or X.509 certificate.
-    pub fn verify_commit_signature(
-        &self,
-        clinical_uuid: &str,
-        public_key_pem: &str,
-    ) -> PatientResult<bool> {
-        let clinical_uuid = UuidService::parse(clinical_uuid)?;
-        let patient_dir = self.clinical_patient_dir(&clinical_uuid);
-
-        let repo = GitService::open(&patient_dir)?.into_repo();
-
-        let head = repo.head().map_err(PatientError::GitHead)?;
-        let commit = head.peel_to_commit().map_err(PatientError::GitPeel)?;
-
-        let embedded = match extract_embedded_commit_signature(&commit) {
-            Ok(v) => v,
-            Err(_) => return Ok(false),
-        };
-
-        let signature = match Signature::from_slice(embedded.signature.as_slice()) {
-            Ok(s) => s,
-            Err(_) => return Ok(false),
-        };
-
-        let embedded_verifying_key =
-            match VerifyingKey::from_sec1_bytes(embedded.public_key.as_slice()) {
-                Ok(k) => k,
-                Err(_) => return Ok(false),
-            };
-
-        // If a trusted key/cert was provided by the caller, it must match the embedded key.
-        if !public_key_pem.trim().is_empty() {
-            let trusted_key = verifying_key_from_public_key_or_cert_pem(public_key_pem)?;
-            let trusted_pub_bytes = trusted_key.to_encoded_point(false).as_bytes().to_vec();
-            if trusted_pub_bytes != embedded.public_key {
-                return Ok(false);
-            }
-        }
-
-        // Recreate the unsigned commit buffer for this commit.
-        let tree = commit.tree().map_err(PatientError::GitFindTree)?;
-        let parents: Vec<git2::Commit> = commit.parents().collect();
-        let parent_refs: Vec<&git2::Commit> = parents.iter().collect();
-        let message = commit.message().unwrap_or("");
-        let author = commit.author();
-        let committer = commit.committer();
-
-        let buf = repo
-            .commit_create_buffer(&author, &committer, message, &tree, &parent_refs)
-            .map_err(PatientError::GitCommitBuffer)?;
-        let buf_str =
-            String::from_utf8(buf.as_ref().to_vec()).map_err(PatientError::CommitBufferToString)?;
-
-        // Verify with the canonical payload.
-        Ok(embedded_verifying_key
-            .verify(buf_str.as_bytes(), &signature)
-            .is_ok())
-    }
 }
 
 impl ClinicalService {
@@ -378,23 +286,6 @@ fn remove_patient_dir_all(patient_dir: &Path) -> io::Result<()> {
     }
 
     fs::remove_dir_all(patient_dir)
-}
-
-fn verifying_key_from_public_key_or_cert_pem(pem_or_cert: &str) -> PatientResult<VerifyingKey> {
-    if pem_or_cert.contains("-----BEGIN CERTIFICATE-----") {
-        let (_, pem) = x509_parser::pem::parse_x509_pem(pem_or_cert.as_bytes())
-            .map_err(|e| PatientError::EcdsaPublicKeyParse(Box::new(e)))?;
-        let (_, cert) = X509Certificate::from_der(pem.contents.as_ref())
-            .map_err(|e| PatientError::EcdsaPublicKeyParse(Box::new(e)))?;
-
-        let spk = cert.public_key();
-        let key_bytes = &spk.subject_public_key.data;
-        VerifyingKey::from_sec1_bytes(key_bytes.as_ref())
-            .map_err(|e| PatientError::EcdsaPublicKeyParse(Box::new(e)))
-    } else {
-        VerifyingKey::from_public_key_pem(pem_or_cert)
-            .map_err(|e| PatientError::EcdsaPublicKeyParse(Box::new(e)))
-    }
 }
 
 #[cfg(test)]
@@ -1372,7 +1263,10 @@ mod tests {
             .expect("Failed to encode public key");
 
         let cfg = test_cfg(temp_dir.path());
-        let service = ClinicalService::new(cfg);
+        let service = ClinicalService::new(cfg.clone());
+        let clinical_dir = cfg
+            .patient_data_dir()
+            .join(crate::constants::CLINICAL_DIR_NAME);
         let author = Author {
             name: "Test Author".to_string(),
             role: "Clinician".to_string(),
@@ -1389,7 +1283,8 @@ mod tests {
         let clinical_uuid_str = clinical_uuid.simple().to_string();
 
         // Verify the signature
-        let verify_result = service.verify_commit_signature(&clinical_uuid_str, &public_key_pem);
+        let verify_result =
+            GitService::verify_commit_signature(&clinical_dir, &clinical_uuid_str, &public_key_pem);
         assert!(
             verify_result.is_ok(),
             "verify_commit_signature should succeed"
@@ -1402,7 +1297,8 @@ mod tests {
             .verifying_key()
             .to_public_key_pem(p256::pkcs8::LineEnding::LF)
             .expect("Failed to encode wrong public key");
-        let wrong_verify = service.verify_commit_signature(&clinical_uuid_str, &wrong_pub_pem);
+        let wrong_verify =
+            GitService::verify_commit_signature(&clinical_dir, &clinical_uuid_str, &wrong_pub_pem);
         assert!(wrong_verify.is_ok(), "verify with wrong key should succeed");
         assert!(
             !wrong_verify.unwrap(),
@@ -1425,7 +1321,10 @@ mod tests {
             .expect("Failed to encode public key");
 
         let cfg = test_cfg(temp_dir.path());
-        let service = ClinicalService::new(cfg);
+        let service = ClinicalService::new(cfg.clone());
+        let clinical_dir = cfg
+            .patient_data_dir()
+            .join(crate::constants::CLINICAL_DIR_NAME);
         let author = Author {
             name: "Test Author".to_string(),
             role: "Clinician".to_string(),
@@ -1441,15 +1340,14 @@ mod tests {
         let clinical_uuid_str = clinical_uuid.simple().to_string();
 
         // Offline verification: no external key material is provided.
-        let ok = service
-            .verify_commit_signature(&clinical_uuid_str, "")
+        let ok = GitService::verify_commit_signature(&clinical_dir, &clinical_uuid_str, "")
             .expect("verify_commit_signature should succeed");
         assert!(ok, "embedded public key verification should succeed");
 
         // Compatibility: verification still works with an explicit public key.
-        let ok = service
-            .verify_commit_signature(&clinical_uuid_str, &public_key_pem)
-            .expect("verify_commit_signature should succeed");
+        let ok =
+            GitService::verify_commit_signature(&clinical_dir, &clinical_uuid_str, &public_key_pem)
+                .expect("verify_commit_signature should succeed");
         assert!(ok, "verification with explicit public key should succeed");
     }
 
@@ -1544,7 +1442,10 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
 
         let cfg = test_cfg(temp_dir.path());
-        let service = ClinicalService::new(cfg);
+        let service = ClinicalService::new(cfg.clone());
+        let clinical_dir = cfg
+            .patient_data_dir()
+            .join(crate::constants::CLINICAL_DIR_NAME);
 
         let author = Author {
             name: "Test Author".to_string(),
@@ -1560,7 +1461,6 @@ mod tests {
             .expect("initialise should succeed");
         let clinical_uuid_str = clinical_uuid.simple().to_string();
 
-        let clinical_dir = temp_dir.path().join(CLINICAL_DIR_NAME);
         let patient_dir = UuidService::parse(&clinical_uuid_str)
             .expect("clinical_uuid should be canonical")
             .sharded_dir(&clinical_dir);
@@ -1574,8 +1474,7 @@ mod tests {
             "unsigned commits should not contain an embedded signature payload"
         );
 
-        let ok = service
-            .verify_commit_signature(&clinical_uuid_str, "")
+        let ok = GitService::verify_commit_signature(&clinical_dir, &clinical_uuid_str, "")
             .expect("verify_commit_signature should succeed");
         assert!(
             !ok,

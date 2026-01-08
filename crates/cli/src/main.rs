@@ -14,6 +14,7 @@ use vpr_core::{
     },
     constants,
     demographics::DemographicsService,
+    git::GitService,
     Author, AuthorRegistration, CoreConfig, PatientService,
 };
 
@@ -504,8 +505,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
-            let clinical_service = ClinicalService::new(cfg.clone());
-            match clinical_service.verify_commit_signature(&clinical_uuid, &public_key_pem) {
+            let clinical_dir = cfg.patient_data_dir().join(constants::CLINICAL_DIR_NAME);
+            match GitService::verify_commit_signature(
+                &clinical_dir,
+                &clinical_uuid,
+                &public_key_pem,
+            ) {
                 Ok(true) => println!("Signature VALID for clinical UUID: {}", clinical_uuid),
                 Ok(false) => println!("Signature INVALID for clinical UUID: {}", clinical_uuid),
                 Err(e) => eprintln!("Error verifying signature: {}", e),

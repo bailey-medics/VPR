@@ -32,11 +32,12 @@
 //! The verifier in clinical code (`ClinicalService::verify_commit_signature`) expects this
 //! exact scheme.
 
+use crate::uuid::UuidService;
 use crate::{Author, PatientError, PatientResult};
 use base64::{engine::general_purpose, Engine as _};
-use p256::ecdsa::signature::Signer;
-use p256::ecdsa::{Signature, SigningKey};
-use p256::pkcs8::DecodePrivateKey;
+use p256::ecdsa::signature::{Signer, Verifier};
+use p256::ecdsa::{Signature, SigningKey, VerifyingKey};
+use p256::pkcs8::{DecodePrivateKey, DecodePublicKey};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fs;
@@ -478,6 +479,7 @@ impl GitService {
     /// Consume this wrapper and return the underlying `git2::Repository`.
     ///
     /// This is useful when existing code needs to perform lower-level Git operations.
+    #[allow(dead_code)]
     pub(crate) fn into_repo(self) -> git2::Repository {
         self.repo
     }
@@ -722,14 +724,201 @@ impl GitService {
         walk(&self.workdir, &self.workdir, &mut paths)?;
         Ok(paths)
     }
+
+    /// Verifies the ECDSA signature of the latest commit in a patient's Git repository.
+    ///
+    /// VPR uses `git2::Repository::commit_signed` with an ECDSA P-256 signature over the
+    /// *unsigned commit buffer* produced by `commit_create_buffer`.
+    ///
+    /// The signature, signing public key, and optional X.509 certificate are embedded directly
+    /// in the commit object's `gpgsig` header as a base64-encoded JSON container.
+    ///
+    /// This method reconstructs the commit buffer and verifies the signature using the embedded
+    /// public key, optionally checking that `public_key_pem` (if provided) matches it.
+    ///
+    /// # Arguments
+    ///
+    /// * `base_dir` - The base directory for the patient records (e.g., clinical or demographics directory).
+    /// * `uuid` - The UUID of the patient record as a string.
+    /// * `public_key_pem` - The PEM-encoded public key used for verification.
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` if the signature is valid, `false` otherwise.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `PatientError` if:
+    /// - the UUID cannot be parsed,
+    /// - the Git repository cannot be opened or the latest commit cannot be read,
+    /// - `public_key_pem` is provided but cannot be parsed as a public key or X.509 certificate.
+    #[allow(dead_code)]
+    pub fn verify_commit_signature(
+        base_dir: &Path,
+        uuid: &str,
+        public_key_pem: &str,
+    ) -> PatientResult<bool> {
+        let uuid = UuidService::parse(uuid)?;
+        let patient_dir = uuid.sharded_dir(base_dir);
+        let repo = Self::open(&patient_dir)?;
+
+        let head = repo.repo.head().map_err(PatientError::GitHead)?;
+        let commit = head.peel_to_commit().map_err(PatientError::GitPeel)?;
+
+        let embedded = match crate::extract_embedded_commit_signature(&commit) {
+            Ok(v) => v,
+            Err(_) => return Ok(false),
+        };
+
+        let signature = match Signature::from_slice(embedded.signature.as_slice()) {
+            Ok(s) => s,
+            Err(_) => return Ok(false),
+        };
+
+        let embedded_verifying_key =
+            match VerifyingKey::from_sec1_bytes(embedded.public_key.as_slice()) {
+                Ok(k) => k,
+                Err(_) => return Ok(false),
+            };
+
+        // If a trusted key/cert was provided by the caller, it must match the embedded key.
+        if !public_key_pem.trim().is_empty() {
+            let trusted_key = verifying_key_from_public_key_or_cert_pem(public_key_pem)?;
+            let trusted_pub_bytes = trusted_key.to_encoded_point(false).as_bytes().to_vec();
+            if trusted_pub_bytes != embedded.public_key {
+                return Ok(false);
+            }
+        }
+
+        // Recreate the unsigned commit buffer for this commit.
+        let tree = commit.tree().map_err(PatientError::GitFindTree)?;
+        let parents: Vec<git2::Commit> = commit.parents().collect();
+        let parent_refs: Vec<&git2::Commit> = parents.iter().collect();
+        let message = commit.message().unwrap_or("");
+        let author = commit.author();
+        let committer = commit.committer();
+
+        let buf = repo
+            .repo
+            .commit_create_buffer(&author, &committer, message, &tree, &parent_refs)
+            .map_err(PatientError::GitCommitBuffer)?;
+        let buf_str =
+            String::from_utf8(buf.as_ref().to_vec()).map_err(PatientError::CommitBufferToString)?;
+
+        // Verify with the canonical payload.
+        Ok(embedded_verifying_key
+            .verify(buf_str.as_bytes(), &signature)
+            .is_ok())
+    }
+}
+
+fn verifying_key_from_public_key_or_cert_pem(pem_or_cert: &str) -> PatientResult<VerifyingKey> {
+    if pem_or_cert.contains("-----BEGIN CERTIFICATE-----") {
+        let (_, pem) = x509_parser::pem::parse_x509_pem(pem_or_cert.as_bytes())
+            .map_err(|e| PatientError::EcdsaPublicKeyParse(Box::new(e)))?;
+        let (_, cert) = X509Certificate::from_der(pem.contents.as_ref())
+            .map_err(|e| PatientError::EcdsaPublicKeyParse(Box::new(e)))?;
+
+        let spk = cert.public_key();
+        let key_bytes = &spk.subject_public_key.data;
+        VerifyingKey::from_sec1_bytes(key_bytes.as_ref())
+            .map_err(|e| PatientError::EcdsaPublicKeyParse(Box::new(e)))
+    } else {
+        VerifyingKey::from_public_key_pem(pem_or_cert)
+            .map_err(|e| PatientError::EcdsaPublicKeyParse(Box::new(e)))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use tempfile::TempDir;
 
     #[test]
     fn domain_serialises_lowercase() {
+        let s = serde_json::to_string(&VprCommitDomain::Record).unwrap();
+        assert_eq!(s, "\"record\"");
+    }
+
+    #[test]
+    fn action_serialises_lowercase() {
+        let s = serde_json::to_string(&VprCommitAction::Init).unwrap();
+        assert_eq!(s, "\"init\"");
+    }
+
+    #[test]
+    fn can_get_domain() {
+        let msg = VprCommitMessage::new(
+            VprCommitDomain::Record,
+            VprCommitAction::Init,
+            "test",
+            "location",
+        )
+        .unwrap();
+        assert_eq!(msg.domain(), VprCommitDomain::Record);
+    }
+
+    #[test]
+    fn can_get_action() {
+        let msg = VprCommitMessage::new(
+            VprCommitDomain::Record,
+            VprCommitAction::Init,
+            "test",
+            "location",
+        )
+        .unwrap();
+        assert_eq!(msg.action(), VprCommitAction::Init);
+    }
+
+    #[test]
+    fn can_get_summary() {
+        let msg = VprCommitMessage::new(
+            VprCommitDomain::Record,
+            VprCommitAction::Init,
+            "test summary",
+            "location",
+        )
+        .unwrap();
+        assert_eq!(msg.summary(), "test summary");
+    }
+
+    #[test]
+    fn can_get_trailers() {
+        let msg = VprCommitMessage::new(
+            VprCommitDomain::Record,
+            VprCommitAction::Init,
+            "test",
+            "location",
+        )
+        .unwrap()
+        .with_trailer("Key", "Value")
+        .unwrap();
+        let trailers = msg.trailers();
+        assert_eq!(trailers.len(), 1);
+        assert_eq!(trailers[0].key(), "Key");
+        assert_eq!(trailers[0].value(), "Value");
+    }
+
+    #[test]
+    fn into_repo_consumes_and_returns_underlying() {
+        let temp_dir = TempDir::new().unwrap();
+        let service = GitService::init(temp_dir.path()).unwrap();
+        let repo = service.into_repo();
+        assert!(repo.workdir().unwrap() == temp_dir.path());
+    }
+
+    #[test]
+    fn verifying_key_from_pem() {
+        // Sample ECDSA P-256 public key PEM
+        let pem = "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE4f5wg2l2hKsTeNem/V41fGnJm6gO\nXUM8z5RZVKQ7Xwxo+7ZyQfYqQZUw8fQtFkQ7l2p4i3v4z1+L8Q8jQJvAQ==\n-----END PUBLIC KEY-----";
+        let key = verifying_key_from_public_key_or_cert_pem(pem).unwrap();
+        // Just check it parses without error
+        assert!(key.to_encoded_point(false).as_bytes().len() > 0);
+    }
+
+    #[test]
+    fn render_without_trailers_is_single_line() {
         let s = serde_json::to_string(&VprCommitDomain::Record).unwrap();
         assert_eq!(s, "\"record\"");
     }
