@@ -89,7 +89,7 @@ impl ClinicalService {
             care_location,
         )?;
 
-        let clinical_dir = self.clinical_dir(None);
+        let clinical_dir = self.clinical_dir();
         let (clinical_uuid, patient_dir) =
             allocate_unique_patient_dir(&clinical_dir, UuidService::new)?;
 
@@ -183,11 +183,11 @@ impl ClinicalService {
             .as_deref()
             .unwrap_or(self.cfg.vpr_namespace())
             .trim();
-        validate_namespace_safe_for_uri(namespace)?;
+        crate::validation::validate_namespace_safe_for_uri(namespace)?;
 
         // let rm_version = self.cfg.rm_system_version();
 
-        let patient_dir = self.clinical_patient_dir(&clinical_uuid, None);
+        let patient_dir = self.clinical_patient_dir(&clinical_uuid);
         let filename = patient_dir.join(EHR_STATUS_FILENAME);
 
         let external_reference = Some(vec![ExternalReference {
@@ -251,13 +251,9 @@ impl ClinicalService {
     /// - the UUID cannot be parsed,
     /// - the Git repository cannot be opened or the first commit cannot be read,
     /// - the commit timestamp cannot be converted into a `DateTime<Utc>`.
-    pub fn get_first_commit_time(
-        &self,
-        clinical_uuid: &str,
-        base_dir: Option<&Path>,
-    ) -> PatientResult<DateTime<Utc>> {
+    pub fn get_first_commit_time(&self, clinical_uuid: &str) -> PatientResult<DateTime<Utc>> {
         let clinical_uuid = UuidService::parse(clinical_uuid)?;
-        let patient_dir = self.clinical_patient_dir(&clinical_uuid, base_dir);
+        let patient_dir = self.clinical_patient_dir(&clinical_uuid);
 
         let repo = GitService::open(&patient_dir)?.into_repo();
         let head = repo.head().map_err(PatientError::GitHead)?;
@@ -303,7 +299,7 @@ impl ClinicalService {
         public_key_pem: &str,
     ) -> PatientResult<bool> {
         let clinical_uuid = UuidService::parse(clinical_uuid)?;
-        let patient_dir = self.clinical_patient_dir(&clinical_uuid, None);
+        let patient_dir = self.clinical_patient_dir(&clinical_uuid);
 
         let repo = GitService::open(&patient_dir)?.into_repo();
 
@@ -357,64 +353,36 @@ impl ClinicalService {
 }
 
 impl ClinicalService {
-    fn clinical_dir(&self, base_dir: Option<&Path>) -> PathBuf {
-        let data_dir = match base_dir {
-            Some(dir) => dir.to_path_buf(),
-            None => self.cfg.patient_data_dir().to_path_buf(),
-        };
-
+    /// Returns the path to the clinical records directory.
+    ///
+    /// This constructs the base directory for clinical records by joining
+    /// the configured patient data directory with the clinical directory name.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `PathBuf` pointing to the clinical records directory.
+    fn clinical_dir(&self) -> PathBuf {
+        let data_dir = self.cfg.patient_data_dir().to_path_buf();
         data_dir.join(CLINICAL_DIR_NAME)
     }
 
-    fn clinical_patient_dir(
-        &self,
-        clinical_uuid: &UuidService,
-        base_dir: Option<&Path>,
-    ) -> PathBuf {
-        let clinical_dir = self.clinical_dir(base_dir);
+    /// Returns the path to a specific patient's clinical record directory.
+    ///
+    /// This constructs the full path to a patient's clinical directory by
+    /// determining the sharded subdirectory based on the UUID and joining
+    /// it with the clinical base directory.
+    ///
+    /// # Arguments
+    ///
+    /// * `clinical_uuid` - The UUID service for the clinical record.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `PathBuf` pointing to the patient's clinical record directory.
+    fn clinical_patient_dir(&self, clinical_uuid: &UuidService) -> PathBuf {
+        let clinical_dir = self.clinical_dir();
         clinical_uuid.sharded_dir(&clinical_dir)
     }
-}
-
-fn validate_namespace_safe_for_uri(namespace: &str) -> PatientResult<()> {
-    // The namespace is embedded into an external-reference URI: `vpr://{namespace}/mpi`.
-    // Defensive guardrails:
-    // - reject empty/whitespace
-    // - bound size to avoid pathological inputs
-    // - restrict characters to a conservative ASCII set suitable for a URI authority
-    const MAX_NAMESPACE_LEN: usize = 253;
-
-    if namespace.trim().is_empty() {
-        return Err(PatientError::InvalidInput(
-            "namespace cannot be empty".into(),
-        ));
-    }
-
-    if namespace.len() > MAX_NAMESPACE_LEN {
-        return Err(PatientError::InvalidInput(format!(
-            "namespace exceeds maximum length of {} characters",
-            MAX_NAMESPACE_LEN
-        )));
-    }
-
-    if !namespace.is_ascii() {
-        return Err(PatientError::InvalidInput(
-            "namespace must contain only ASCII characters".into(),
-        ));
-    }
-
-    let ok = namespace
-        .bytes()
-        .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z' | b'.' | b'-' | b'_'));
-
-    if !ok {
-        return Err(PatientError::InvalidInput(
-            "namespace contains invalid characters (only alphanumeric, '.', '-', '_' allowed)"
-                .into(),
-        ));
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -445,6 +413,26 @@ fn remove_patient_dir_all(patient_dir: &Path) -> io::Result<()> {
     fs::remove_dir_all(patient_dir)
 }
 
+/// Allocates a unique patient directory within the clinical records directory.
+///
+/// This function generates UUIDs using the provided source function and attempts to create
+/// a corresponding sharded directory. It guards against UUID collisions or pre-existing
+/// directories by retrying up to 5 times with different UUIDs.
+///
+/// # Arguments
+///
+/// * `clinical_dir` - The base clinical records directory.
+/// * `uuid_source` - A mutable closure that generates new `UuidService` instances.
+///
+/// # Returns
+///
+/// Returns a tuple of the allocated `UuidService` and the `PathBuf` to the created directory.
+///
+/// # Errors
+///
+/// Returns a `PatientError::PatientDirCreation` if:
+/// - directory creation fails after 5 attempts,
+/// - parent directory creation fails.
 fn allocate_unique_patient_dir(
     clinical_dir: &Path,
     mut uuid_source: impl FnMut() -> UuidService,
@@ -1476,7 +1464,7 @@ mod tests {
         let clinical_uuid_str = clinical_uuid.simple().to_string();
 
         // Call get_first_commit_time
-        let result = service.get_first_commit_time(&clinical_uuid_str, Some(temp_dir.path()));
+        let result = service.get_first_commit_time(&clinical_uuid_str);
         assert!(result.is_ok(), "get_first_commit_time should succeed");
 
         let timestamp = result.unwrap();

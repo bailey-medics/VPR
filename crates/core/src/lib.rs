@@ -15,6 +15,7 @@ pub mod constants;
 pub mod demographics;
 pub(crate) mod git;
 pub(crate) mod uuid;
+pub mod validation;
 
 // Use the shared api-shared crate for generated protobuf types.
 pub use api_shared::pb;
