@@ -11,3 +11,5 @@
 [ ] add patient comments (? unsigned)
 
 [ ]  projections for speed optimisation
+
+[ ] no symlinks ever. Need to parse incoming and current repos

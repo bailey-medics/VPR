@@ -1,7 +1,7 @@
 //! Patient clinical records management.
 //!
 //! This module handles the initialisation and management of clinical records
-//! for patients.  kk
+//! for patients.
 
 use crate::config::{validate_ehr_template_dir_safe_to_copy, CoreConfig};
 use crate::constants::{CLINICAL_DIR_NAME, EHR_STATUS_FILENAME};
