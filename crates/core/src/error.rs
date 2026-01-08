@@ -1,6 +1,64 @@
+//! Error types for the VPR (Virtual Patient Record) system.
+//!
+//! This module defines the comprehensive error handling for all operations in the VPR core crate.
+//! The [`PatientError`] enum encompasses all possible failure modes across the system's functionality,
+//! including patient data management, Git versioning, cryptographic operations, and external integrations.
+//!
+//! # Error Categories
+//!
+//! Errors are organized into logical categories:
+//!
+//! - **Input Validation**: Invalid user inputs, malformed data, or constraint violations
+//! - **File System Operations**: Directory creation, file I/O, and storage management
+//! - **Serialization**: JSON and YAML encoding/decoding failures
+//! - **Git Operations**: Repository management, commits, signatures, and version control
+//! - **Cryptographic Operations**: ECDSA signing, key parsing, certificate validation
+//! - **Author Validation**: Commit author metadata and registration verification
+//! - **External Integrations**: OpenEHR system interactions
+//!
+//! # Error Handling Philosophy
+//!
+//! VPR follows defensive programming principles with comprehensive error handling:
+//!
+//! - **Fail Fast**: Invalid inputs and configuration are rejected early
+//! - **Detailed Diagnostics**: Errors include context and source information where possible
+//! - **Recovery Guidance**: Error messages are designed to be actionable for developers and operators
+//! - **Type Safety**: The [`PatientResult`] type alias provides consistent error propagation
+//!
+//! # Usage
+//!
+//! Most VPR operations return [`PatientResult<T>`] to indicate success or failure:
+//!
+//! ```rust,ignore
+//! use vpr_core::PatientResult;
+//!
+//! fn some_operation() -> PatientResult<String> {
+//!     // Operation that might fail
+//!     Ok("success".to_string())
+//! }
+//! ```
+//!
+//! Errors can be handled using standard Rust error handling patterns:
+//!
+//! ```rust,ignore
+//! match some_operation() {
+//!     Ok(result) => println!("Success: {}", result),
+//!     Err(PatientError::InvalidInput(msg)) => eprintln!("Invalid input: {}", msg),
+//!     Err(other) => eprintln!("Other error: {}", other),
+//! }
+//! ```
+
 #[allow(clippy::single_component_path_imports)]
 use serde_yaml;
 
+/// Comprehensive error type for all VPR operations.
+///
+/// This enum represents all possible failure modes in the VPR system, from basic I/O operations
+/// to complex cryptographic validation. Each variant includes relevant context and follows
+/// consistent naming and documentation patterns.
+///
+/// The error messages are designed to be informative for both developers debugging issues
+/// and operators maintaining production systems.
 #[derive(Debug, thiserror::Error)]
 pub enum PatientError {
     #[error("invalid input: {0}")]
@@ -96,4 +154,8 @@ pub enum PatientError {
     ReservedCareLocationTrailerKey,
 }
 
+/// Type alias for Results that can fail with [`PatientError`].
+///
+/// This is the standard return type for all VPR operations that may fail.
+/// Using this alias ensures consistent error handling across the codebase.
 pub type PatientResult<T> = std::result::Result<T, PatientError>;
