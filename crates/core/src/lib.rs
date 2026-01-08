@@ -31,6 +31,7 @@ pub use constants::DEFAULT_PATIENT_DATA_DIR;
 
 pub use config::CoreConfig;
 
+// TODO: need to check if all of these re-exports are necessary
 // Re-export author types
 pub use author::{
     extract_embedded_commit_signature, Author, AuthorRegistration, EmbeddedCommitSignature,
