@@ -11,7 +11,6 @@ use crate::uuid::UuidService;
 use crate::{
     copy_dir_recursive, extract_embedded_commit_signature, Author, PatientError, PatientResult,
 };
-use chrono::{DateTime, Utc};
 use git2;
 use openehr::{ehr_status_render, extract_rm_version, EhrId, ExternalReference};
 use std::{
@@ -233,41 +232,6 @@ impl ClinicalService {
         }
 
         Ok(())
-    }
-
-    /// Retrieves the timestamp of the first commit for a clinical record.
-    ///
-    /// This function opens the Git repository for the specified clinical record
-    /// and returns the timestamp of the first (initial) commit.
-    ///
-    /// # Arguments
-    ///
-    /// * `clinical_uuid` - The UUID of the clinical record.
-    ///
-    /// # Returns
-    ///
-    /// Returns the timestamp of the first commit as a `DateTime<Utc>`.
-    ///
-    /// # Errors
-    ///
-    /// Returns a `PatientError` if:
-    /// - the UUID cannot be parsed,
-    /// - the Git repository cannot be opened or the first commit cannot be read,
-    /// - the commit timestamp cannot be converted into a `DateTime<Utc>`.
-    pub fn get_first_commit_time(&self, clinical_uuid: &str) -> PatientResult<DateTime<Utc>> {
-        let clinical_uuid = UuidService::parse(clinical_uuid)?;
-        let patient_dir = self.clinical_patient_dir(&clinical_uuid);
-
-        let repo = GitService::open(&patient_dir)?.into_repo();
-        let head = repo.head().map_err(PatientError::GitHead)?;
-        let commit = head.peel_to_commit().map_err(PatientError::GitPeel)?;
-
-        // Get the time from the commit
-        let time = commit.time();
-        let datetime =
-            DateTime::from_timestamp(time.seconds(), 0).ok_or(PatientError::InvalidTimestamp)?;
-
-        Ok(datetime)
     }
 
     /// Verifies the ECDSA signature of the latest commit in the patient's Git repository.
@@ -1386,42 +1350,6 @@ mod tests {
             )
             .expect_err("expected validation failure");
         assert!(matches!(err, PatientError::InvalidInput(_)));
-    }
-
-    #[test]
-    fn test_get_first_commit_time() {
-        // Create a temporary directory for testing
-        let temp_dir = TempDir::new().expect("Failed to create temp dir");
-
-        // Create a test author
-        let author = Author {
-            name: "Test Author".to_string(),
-            role: "Clinician".to_string(),
-            email: "test@example.com".to_string(),
-            registrations: vec![],
-            signature: None,
-            certificate: None,
-        };
-
-        // Initialise clinical service
-        let cfg = test_cfg(temp_dir.path());
-        let service = ClinicalService::new(cfg);
-
-        // Call initialise to create a record
-        let clinical_uuid = service
-            .initialise(author, "Test Hospital".to_string())
-            .expect("initialise should succeed");
-        let clinical_uuid_str = clinical_uuid.simple().to_string();
-
-        // Call get_first_commit_time
-        let result = service.get_first_commit_time(&clinical_uuid_str);
-        assert!(result.is_ok(), "get_first_commit_time should succeed");
-
-        let timestamp = result.unwrap();
-        // The timestamp should be recent (within the last minute)
-        let now = Utc::now();
-        let diff = now.signed_duration_since(timestamp);
-        assert!(diff.num_seconds() < 60, "timestamp should be recent");
     }
 
     #[test]

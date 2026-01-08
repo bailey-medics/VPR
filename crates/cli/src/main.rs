@@ -154,12 +154,6 @@ enum Commands {
         #[arg(long)]
         namespace: Option<String>,
     },
-    /// Get first commit time for clinical record: <clinical_uuid>
-    GetFirstCommitTime {
-        /// Clinical repository UUID
-        clinical_uuid: String,
-    },
-
     /// Verify the signature on the latest clinical commit: <clinical_uuid> <public_key>
     ///
     /// The public key can be:
@@ -475,16 +469,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     record.demographics_uuid, record.clinical_uuid
                 ),
                 Err(e) => eprintln!("Error initialising full record: {}", e),
-            }
-        }
-        Some(Commands::GetFirstCommitTime { clinical_uuid }) => {
-            let clinical_service = ClinicalService::new(cfg.clone());
-            match clinical_service.get_first_commit_time(&clinical_uuid, None) {
-                Ok(timestamp) => println!(
-                    "First commit time for clinical UUID {}: {}",
-                    clinical_uuid, timestamp
-                ),
-                Err(e) => eprintln!("Error getting first commit time: {}", e),
             }
         }
         Some(Commands::VerifyClinicalCommitSignature {
