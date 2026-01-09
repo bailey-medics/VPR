@@ -6,7 +6,7 @@
 use crate::config::{validate_ehr_template_dir_safe_to_copy, CoreConfig};
 use crate::constants::{CLINICAL_DIR_NAME, EHR_STATUS_FILENAME};
 use crate::git::{GitService, VprCommitAction, VprCommitDomain, VprCommitMessage};
-use crate::repo::create_unique_shared_dir;
+use crate::repositories::helpers::create_unique_shared_dir;
 use crate::uuid::UuidService;
 use crate::{copy_dir_recursive, Author, PatientError, PatientResult};
 use openehr::{

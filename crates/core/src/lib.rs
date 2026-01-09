@@ -13,7 +13,6 @@ pub mod author;
 pub mod config;
 pub mod constants;
 pub mod git;
-pub mod repo;
 pub mod repositories;
 pub(crate) mod uuid;
 
@@ -36,7 +35,7 @@ pub use author::{
 };
 
 // Re-export repo utilities
-pub use repo::{add_directory_to_index, copy_dir_recursive};
+pub use repositories::helpers::{add_directory_to_index, copy_dir_recursive};
 
 // Re-export error types
 pub use error::{PatientError, PatientResult};
