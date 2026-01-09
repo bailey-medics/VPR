@@ -19,10 +19,10 @@ use tracing;
 
 use crate::{PatientError, PatientResult};
 
-/// Represents a patient record in FHIR-like format.
+/// Represents a patient demographics record in FHIR-like format.
 /// This struct contains basic demographic information for a patient.
 #[derive(Serialize, Deserialize)]
-struct Patient {
+struct Demographics {
     resource_type: String,
     id: String,
     name: Vec<Name>,
@@ -82,7 +82,7 @@ impl DemographicsService {
         let created_at = chrono::Utc::now().to_rfc3339();
 
         // Create initial patient JSON
-        let patient = Patient {
+        let patient = Demographics {
             resource_type: "Patient".to_string(),
             id: demographics_uuid.to_string(),
             name: vec![],               // Empty initially
@@ -157,7 +157,7 @@ impl DemographicsService {
 
         // Read existing patient.json
         let existing_json = fs::read_to_string(&filename).map_err(PatientError::FileRead)?;
-        let mut patient: Patient =
+        let mut patient: Demographics =
             serde_json::from_str(&existing_json).map_err(PatientError::Deserialization)?;
 
         // Update only the specified fields
