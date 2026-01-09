@@ -7,13 +7,13 @@
 use clap::{Parser, Subcommand};
 use vpr_certificates::Certificate;
 use vpr_core::{
-    clinical::ClinicalService,
     config::{
         resolve_ehr_template_dir, rm_system_version_from_env_value,
         validate_ehr_template_dir_safe_to_copy,
     },
     constants,
     git::GitService,
+    repositories::clinical::ClinicalService,
     repositories::demographics::DemographicsService,
     Author, AuthorRegistration, CoreConfig, PatientService,
 };
