@@ -17,8 +17,8 @@ use api_shared::{auth, HealthService};
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
 use vpr_core::{
-    clinical::ClinicalService, demographics::DemographicsService, Author, AuthorRegistration,
-    CoreConfig,
+    repositories::clinical::ClinicalService, repositories::demographics::DemographicsService,
+    Author, AuthorRegistration, CoreConfig,
 };
 
 /// Authentication interceptor for gRPC requests.

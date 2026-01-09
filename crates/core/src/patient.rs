@@ -3,7 +3,10 @@
 //! This module provides the main service for patient operations,
 //! including initialising full patient records.
 
-use crate::{Author, PatientResult};
+use crate::{
+    repositories::clinical::ClinicalService, repositories::demographics::DemographicsService,
+    Author, PatientResult,
+};
 
 /// Represents a complete patient record with both demographics and clinical components.
 #[derive(Debug)]
@@ -61,7 +64,7 @@ impl PatientService {
         birth_date: String,
         namespace: Option<String>,
     ) -> PatientResult<FullRecord> {
-        let demographics_service = crate::demographics::DemographicsService::new(self.cfg.clone());
+        let demographics_service = DemographicsService::new(self.cfg.clone());
         // Initialise demographics
         let demographics_uuid =
             demographics_service.initialise(author.clone(), care_location.clone())?;
@@ -70,7 +73,7 @@ impl PatientService {
         demographics_service.update(&demographics_uuid, given_names, &last_name, &birth_date)?;
 
         // Initialise clinical
-        let clinical_service = crate::clinical::ClinicalService::new(self.cfg.clone());
+        let clinical_service = ClinicalService::new(self.cfg.clone());
         let clinical_uuid = clinical_service.initialise(author.clone(), care_location.clone())?;
 
         // Link clinical to demographics
