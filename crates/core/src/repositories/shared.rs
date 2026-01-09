@@ -1,7 +1,15 @@
-//! Repository-related utilities.
+//! Shared repository utilities.
 //!
-//! This module contains functions for managing patient data repositories,
-//! including directory allocation and other repository operations.
+//! This module contains shared functions and types for managing patient data repositories,
+//! template validation, and file system operations used across different repository types.
+//!
+//! ## Key Components
+//!
+//! - **Template Management**: `TemplateDirKind` enum and functions for locating and validating
+//!   template directories (`resolve_ehr_template_dir`, `validate_template`)
+//! - **Directory Operations**: Utilities for creating unique patient directories
+//!   (`create_unique_shared_dir`) and recursive copying (`copy_dir_recursive`)
+//! - **Git Integration**: Functions for adding files to Git index (`add_directory_to_index`)
 
 use crate::constants::EHR_TEMPLATE_DIR;
 use crate::uuid::UuidService;
@@ -44,62 +52,6 @@ impl TemplateDirKind {
             TemplateDirKind::Coordination => "Coordination template directory",
         }
     }
-}
-
-/// Resolve the EHR template directory without reading environment variables.
-///
-/// If `override_dir` is provided, it must be a directory and must contain `.ehr/`.
-/// Otherwise this searches for `ehr-template/` relative to the current working directory and
-/// then walks up from `CARGO_MANIFEST_DIR`.
-///
-/// # Search Order
-///
-/// 1. Use `override_dir` if provided and valid
-/// 2. Check `./ehr-template/` relative to current working directory
-/// 3. Walk up from `CARGO_MANIFEST_DIR` looking for `ehr-template/`
-///
-/// # Validation
-///
-/// A valid template directory must:
-/// - Be a directory
-/// - Contain a `.ehr/` subdirectory
-///
-/// # Errors
-///
-/// Returns `PatientError::InvalidInput` if:
-/// - `override_dir` is provided but invalid
-/// - No valid template directory is found
-pub fn resolve_ehr_template_dir(override_dir: Option<PathBuf>) -> PatientResult<PathBuf> {
-    fn looks_like_template_dir(path: &Path) -> bool {
-        path.join(".ehr").is_dir()
-    }
-
-    if let Some(template_dir) = override_dir {
-        if template_dir.is_dir() && looks_like_template_dir(&template_dir) {
-            return Ok(template_dir);
-        }
-        return Err(PatientError::InvalidInput(
-            "VPR_EHR_TEMPLATE_DIR override is not a valid template directory (must contain .ehr/)"
-                .into(),
-        ));
-    }
-
-    let cwd_relative = PathBuf::from(EHR_TEMPLATE_DIR);
-    if cwd_relative.is_dir() && looks_like_template_dir(&cwd_relative) {
-        return Ok(cwd_relative);
-    }
-
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    for ancestor in manifest_dir.ancestors() {
-        let candidate = ancestor.join(EHR_TEMPLATE_DIR);
-        if candidate.is_dir() && looks_like_template_dir(&candidate) {
-            return Ok(candidate);
-        }
-    }
-
-    Err(PatientError::InvalidInput(
-        "could not locate ehr-template/ directory with .ehr/ subfolder".into(),
-    ))
 }
 
 /// Creates a unique shared directory within the base records directory.
@@ -313,4 +265,62 @@ pub fn validate_template(kind: &TemplateDirKind, template_dir: &Path) -> Patient
     let mut files = 0usize;
     let mut bytes = 0u64;
     scan_dir(template_dir, 0, &mut files, &mut bytes, kind)
+}
+
+// TODO: we might be able to make this generic later for other template types
+
+/// Resolve the EHR template directory without reading environment variables.
+///
+/// If `override_dir` is provided, it must be a directory and must contain `.ehr/`.
+/// Otherwise this searches for `ehr-template/` relative to the current working directory and
+/// then walks up from `CARGO_MANIFEST_DIR`.
+///
+/// # Search Order
+///
+/// 1. Use `override_dir` if provided and valid
+/// 2. Check `./ehr-template/` relative to current working directory
+/// 3. Walk up from `CARGO_MANIFEST_DIR` looking for `ehr-template/`
+///
+/// # Validation
+///
+/// A valid template directory must:
+/// - Be a directory
+/// - Contain a `.ehr/` subdirectory
+///
+/// # Errors
+///
+/// Returns `PatientError::InvalidInput` if:
+/// - `override_dir` is provided but invalid
+/// - No valid template directory is found
+pub fn resolve_ehr_template_dir(override_dir: Option<PathBuf>) -> PatientResult<PathBuf> {
+    fn looks_like_template_dir(path: &Path) -> bool {
+        path.join(".ehr").is_dir()
+    }
+
+    if let Some(template_dir) = override_dir {
+        if template_dir.is_dir() && looks_like_template_dir(&template_dir) {
+            return Ok(template_dir);
+        }
+        return Err(PatientError::InvalidInput(
+            "VPR_EHR_TEMPLATE_DIR override is not a valid template directory (must contain .ehr/)"
+                .into(),
+        ));
+    }
+
+    let cwd_relative = PathBuf::from(EHR_TEMPLATE_DIR);
+    if cwd_relative.is_dir() && looks_like_template_dir(&cwd_relative) {
+        return Ok(cwd_relative);
+    }
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for ancestor in manifest_dir.ancestors() {
+        let candidate = ancestor.join(EHR_TEMPLATE_DIR);
+        if candidate.is_dir() && looks_like_template_dir(&candidate) {
+            return Ok(candidate);
+        }
+    }
+
+    Err(PatientError::InvalidInput(
+        "could not locate ehr-template/ directory with .ehr/ subfolder".into(),
+    ))
 }
