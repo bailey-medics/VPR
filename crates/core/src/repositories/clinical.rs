@@ -1,12 +1,22 @@
 //! Patient clinical records management.
 //!
-//! This module handles the initialisation and management of clinical records
-//! for patients.
+//! This module handles the creation, linking, and maintenance of per-patient
+//! clinical record repositories within the Versioned Patient Repository (VPR).
+//! It initialises new records from validated EHR templates, enforces directory
+//! sharding for scalable storage, and ensures all operations are version-controlled
+//! through Git with optional cryptographic signing.
+//!
+//! Each record includes an `ehr_status.yaml` file conforming to openEHR structures,
+//! providing metadata about the patient’s EHR lifecycle and its linkage to
+//! demographics via external references.
+//!
+//! All filesystem operations are validated for safety and rollback on failure,
+//! guaranteeing no partial or unsafe patient directories remain after errors.
 
-use crate::config::{validate_ehr_template_dir_safe_to_copy, CoreConfig};
+use crate::config::CoreConfig;
 use crate::constants::{CLINICAL_DIR_NAME, EHR_STATUS_FILENAME};
 use crate::git::{GitService, VprCommitAction, VprCommitDomain, VprCommitMessage};
-use crate::repositories::helpers::create_unique_shared_dir;
+use crate::repositories::shared::{create_unique_shared_dir, validate_template, TemplateDirKind};
 use crate::uuid::UuidService;
 use crate::{copy_dir_recursive, Author, PatientError, PatientResult};
 use openehr::{
@@ -98,7 +108,7 @@ impl ClinicalService {
             // This should normally be validated once at startup when `CoreConfig` is created,
             // but validating here prevents unsafe copying if an invalid config slips through.
             let template_dir = self.cfg.ehr_template_dir().to_path_buf();
-            validate_ehr_template_dir_safe_to_copy(&template_dir)?;
+            validate_template(&TemplateDirKind::Clinical, &template_dir)?;
 
             // Copy EHR template to patient directory
             copy_dir_recursive(&template_dir, &patient_dir).map_err(PatientError::FileWrite)?;
@@ -294,10 +304,8 @@ fn remove_patient_dir_all(patient_dir: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{
-        resolve_ehr_template_dir, rm_system_version_from_env_value,
-        validate_ehr_template_dir_safe_to_copy,
-    };
+    use crate::config::rm_system_version_from_env_value;
+    use crate::repositories::shared::{resolve_ehr_template_dir, validate_template};
     use crate::CoreConfig;
     use p256::ecdsa::SigningKey;
     use p256::pkcs8::{EncodePrivateKey, EncodePublicKey};
@@ -353,7 +361,7 @@ mod tests {
     fn test_cfg(patient_data_dir: &Path) -> Arc<CoreConfig> {
         let ehr_template_dir =
             resolve_ehr_template_dir(None).expect("resolve_ehr_template_dir should succeed");
-        validate_ehr_template_dir_safe_to_copy(&ehr_template_dir)
+        validate_template(&TemplateDirKind::Clinical, &ehr_template_dir)
             .expect("template dir should be safe to copy");
 
         let rm_system_version = rm_system_version_from_env_value(None)

@@ -29,12 +29,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use vpr_core::{
     Author, AuthorRegistration, CoreConfig,
-    config::{
-        resolve_ehr_template_dir, rm_system_version_from_env_value,
-        validate_ehr_template_dir_safe_to_copy,
-    },
+    config::rm_system_version_from_env_value,
     repositories::clinical::ClinicalService,
     repositories::demographics::DemographicsService,
+    repositories::shared::{TemplateDirKind, resolve_ehr_template_dir, validate_template},
 };
 
 type HealthRes = pb::HealthRes;
@@ -125,7 +123,7 @@ async fn main() -> anyhow::Result<()> {
         eprintln!("Error: Unable to resolve EHR template directory");
         std::process::exit(1);
     });
-    if let Err(e) = validate_ehr_template_dir_safe_to_copy(&ehr_template_dir) {
+    if let Err(e) = validate_template(&TemplateDirKind::Clinical, &ehr_template_dir) {
         eprintln!(
             "Error: EHR template directory is not safe to copy: {} ({})",
             ehr_template_dir.display(),
