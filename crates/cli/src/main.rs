@@ -7,14 +7,12 @@
 use clap::{Parser, Subcommand};
 use vpr_certificates::Certificate;
 use vpr_core::{
-    config::{
-        resolve_ehr_template_dir, rm_system_version_from_env_value,
-        validate_ehr_template_dir_safe_to_copy,
-    },
+    config::rm_system_version_from_env_value,
     constants,
     git::GitService,
     repositories::clinical::ClinicalService,
     repositories::demographics::DemographicsService,
+    repositories::shared::{resolve_ehr_template_dir, validate_template, TemplateDirKind},
     Author, AuthorRegistration, CoreConfig, PatientService,
 };
 
@@ -593,7 +591,7 @@ fn build_core_config_from_env() -> Result<Arc<CoreConfig>, Box<dyn std::error::E
         .ok()
         .map(PathBuf::from);
     let ehr_template_dir = resolve_ehr_template_dir(template_override)?;
-    validate_ehr_template_dir_safe_to_copy(&ehr_template_dir)?;
+    validate_template(&TemplateDirKind::Clinical, &ehr_template_dir)?;
 
     let rm_system_version =
         rm_system_version_from_env_value(std::env::var("RM_SYSTEM_VERSION").ok())?;

@@ -17,9 +17,9 @@ use api_grpc::{auth_interceptor, pb::vpr_server::VprServer, VprService};
 use api_shared::FILE_DESCRIPTOR_SET;
 use std::path::Path;
 use std::sync::Arc;
-use vpr_core::config::{
-    resolve_ehr_template_dir, rm_system_version_from_env_value,
-    validate_ehr_template_dir_safe_to_copy,
+use vpr_core::config::rm_system_version_from_env_value;
+use vpr_core::repositories::shared::{
+    resolve_ehr_template_dir, validate_template, TemplateDirKind,
 };
 use vpr_core::CoreConfig;
 
@@ -59,7 +59,7 @@ async fn main() -> anyhow::Result<()> {
         .ok()
         .map(std::path::PathBuf::from);
     let ehr_template_dir = resolve_ehr_template_dir(template_override)?;
-    validate_ehr_template_dir_safe_to_copy(&ehr_template_dir)?;
+    validate_template(&TemplateDirKind::Clinical, &ehr_template_dir)?;
 
     let rm_system_version =
         rm_system_version_from_env_value(std::env::var("RM_SYSTEM_VERSION").ok())?;

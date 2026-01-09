@@ -24,9 +24,11 @@ use api_shared::pb;
 use std::path::Path;
 use std::path::PathBuf;
 use vpr_core::{
-    config::resolve_ehr_template_dir, config::rm_system_version_from_env_value,
-    config::validate_ehr_template_dir_safe_to_copy, repositories::clinical::ClinicalService,
-    repositories::demographics::DemographicsService, Author, AuthorRegistration, CoreConfig,
+    config::rm_system_version_from_env_value,
+    repositories::clinical::ClinicalService,
+    repositories::demographics::DemographicsService,
+    repositories::shared::{resolve_ehr_template_dir, validate_template, TemplateDirKind},
+    Author, AuthorRegistration, CoreConfig,
 };
 
 /// Application state for the REST API server
@@ -95,7 +97,7 @@ async fn main() -> anyhow::Result<()> {
         .ok()
         .map(PathBuf::from);
     let ehr_template_dir = resolve_ehr_template_dir(template_override)?;
-    validate_ehr_template_dir_safe_to_copy(&ehr_template_dir)?;
+    validate_template(&TemplateDirKind::Clinical, &ehr_template_dir)?;
 
     let rm_system_version =
         rm_system_version_from_env_value(std::env::var("RM_SYSTEM_VERSION").ok())?;

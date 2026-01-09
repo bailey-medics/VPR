@@ -35,7 +35,7 @@ pub use author::{
 };
 
 // Re-export repo utilities
-pub use repositories::helpers::{add_directory_to_index, copy_dir_recursive};
+pub use repositories::shared::{add_directory_to_index, copy_dir_recursive};
 
 // Re-export error types
 pub use error::{PatientError, PatientResult};
