@@ -13,12 +13,15 @@
 //! All filesystem operations are validated for safety and rollback on failure,
 //! guaranteeing no partial or unsafe patient directories remain after errors.
 
+use crate::author::Author;
 use crate::config::CoreConfig;
 use crate::constants::{CLINICAL_DIR_NAME, EHR_STATUS_FILENAME};
+use crate::error::{PatientError, PatientResult};
 use crate::git::{GitService, VprCommitAction, VprCommitDomain, VprCommitMessage};
-use crate::repositories::shared::{create_unique_shared_dir, validate_template, TemplateDirKind};
+use crate::repositories::shared::{
+    copy_dir_recursive, create_unique_shared_dir, validate_template, TemplateDirKind,
+};
 use crate::uuid::UuidService;
-use crate::{copy_dir_recursive, Author, PatientError, PatientResult};
 use openehr::{
     ehr_status_render, extract_rm_version, validation::validate_namespace_uri_safe, EhrId,
     ExternalReference,
@@ -1395,7 +1398,7 @@ mod tests {
         let head = repo.head().expect("Failed to get HEAD");
         let commit = head.peel_to_commit().expect("Failed to get commit");
 
-        let embedded = crate::extract_embedded_commit_signature(&commit)
+        let embedded = crate::author::extract_embedded_commit_signature(&commit)
             .expect("extract_embedded_commit_signature should succeed");
         assert_eq!(embedded.signature.len(), 64);
         assert!(!embedded.public_key.is_empty());
@@ -1435,7 +1438,7 @@ mod tests {
         let commit = head.peel_to_commit().expect("Failed to get commit");
 
         assert!(
-            crate::extract_embedded_commit_signature(&commit).is_err(),
+            crate::author::extract_embedded_commit_signature(&commit).is_err(),
             "unsigned commits should not contain an embedded signature payload"
         );
 

@@ -6,9 +6,11 @@
 //! version control using Git. Demographic updates include name and birth date
 //! modifications.
 
+use crate::author::Author;
 use crate::config::CoreConfig;
+use crate::error::{PatientError, PatientResult};
 use crate::git::{GitService, VprCommitAction, VprCommitDomain, VprCommitMessage};
-use crate::Author;
+use api_shared::pb;
 use chrono;
 use serde::{Deserialize, Serialize};
 use serde_json;
@@ -16,8 +18,6 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing;
-
-use crate::{PatientError, PatientResult};
 
 /// Represents a patient demographics record in FHIR-like format.
 /// This struct contains basic demographic information for a patient.
@@ -188,7 +188,7 @@ impl DemographicsService {
     /// # Directory Structure
     /// Expects patients stored in: `<patient_data_dir>/demographics/<s1>/<s2>/<32hex-uuid>/patient.json`
     /// where s1/s2 are the first 4 hex characters of the UUID.
-    pub fn list_patients(&self) -> Vec<crate::pb::Patient> {
+    pub fn list_patients(&self) -> Vec<pb::Patient> {
         let data_dir = self.cfg.patient_data_dir();
 
         let mut patients = Vec::new();
@@ -260,7 +260,7 @@ impl DemographicsService {
                                 (String::new(), String::new())
                             };
 
-                            patients.push(crate::pb::Patient {
+                            patients.push(pb::Patient {
                                 id,
                                 first_name,
                                 last_name,

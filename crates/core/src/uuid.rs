@@ -38,7 +38,7 @@
 //! - **Load distribution**: Spreads I/O across multiple directories
 //! - **Scalability**: Supports millions of patient records without performance degradation
 
-use crate::{PatientError, PatientResult};
+use crate::error::{PatientError, PatientResult};
 use std::path::{Path, PathBuf};
 use std::{fmt, str::FromStr};
 

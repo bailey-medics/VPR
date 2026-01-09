@@ -3,7 +3,7 @@
 //! This module contains types and utilities for handling author information,
 //! signatures, and commit validation in the VPR system.
 
-use crate::{PatientError, PatientResult};
+use crate::error::{PatientError, PatientResult};
 use base64::{engine::general_purpose, Engine as _};
 use serde::Deserialize;
 use x509_parser::prelude::*;
