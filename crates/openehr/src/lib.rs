@@ -15,6 +15,7 @@ use uuid::Uuid;
 use serde::{Deserialize, Serialize};
 
 pub mod rm_1_1_0;
+pub mod validation;
 
 /// Supported openEHR RM versions.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -87,6 +88,9 @@ pub struct ExternalReference {
 /// Errors returned by the `openehr` boundary crate.
 #[derive(Debug, thiserror::Error)]
 pub enum OpenEhrError {
+    #[error("invalid input: {0}")]
+    InvalidInput(String),
+
     #[error("invalid YAML: {0}")]
     InvalidYaml(#[from] serde_yaml::Error),
 
@@ -99,6 +103,9 @@ pub enum OpenEhrError {
     #[error("unsupported RM version: {0}")]
     UnsupportedRmVersion(String),
 }
+
+/// Type alias for Results that can fail with an [`OpenEhrError`].
+pub type OpenEhrResult<T> = Result<T, OpenEhrError>;
 
 /// Render an `EHR_STATUS` YAML string for the specified RM version.
 ///

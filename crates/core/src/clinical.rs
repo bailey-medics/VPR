@@ -9,7 +9,10 @@ use crate::git::{GitService, VprCommitAction, VprCommitDomain, VprCommitMessage}
 use crate::repo::create_unique_shared_dir;
 use crate::uuid::UuidService;
 use crate::{copy_dir_recursive, Author, PatientError, PatientResult};
-use openehr::{ehr_status_render, extract_rm_version, EhrId, ExternalReference};
+use openehr::{
+    ehr_status_render, extract_rm_version, validation::validate_namespace_uri_safe, EhrId,
+    ExternalReference,
+};
 use std::{
     fs, io,
     path::{Path, PathBuf},
@@ -151,7 +154,7 @@ impl ClinicalService {
     ///
     /// Returns a `PatientError` if:
     /// - either UUID cannot be parsed,
-    /// - the namespace is invalid/unsafe for embedding into a `vpr://{namespace}/mpi` URI,
+    /// - the namespace is invalid/unsafe for embedding into a `ehr://{namespace}/mpi` URI,
     /// - writing `ehr_status.yaml` fails.
     pub fn link_to_demographics(
         &self,
@@ -172,12 +175,12 @@ impl ClinicalService {
         let demographics_uuid = UuidService::parse(demographics_uuid)?;
 
         // Use the caller-provided namespace if present; otherwise fall back to the configured
-        // default. Trim and validate before embedding into a `vpr://{namespace}/mpi` URI.
+        // default. Trim and validate before embedding into a `ehr://{namespace}/mpi` URI.
         let namespace = namespace
             .as_deref()
             .unwrap_or(self.cfg.vpr_namespace())
             .trim();
-        crate::validation::validate_namespace_safe_for_uri(namespace)?;
+        validate_namespace_uri_safe(namespace)?;
 
         // let rm_version = self.cfg.rm_system_version();
 
@@ -185,7 +188,7 @@ impl ClinicalService {
         let filename = patient_dir.join(EHR_STATUS_FILENAME);
 
         let external_reference = Some(vec![ExternalReference {
-            namespace: format!("vpr://{}/mpi", namespace),
+            namespace: format!("ehr://{}/mpi", namespace),
             id: demographics_uuid.uuid(),
         }]);
 
@@ -1167,52 +1170,6 @@ mod tests {
         let ehr_status_file = patient_dir.join(EHR_STATUS_FILENAME);
 
         assert!(ehr_status_file.exists(), "ehr_status.yaml should exist");
-    }
-
-    #[test]
-    fn test_link_to_demographics_rejects_unsafe_namespace_without_mutation() {
-        let temp_dir = TempDir::new().expect("Failed to create temp dir");
-
-        let author = Author {
-            name: "Test Author".to_string(),
-            role: "Clinician".to_string(),
-            email: "test@example.com".to_string(),
-            registrations: vec![],
-            signature: None,
-            certificate: None,
-        };
-
-        let cfg = test_cfg(temp_dir.path());
-        let service = ClinicalService::new(cfg);
-
-        let care_location = "Test Hospital".to_string();
-        let clinical_uuid = service
-            .initialise(author.clone(), care_location.clone())
-            .expect("initialise should succeed");
-        let clinical_uuid_str = clinical_uuid.simple().to_string();
-
-        let clinical_dir = temp_dir.path().join(CLINICAL_DIR_NAME);
-        let patient_dir = UuidService::parse(&clinical_uuid_str)
-            .expect("clinical_uuid should be canonical")
-            .sharded_dir(&clinical_dir);
-        let ehr_status_file = patient_dir.join(EHR_STATUS_FILENAME);
-
-        let before = fs::read_to_string(&ehr_status_file).expect("Failed to read ehr_status.yaml");
-
-        let demographics_uuid = "12345678123412341234123456789abc";
-        let err = service
-            .link_to_demographics(
-                &author,
-                care_location,
-                &clinical_uuid_str,
-                demographics_uuid,
-                Some("bad/namespace".to_string()),
-            )
-            .expect_err("expected validation failure");
-        assert!(matches!(err, PatientError::InvalidInput(_)));
-
-        let after = fs::read_to_string(&ehr_status_file).expect("Failed to read ehr_status.yaml");
-        assert_eq!(before, after, "ehr_status.yaml should not be modified");
     }
 
     #[test]

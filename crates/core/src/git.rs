@@ -1039,7 +1039,7 @@ mod tests {
         let pem = "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE4f5wg2l2hKsTeNem/V41fGnJm6gO\nXUM8z5RZVKQ7Xwxo+7ZyQfYqQZUw8fQtFkQ7l2p4i3v4z1+L8Q8jQJvAQ==\n-----END PUBLIC KEY-----";
         let key = verifying_key_from_public_key_or_cert_pem(pem).unwrap();
         // Just check it parses without error
-        assert!(key.to_encoded_point(false).as_bytes().len() > 0);
+        assert!(!key.to_encoded_point(false).as_bytes().is_empty());
     }
 
     #[test]
