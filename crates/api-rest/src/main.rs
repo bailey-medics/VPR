@@ -24,9 +24,9 @@ use api_shared::pb;
 use std::path::Path;
 use std::path::PathBuf;
 use vpr_core::{
-    clinical::ClinicalService, config::resolve_ehr_template_dir,
-    config::rm_system_version_from_env_value, config::validate_ehr_template_dir_safe_to_copy,
-    demographics::DemographicsService, Author, AuthorRegistration, CoreConfig,
+    config::resolve_ehr_template_dir, config::rm_system_version_from_env_value,
+    config::validate_ehr_template_dir_safe_to_copy, repositories::clinical::ClinicalService,
+    repositories::demographics::DemographicsService, Author, AuthorRegistration, CoreConfig,
 };
 
 /// Application state for the REST API server

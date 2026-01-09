@@ -29,12 +29,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use vpr_core::{
     Author, AuthorRegistration, CoreConfig,
-    clinical::ClinicalService,
     config::{
         resolve_ehr_template_dir, rm_system_version_from_env_value,
         validate_ehr_template_dir_safe_to_copy,
     },
-    demographics::DemographicsService,
+    repositories::clinical::ClinicalService,
+    repositories::demographics::DemographicsService,
 };
 
 type HealthRes = pb::HealthRes;

@@ -10,12 +10,11 @@
 //! **No API concerns**: Authentication, HTTP/gRPC servers, or service interfaces belong in `api-grpc`, `api-rest`, or `api-shared`.
 
 pub mod author;
-pub mod clinical;
 pub mod config;
 pub mod constants;
-pub mod demographics;
 pub mod git;
 pub mod repo;
+pub mod repositories;
 pub(crate) mod uuid;
 
 pub mod error;

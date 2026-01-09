@@ -13,8 +13,8 @@ use vpr_core::{
         validate_ehr_template_dir_safe_to_copy,
     },
     constants,
-    demographics::DemographicsService,
     git::GitService,
+    repositories::demographics::DemographicsService,
     Author, AuthorRegistration, CoreConfig, PatientService,
 };
 
