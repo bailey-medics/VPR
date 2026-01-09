@@ -16,7 +16,7 @@ That patient directory is initialised as a Git repository (`.git/` lives inside 
 
 When a new clinical record is created:
 
-1. VPR copies the `ehr-template/` directory into the patient directory.
+1. VPR copies the `clinical-template/` directory into the patient directory.
 2. VPR writes the initial `ehr_status.yaml`.
 3. VPR stages all files (excluding `.git/`) and writes a tree.
 4. VPR creates the initial commit.

@@ -5,7 +5,7 @@
 //!
 //! ## Intended use
 //! This is the primary runtime entry point for VPR. It performs basic startup validation (for
-//! example, ensuring the patient data directory and EHR template exist) and then serves both APIs.
+//! example, ensuring the patient data directory and clinical template exist) and then serves both APIs.
 
 use axum::{
     Router,
@@ -32,7 +32,7 @@ use vpr_core::{
     config::rm_system_version_from_env_value,
     repositories::clinical::ClinicalService,
     repositories::demographics::DemographicsService,
-    repositories::shared::{TemplateDirKind, resolve_ehr_template_dir, validate_template},
+    repositories::shared::{TemplateDirKind, resolve_clinical_template_dir, validate_template},
 };
 
 type HealthRes = pb::HealthRes;
@@ -116,17 +116,18 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let template_override = std::env::var("VPR_EHR_TEMPLATE_DIR")
+    let template_override = std::env::var("VPR_CLINICAL_TEMPLATE_DIR")
         .ok()
         .map(PathBuf::from);
-    let ehr_template_dir = resolve_ehr_template_dir(template_override).unwrap_or_else(|_| {
-        eprintln!("Error: Unable to resolve EHR template directory");
-        std::process::exit(1);
-    });
-    if let Err(e) = validate_template(&TemplateDirKind::Clinical, &ehr_template_dir) {
+    let clinical_template_dir =
+        resolve_clinical_template_dir(template_override).unwrap_or_else(|_| {
+            eprintln!("Error: Unable to resolve clinical template directory");
+            std::process::exit(1);
+        });
+    if let Err(e) = validate_template(&TemplateDirKind::Clinical, &clinical_template_dir) {
         eprintln!(
-            "Error: EHR template directory is not safe to copy: {} ({})",
-            ehr_template_dir.display(),
+            "Error: Clinical template directory is not safe to copy: {} ({})",
+            clinical_template_dir.display(),
             e
         );
         std::process::exit(1);
@@ -144,7 +145,7 @@ async fn main() -> anyhow::Result<()> {
     let cfg = Arc::new(
         CoreConfig::new(
             patient_data_path.to_path_buf(),
-            ehr_template_dir,
+            clinical_template_dir,
             rm_system_version,
             vpr_namespace,
         )
