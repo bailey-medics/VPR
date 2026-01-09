@@ -55,6 +55,7 @@
     "libapi",
     "libgit",
     "libvpr",
+    "linters",
     "makedirs",
     "mdbook",
     "Mishra",
@@ -87,6 +88,7 @@
     "Reen",
     "Rehman",
     "resp",
+    "retriable",
     "rgba",
     "Roboto",
     "rustc",
@@ -109,23 +111,15 @@
     "Venkaresan",
     "writable"
   ],
-  "ignoreWords": [
-    "Exampletown"
-  ],
+  "ignoreWords": ["Exampletown"],
   "languageSettings": [
     {
       "languageId": "rust",
-      "includeRegExpList": [
-        "string",
-        "comment",
-        "doc"
-      ]
+      "includeRegExpList": ["string", "comment", "doc"]
     },
     {
       "languageId": "markdown",
-      "includeRegExpList": [
-        ".*"
-      ]
+      "includeRegExpList": [".*"]
     }
   ]
 }
