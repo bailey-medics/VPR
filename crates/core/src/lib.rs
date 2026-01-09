@@ -17,7 +17,6 @@ pub mod demographics;
 pub mod git;
 pub mod repo;
 pub(crate) mod uuid;
-pub mod validation;
 
 pub mod error;
 
