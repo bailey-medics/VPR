@@ -8,7 +8,7 @@
 //! - **Template Management**: `TemplateDirKind` enum and functions for locating and validating
 //!   template directories (`resolve_ehr_template_dir`, `validate_template`)
 //! - **Directory Operations**: Utilities for creating unique patient directories
-//!   (`create_unique_shared_dir`) and recursive copying (`copy_dir_recursive`)
+//!   (`create_uuid_and_shard_dir`) and recursive copying (`copy_dir_recursive`)
 //! - **Git Integration**: Functions for adding files to Git index (`add_directory_to_index`)
 
 use crate::constants::EHR_TEMPLATE_DIR;
@@ -54,7 +54,7 @@ impl TemplateDirKind {
     }
 }
 
-/// Creates a unique shared directory within the base records directory.
+/// Creates a unique sharded directory within the base records directory.
 ///
 /// This function generates UUIDs using the provided source function and attempts to create
 /// a corresponding sharded directory. It guards against UUID collisions or pre-existing
@@ -74,7 +74,7 @@ impl TemplateDirKind {
 /// Returns a `PatientError::PatientDirCreation` if:
 /// - directory creation fails after 5 attempts,
 /// - parent directory creation fails.
-pub(crate) fn create_unique_shared_dir(
+pub(crate) fn create_uuid_and_shard_dir(
     base_dir: &Path,
     mut uuid_source: impl FnMut() -> UuidService,
 ) -> PatientResult<(UuidService, PathBuf)> {

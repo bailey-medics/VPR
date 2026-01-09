@@ -19,7 +19,7 @@ use crate::constants::{CLINICAL_DIR_NAME, EHR_STATUS_FILENAME};
 use crate::error::{PatientError, PatientResult};
 use crate::git::{GitService, VprCommitAction, VprCommitDomain, VprCommitMessage};
 use crate::repositories::shared::{
-    copy_dir_recursive, create_unique_shared_dir, validate_template, TemplateDirKind,
+    copy_dir_recursive, create_uuid_and_shard_dir, validate_template, TemplateDirKind,
 };
 use crate::uuid::UuidService;
 use openehr::{
@@ -67,7 +67,7 @@ impl ClinicalService {
     /// Initialises a new clinical record for a patient.
     ///
     /// This function creates a new clinical entry with a unique UUID, stores it in a sharded
-    /// directory structure, copies the EHR template into the patient's directory, writes an
+    /// directory structure, copies the clinical template into the patient's directory, writes an
     /// initial `ehr_status.yaml`, and initialises a Git repository for version control.
     ///
     /// # Arguments
@@ -77,17 +77,16 @@ impl ClinicalService {
     ///
     /// # Returns
     ///
-    /// Returns the UUID of the newly created clinical record as a string (canonical form: 32
-    /// lowercase hex characters, no hyphens).
+    /// Returns the UUID of the newly created clinical record.
     ///
     /// # Errors
     ///
     /// Returns a `PatientError` if:
     /// - required inputs or configuration are invalid (for example the EHR template cannot be
-    ///   located),
-    /// - a unique patient directory cannot be allocated after 5 UUID attempts,
-    /// - file or directory operations fail while creating the record or copying templates,
-    /// - writing `ehr_status.yaml` fails,
+    ///   located).
+    /// - a unique patient directory cannot be allocated.
+    /// - file or directory operations fail while creating the record or copying templates.
+    /// - writing `ehr_status.yaml` fails.
     /// - Git repository initialisation or the initial commit fails.
     /// - cleanup of a partially-created record directory fails.
     pub fn initialise(&self, author: Author, care_location: String) -> PatientResult<Uuid> {
@@ -101,7 +100,7 @@ impl ClinicalService {
 
         let clinical_dir = self.clinical_dir();
         let (clinical_uuid, patient_dir) =
-            create_unique_shared_dir(&clinical_dir, UuidService::new)?;
+            create_uuid_and_shard_dir(&clinical_dir, UuidService::new)?;
 
         let result: PatientResult<Uuid> = (|| {
             // Initialise Git repository early so failures don't leave partially-created records.
@@ -382,7 +381,7 @@ mod tests {
     }
 
     #[test]
-    fn create_unique_shared_dir_creates_first_available_candidate() {
+    fn create_uuid_and_shard_dir_creates_first_available_candidate() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let clinical_dir = temp_dir.path().join(CLINICAL_DIR_NAME);
 
@@ -390,7 +389,7 @@ mod tests {
             .expect("uuid should be canonical")];
         let mut iter = uuids.into_iter();
 
-        let (uuid, patient_dir) = create_unique_shared_dir(&clinical_dir, || iter.next().unwrap())
+        let (uuid, patient_dir) = create_uuid_and_shard_dir(&clinical_dir, || iter.next().unwrap())
             .expect("allocation should succeed");
 
         assert_eq!(uuid.to_string(), "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
@@ -405,7 +404,7 @@ mod tests {
     }
 
     #[test]
-    fn create_unique_shared_dir_skips_existing_candidate() {
+    fn create_uuid_and_shard_dir_skips_existing_candidate() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let clinical_dir = temp_dir.path().join(CLINICAL_DIR_NAME);
 
@@ -423,7 +422,7 @@ mod tests {
         ];
         let mut iter = uuids.into_iter();
 
-        let (uuid, patient_dir) = create_unique_shared_dir(&clinical_dir, || iter.next().unwrap())
+        let (uuid, patient_dir) = create_uuid_and_shard_dir(&clinical_dir, || iter.next().unwrap())
             .expect("allocation should succeed");
 
         assert_eq!(uuid.to_string(), second);
@@ -438,7 +437,7 @@ mod tests {
     }
 
     #[test]
-    fn create_unique_shared_dir_fails_after_five_attempts() {
+    fn create_uuid_and_shard_dir_fails_after_five_attempts() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let clinical_dir = temp_dir.path().join(CLINICAL_DIR_NAME);
 
@@ -461,7 +460,7 @@ mod tests {
             .collect::<Vec<_>>();
         let mut iter = uuids.into_iter();
 
-        let err = create_unique_shared_dir(&clinical_dir, || iter.next().unwrap())
+        let err = create_uuid_and_shard_dir(&clinical_dir, || iter.next().unwrap())
             .expect_err("allocation should fail");
 
         match err {
@@ -473,7 +472,7 @@ mod tests {
     }
 
     #[test]
-    fn create_unique_shared_dir_returns_error_if_parent_dir_creation_fails() {
+    fn create_uuid_and_shard_dir_returns_error_if_parent_dir_creation_fails() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let clinical_dir = temp_dir.path().join(CLINICAL_DIR_NAME);
 
@@ -487,7 +486,7 @@ mod tests {
             .expect("uuid should be canonical")];
         let mut iter = uuids.into_iter();
 
-        let err = create_unique_shared_dir(&clinical_dir, || iter.next().unwrap())
+        let err = create_uuid_and_shard_dir(&clinical_dir, || iter.next().unwrap())
             .expect_err("allocation should fail when parent dir creation fails");
 
         assert!(matches!(err, PatientError::PatientDirCreation(_)));
