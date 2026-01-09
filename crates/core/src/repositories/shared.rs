@@ -6,12 +6,12 @@
 //! ## Key Components
 //!
 //! - **Template Management**: `TemplateDirKind` enum and functions for locating and validating
-//!   template directories (`resolve_ehr_template_dir`, `validate_template`)
+//!   template directories (`resolve_clinical_template_dir`, `validate_template`)
 //! - **Directory Operations**: Utilities for creating unique patient directories
 //!   (`create_uuid_and_shard_dir`) and recursive copying (`copy_dir_recursive`)
 //! - **Git Integration**: Functions for adding files to Git index (`add_directory_to_index`)
 
-use crate::constants::EHR_TEMPLATE_DIR;
+use crate::constants::CLINICAL_TEMPLATE_DIR;
 use crate::error::{PatientError, PatientResult};
 use crate::uuid::UuidService;
 use std::{
@@ -47,7 +47,7 @@ impl TemplateDirKind {
     /// Returns a human-readable name for this template kind.
     pub fn display_name(&self) -> &'static str {
         match self {
-            TemplateDirKind::Clinical => "EHR template directory",
+            TemplateDirKind::Clinical => "Clinical template directory",
             TemplateDirKind::Demographics => "Demographics template directory",
             TemplateDirKind::Coordination => "Coordination template directory",
         }
@@ -269,17 +269,17 @@ pub fn validate_template(kind: &TemplateDirKind, template_dir: &Path) -> Patient
 
 // TODO: we might be able to make this generic later for other template types
 
-/// Resolve the EHR template directory without reading environment variables.
+/// Resolve the clinical template directory without reading environment variables.
 ///
 /// If `override_dir` is provided, it must be a directory and must contain `.ehr/`.
-/// Otherwise this searches for `ehr-template/` relative to the current working directory and
-/// then walks up from `CARGO_MANIFEST_DIR`.
+/// Otherwise this searches for the clinical template directory relative to the current working
+/// directory and then walks up from `CARGO_MANIFEST_DIR`.
 ///
 /// # Search Order
 ///
 /// 1. Use `override_dir` if provided and valid
-/// 2. Check `./ehr-template/` relative to current working directory
-/// 3. Walk up from `CARGO_MANIFEST_DIR` looking for `ehr-template/`
+/// 2. Check the configured clinical template path relative to current working directory
+/// 3. Walk up from `CARGO_MANIFEST_DIR` looking for the clinical template path
 ///
 /// # Validation
 ///
@@ -292,7 +292,7 @@ pub fn validate_template(kind: &TemplateDirKind, template_dir: &Path) -> Patient
 /// Returns `PatientError::InvalidInput` if:
 /// - `override_dir` is provided but invalid
 /// - No valid template directory is found
-pub fn resolve_ehr_template_dir(override_dir: Option<PathBuf>) -> PatientResult<PathBuf> {
+pub fn resolve_clinical_template_dir(override_dir: Option<PathBuf>) -> PatientResult<PathBuf> {
     fn looks_like_template_dir(path: &Path) -> bool {
         path.join(".ehr").is_dir()
     }
@@ -302,25 +302,25 @@ pub fn resolve_ehr_template_dir(override_dir: Option<PathBuf>) -> PatientResult<
             return Ok(template_dir);
         }
         return Err(PatientError::InvalidInput(
-            "VPR_EHR_TEMPLATE_DIR override is not a valid template directory (must contain .ehr/)"
+            "VPR_CLINICAL_TEMPLATE_DIR override is not a valid template directory (must contain .ehr/)"
                 .into(),
         ));
     }
 
-    let cwd_relative = PathBuf::from(EHR_TEMPLATE_DIR);
+    let cwd_relative = PathBuf::from(CLINICAL_TEMPLATE_DIR);
     if cwd_relative.is_dir() && looks_like_template_dir(&cwd_relative) {
         return Ok(cwd_relative);
     }
 
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     for ancestor in manifest_dir.ancestors() {
-        let candidate = ancestor.join(EHR_TEMPLATE_DIR);
+        let candidate = ancestor.join(CLINICAL_TEMPLATE_DIR);
         if candidate.is_dir() && looks_like_template_dir(&candidate) {
             return Ok(candidate);
         }
     }
 
     Err(PatientError::InvalidInput(
-        "could not locate ehr-template/ directory with .ehr/ subfolder".into(),
+        "could not locate clinical template directory with .ehr/ subfolder".into(),
     ))
 }

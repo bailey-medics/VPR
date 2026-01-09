@@ -2,7 +2,7 @@
 //!
 //! This module handles the creation, linking, and maintenance of per-patient
 //! clinical record repositories within the Versioned Patient Repository (VPR).
-//! It initialises new records from validated EHR templates, enforces directory
+//! It initialises new records from validated clinical templates, enforces directory
 //! sharding for scalable storage, and ensures all operations are version-controlled
 //! through Git with optional cryptographic signing.
 //!
@@ -82,7 +82,7 @@ impl ClinicalService {
     /// # Errors
     ///
     /// Returns a `PatientError` if:
-    /// - required inputs or configuration are invalid (for example the EHR template cannot be
+    /// - required inputs or configuration are invalid (for example the clinical template cannot be
     ///   located).
     /// - a unique patient directory cannot be allocated.
     /// - file or directory operations fail while creating the record or copying templates.
@@ -91,7 +91,7 @@ impl ClinicalService {
     /// - cleanup of a partially-created record directory fails.
     pub fn initialise(&self, author: Author, care_location: String) -> PatientResult<Uuid> {
         author.validate_commit_author()?;
-        let msg = VprCommitMessage::new(
+        let commit_message = VprCommitMessage::new(
             VprCommitDomain::Record,
             VprCommitAction::Init,
             "Initialised the clinical record",
@@ -102,17 +102,19 @@ impl ClinicalService {
         let (clinical_uuid, patient_dir) =
             create_uuid_and_shard_dir(&clinical_dir, UuidService::new)?;
 
+        // Wrap the potentially failing operations in a closure to enable cleanup
+        // of partially-created patient directories on any failure.
         let result: PatientResult<Uuid> = (|| {
             // Initialise Git repository early so failures don't leave partially-created records.
             let repo = GitService::init(&patient_dir)?;
 
             // Defensive guard: ensure the template directory is safe to copy.
-            // This should normally be validated once at startup when `CoreConfig` is created,
+            // This is validated once at startup when `CoreConfig` is created,
             // but validating here prevents unsafe copying if an invalid config slips through.
-            let template_dir = self.cfg.ehr_template_dir().to_path_buf();
+            let template_dir = self.cfg.clinical_template_dir().to_path_buf();
             validate_template(&TemplateDirKind::Clinical, &template_dir)?;
 
-            // Copy EHR template to patient directory
+            // Copy clinical template to patient directory
             copy_dir_recursive(&template_dir, &patient_dir).map_err(PatientError::FileWrite)?;
 
             let rm_version = self.cfg.rm_system_version();
@@ -125,7 +127,7 @@ impl ClinicalService {
             fs::write(&filename, yaml_content).map_err(PatientError::FileWrite)?;
 
             // Initial commit
-            repo.commit_all(&author, &msg)?;
+            repo.commit_all(&author, &commit_message)?;
 
             Ok(clinical_uuid.uuid())
         })();
@@ -307,7 +309,7 @@ fn remove_patient_dir_all(patient_dir: &Path) -> io::Result<()> {
 mod tests {
     use super::*;
     use crate::config::rm_system_version_from_env_value;
-    use crate::repositories::shared::{resolve_ehr_template_dir, validate_template};
+    use crate::repositories::shared::{resolve_clinical_template_dir, validate_template};
     use crate::CoreConfig;
     use p256::ecdsa::SigningKey;
     use p256::pkcs8::{EncodePrivateKey, EncodePublicKey};
@@ -361,9 +363,9 @@ mod tests {
     }
 
     fn test_cfg(patient_data_dir: &Path) -> Arc<CoreConfig> {
-        let ehr_template_dir =
-            resolve_ehr_template_dir(None).expect("resolve_ehr_template_dir should succeed");
-        validate_template(&TemplateDirKind::Clinical, &ehr_template_dir)
+        let clinical_template_dir = resolve_clinical_template_dir(None)
+            .expect("resolve_clinical_template_dir should succeed");
+        validate_template(&TemplateDirKind::Clinical, &clinical_template_dir)
             .expect("template dir should be safe to copy");
 
         let rm_system_version = rm_system_version_from_env_value(None)
@@ -372,7 +374,7 @@ mod tests {
         Arc::new(
             CoreConfig::new(
                 patient_data_dir.to_path_buf(),
-                ehr_template_dir,
+                clinical_template_dir,
                 rm_system_version,
                 "vpr.dev.1".into(),
             )
@@ -495,8 +497,8 @@ mod tests {
     #[test]
     fn test_initialise_fails_fast_on_invalid_author_and_creates_no_files() {
         let patient_data_dir = TempDir::new().expect("Failed to create temp dir");
-        let ehr_template_dir = TempDir::new().expect("Failed to create template temp dir");
-        fs::create_dir_all(ehr_template_dir.path().join(".ehr"))
+        let clinical_template_dir = TempDir::new().expect("Failed to create template temp dir");
+        fs::create_dir_all(clinical_template_dir.path().join(".ehr"))
             .expect("Failed to create .ehr directory");
 
         let rm_system_version = rm_system_version_from_env_value(None)
@@ -505,7 +507,7 @@ mod tests {
         let cfg = Arc::new(
             CoreConfig::new(
                 patient_data_dir.path().to_path_buf(),
-                ehr_template_dir.path().to_path_buf(),
+                clinical_template_dir.path().to_path_buf(),
                 rm_system_version,
                 "vpr.dev.1".into(),
             )
@@ -537,8 +539,8 @@ mod tests {
     #[test]
     fn test_initialise_rejects_missing_care_location_and_creates_no_files() {
         let patient_data_dir = TempDir::new().expect("Failed to create temp dir");
-        let ehr_template_dir = TempDir::new().expect("Failed to create template temp dir");
-        fs::create_dir_all(ehr_template_dir.path().join(".ehr"))
+        let clinical_template_dir = TempDir::new().expect("Failed to create template temp dir");
+        fs::create_dir_all(clinical_template_dir.path().join(".ehr"))
             .expect("Failed to create .ehr directory");
 
         let rm_system_version = rm_system_version_from_env_value(None)
@@ -547,7 +549,7 @@ mod tests {
         let cfg = Arc::new(
             CoreConfig::new(
                 patient_data_dir.path().to_path_buf(),
-                ehr_template_dir.path().to_path_buf(),
+                clinical_template_dir.path().to_path_buf(),
                 rm_system_version,
                 "vpr.dev.1".into(),
             )
@@ -579,7 +581,7 @@ mod tests {
     #[test]
     fn test_initialise_returns_invalid_input_if_template_missing_ehr_dir_and_cleans_up() {
         let patient_data_dir = TempDir::new().expect("Failed to create temp dir");
-        let ehr_template_dir = TempDir::new().expect("Failed to create template temp dir");
+        let clinical_template_dir = TempDir::new().expect("Failed to create template temp dir");
         // Intentionally do not create `.ehr/`.
 
         let rm_system_version = rm_system_version_from_env_value(None)
@@ -588,7 +590,7 @@ mod tests {
         let cfg = Arc::new(
             CoreConfig::new(
                 patient_data_dir.path().to_path_buf(),
-                ehr_template_dir.path().to_path_buf(),
+                clinical_template_dir.path().to_path_buf(),
                 rm_system_version,
                 "vpr.dev.1".into(),
             )
@@ -624,14 +626,14 @@ mod tests {
         use std::os::unix::fs::symlink;
 
         let patient_data_dir = TempDir::new().expect("Failed to create temp dir");
-        let ehr_template_dir = TempDir::new().expect("Failed to create template temp dir");
+        let clinical_template_dir = TempDir::new().expect("Failed to create template temp dir");
 
-        fs::create_dir_all(ehr_template_dir.path().join(".ehr"))
+        fs::create_dir_all(clinical_template_dir.path().join(".ehr"))
             .expect("Failed to create .ehr directory");
 
-        let target = ehr_template_dir.path().join("target.txt");
+        let target = clinical_template_dir.path().join("target.txt");
         fs::write(&target, b"hello").expect("Failed to write target file");
-        let link_path = ehr_template_dir.path().join("link.txt");
+        let link_path = clinical_template_dir.path().join("link.txt");
         symlink(&target, &link_path).expect("Failed to create symlink");
 
         let rm_system_version = rm_system_version_from_env_value(None)
@@ -640,7 +642,7 @@ mod tests {
         let cfg = Arc::new(
             CoreConfig::new(
                 patient_data_dir.path().to_path_buf(),
-                ehr_template_dir.path().to_path_buf(),
+                clinical_template_dir.path().to_path_buf(),
                 rm_system_version,
                 "vpr.dev.1".into(),
             )
@@ -673,12 +675,12 @@ mod tests {
     #[test]
     fn test_initialise_returns_invalid_input_if_template_exceeds_max_depth_and_cleans_up() {
         let patient_data_dir = TempDir::new().expect("Failed to create temp dir");
-        let ehr_template_dir = TempDir::new().expect("Failed to create template temp dir");
-        fs::create_dir_all(ehr_template_dir.path().join(".ehr"))
+        let clinical_template_dir = TempDir::new().expect("Failed to create template temp dir");
+        fs::create_dir_all(clinical_template_dir.path().join(".ehr"))
             .expect("Failed to create .ehr directory");
 
         // Create a directory chain deeper than the configured MAX_DEPTH (20).
-        let mut deep = ehr_template_dir.path().to_path_buf();
+        let mut deep = clinical_template_dir.path().to_path_buf();
         for i in 0..=20 {
             deep = deep.join(format!("d{i}"));
             fs::create_dir(&deep).expect("Failed to create nested directory");
@@ -690,7 +692,7 @@ mod tests {
         let cfg = Arc::new(
             CoreConfig::new(
                 patient_data_dir.path().to_path_buf(),
-                ehr_template_dir.path().to_path_buf(),
+                clinical_template_dir.path().to_path_buf(),
                 rm_system_version,
                 "vpr.dev.1".into(),
             )
@@ -723,13 +725,13 @@ mod tests {
     #[test]
     fn test_initialise_returns_invalid_input_if_template_exceeds_max_files_and_cleans_up() {
         let patient_data_dir = TempDir::new().expect("Failed to create temp dir");
-        let ehr_template_dir = TempDir::new().expect("Failed to create template temp dir");
-        fs::create_dir_all(ehr_template_dir.path().join(".ehr"))
+        let clinical_template_dir = TempDir::new().expect("Failed to create template temp dir");
+        fs::create_dir_all(clinical_template_dir.path().join(".ehr"))
             .expect("Failed to create .ehr directory");
 
         // Exceeds MAX_FILES (2_000) by creating 2_001 empty files.
         for i in 0..=2_000 {
-            let filename = ehr_template_dir.path().join(format!("f{i}.txt"));
+            let filename = clinical_template_dir.path().join(format!("f{i}.txt"));
             File::create(filename).expect("Failed to create file");
         }
 
@@ -739,7 +741,7 @@ mod tests {
         let cfg = Arc::new(
             CoreConfig::new(
                 patient_data_dir.path().to_path_buf(),
-                ehr_template_dir.path().to_path_buf(),
+                clinical_template_dir.path().to_path_buf(),
                 rm_system_version,
                 "vpr.dev.1".into(),
             )
@@ -772,12 +774,12 @@ mod tests {
     #[test]
     fn test_initialise_returns_invalid_input_if_template_exceeds_max_bytes_and_cleans_up() {
         let patient_data_dir = TempDir::new().expect("Failed to create temp dir");
-        let ehr_template_dir = TempDir::new().expect("Failed to create template temp dir");
-        fs::create_dir_all(ehr_template_dir.path().join(".ehr"))
+        let clinical_template_dir = TempDir::new().expect("Failed to create template temp dir");
+        fs::create_dir_all(clinical_template_dir.path().join(".ehr"))
             .expect("Failed to create .ehr directory");
 
         // Exceeds MAX_TOTAL_BYTES (50 MiB) by creating a single large (sparse) file.
-        let big = ehr_template_dir.path().join("big.bin");
+        let big = clinical_template_dir.path().join("big.bin");
         let mut file = File::create(big).expect("Failed to create big file");
         file.set_len(50 * 1024 * 1024 + 1)
             .expect("Failed to set big file length");
@@ -790,7 +792,7 @@ mod tests {
         let cfg = Arc::new(
             CoreConfig::new(
                 patient_data_dir.path().to_path_buf(),
-                ehr_template_dir.path().to_path_buf(),
+                clinical_template_dir.path().to_path_buf(),
                 rm_system_version,
                 "vpr.dev.1".into(),
             )
@@ -826,13 +828,14 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let patient_data_dir = TempDir::new().expect("Failed to create temp dir");
-        let ehr_template_dir = TempDir::new().expect("Failed to create template temp dir");
-        fs::create_dir_all(ehr_template_dir.path().join(".ehr"))
+        let clinical_template_dir = TempDir::new().expect("Failed to create template temp dir");
+        fs::create_dir_all(clinical_template_dir.path().join(".ehr"))
             .expect("Failed to create .ehr directory");
 
         // Make the template safe-to-copy, but include an unreadable file so copying fails.
-        fs::write(ehr_template_dir.path().join("ok.txt"), b"ok").expect("Failed to write ok.txt");
-        let unreadable = ehr_template_dir.path().join("unreadable.txt");
+        fs::write(clinical_template_dir.path().join("ok.txt"), b"ok")
+            .expect("Failed to write ok.txt");
+        let unreadable = clinical_template_dir.path().join("unreadable.txt");
         fs::write(&unreadable, b"nope").expect("Failed to write unreadable.txt");
         let mut perms = fs::metadata(&unreadable)
             .expect("Failed to stat unreadable.txt")
@@ -845,7 +848,7 @@ mod tests {
         let cfg = Arc::new(
             CoreConfig::new(
                 patient_data_dir.path().to_path_buf(),
-                ehr_template_dir.path().to_path_buf(),
+                clinical_template_dir.path().to_path_buf(),
                 rm_system_version,
                 "vpr.dev.1".into(),
             )
@@ -878,12 +881,12 @@ mod tests {
     #[test]
     fn test_initialise_cleans_up_if_ehr_status_file_write_fails() {
         let patient_data_dir = TempDir::new().expect("Failed to create temp dir");
-        let ehr_template_dir = TempDir::new().expect("Failed to create template temp dir");
-        fs::create_dir_all(ehr_template_dir.path().join(".ehr"))
+        let clinical_template_dir = TempDir::new().expect("Failed to create template temp dir");
+        fs::create_dir_all(clinical_template_dir.path().join(".ehr"))
             .expect("Failed to create .ehr directory");
 
         // Force EHR status file write to fail by ensuring the target path already exists as a dir.
-        fs::create_dir_all(ehr_template_dir.path().join(EHR_STATUS_FILENAME))
+        fs::create_dir_all(clinical_template_dir.path().join(EHR_STATUS_FILENAME))
             .expect("Failed to create ehr_status.yaml directory");
 
         let rm_system_version = rm_system_version_from_env_value(None)
@@ -891,7 +894,7 @@ mod tests {
         let cfg = Arc::new(
             CoreConfig::new(
                 patient_data_dir.path().to_path_buf(),
-                ehr_template_dir.path().to_path_buf(),
+                clinical_template_dir.path().to_path_buf(),
                 rm_system_version,
                 "vpr.dev.1".into(),
             )
@@ -975,7 +978,7 @@ mod tests {
     #[test]
     fn test_initialise_returns_cleanup_after_initialise_failed_if_cleanup_fails() {
         let patient_data_dir = TempDir::new().expect("Failed to create temp dir");
-        let ehr_template_dir = TempDir::new().expect("Failed to create template temp dir");
+        let clinical_template_dir = TempDir::new().expect("Failed to create template temp dir");
         // Intentionally do not create `.ehr/` so template validation fails.
 
         let rm_system_version = rm_system_version_from_env_value(None)
@@ -983,7 +986,7 @@ mod tests {
         let cfg = Arc::new(
             CoreConfig::new(
                 patient_data_dir.path().to_path_buf(),
-                ehr_template_dir.path().to_path_buf(),
+                clinical_template_dir.path().to_path_buf(),
                 rm_system_version,
                 "vpr.dev.1".into(),
             )
@@ -1025,7 +1028,7 @@ mod tests {
     #[test]
     fn test_initialise_initialises_git_repo_before_template_validation_failure() {
         let patient_data_dir = TempDir::new().expect("Failed to create temp dir");
-        let ehr_template_dir = TempDir::new().expect("Failed to create template temp dir");
+        let clinical_template_dir = TempDir::new().expect("Failed to create template temp dir");
         // Intentionally do not create `.ehr/` so template validation fails.
 
         let rm_system_version = rm_system_version_from_env_value(None)
@@ -1033,7 +1036,7 @@ mod tests {
         let cfg = Arc::new(
             CoreConfig::new(
                 patient_data_dir.path().to_path_buf(),
-                ehr_template_dir.path().to_path_buf(),
+                clinical_template_dir.path().to_path_buf(),
                 rm_system_version,
                 "vpr.dev.1".into(),
             )

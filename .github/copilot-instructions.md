@@ -18,10 +18,10 @@ Overview
 - Main binary: `vpr-run` (defined in root `Cargo.toml`), runs both gRPC (port 50051) and REST (port 3000) servers concurrently using tokio::join.
 
 Important files to reference
-- `src/main.rs` — Main binary that performs startup validation (checks for patient_data, ehr-template directories; creates clinical/demographics subdirs), creates runtime constants, and starts both gRPC (port 50051) and REST (port 3000) servers concurrently using tokio::join.
+- `src/main.rs` — Main binary that performs startup validation (checks for patient_data, clinical-template directories; creates clinical/demographics subdirs), creates runtime constants, and starts both gRPC (port 50051) and REST (port 3000) servers concurrently using tokio::join.
 - `crates/core/src/lib.rs` — **PURE DATA OPERATIONS**: Services for file/folder operations (sharded storage, directory traversal, Git repos per patient). **NO API CODE**.
 - `crates/core/src/config.rs` — `CoreConfig` and helpers used to resolve/validate configuration **once at startup**.
-- `crates/core/src/clinical.rs` — ClinicalService: Initialises patients with EHR template copy, creates Git repo, signs commits with X.509.
+- `crates/core/src/clinical.rs` — ClinicalService: Initialises patients with clinical template copy, creates Git repo, signs commits with X.509.
 - `crates/core/src/demographics.rs` — DemographicsService: Updates patient demographics JSON, lists patients via directory traversal.
 - `crates/api-grpc/src/service.rs` — gRPC service implementation (VprService) with authentication, using core services.
 - `crates/api-shared/vpr.proto` — Canonical protobuf definitions for VPR service (note: national_id field present but unused in current impl).
@@ -42,7 +42,7 @@ Conventions and patterns to follow
 - Protobufs: Canonical proto in `crates/api-shared/vpr.proto`; generated Rust in `api_shared::pb` via build script.
 - Service wiring: `crates/api-grpc` implements `VprService` using core services; binaries construct it via `VprService::new(Arc<CoreConfig>)`.
 - Patient storage: Sharded under the configured patient data directory (default: `patient_data`):
-  - Clinical: `clinical/<s1>/<s2>/<32hex-uuid>/` (ehr_status.yaml, copied ehr-template files, Git repo)
+  - Clinical: `clinical/<s1>/<s2>/<32hex-uuid>/` (ehr_status.yaml, copied clinical-template files, Git repo)
   - Demographics: `demographics/<s1>/<s2>/<32hex-uuid>/patient.json` (FHIR-like JSON, Git repo)
   where s1/s2 are first 4 hex chars of UUID.
 - APIs: Dual gRPC/REST with identical functionality; REST uses axum, utoipa for OpenAPI.
@@ -50,7 +50,7 @@ Conventions and patterns to follow
 - Error handling: tonic `Status` for gRPC, axum `StatusCode` for REST; internal errors logged with `tracing::error!`.
 - File I/O: Direct `std::fs` operations with `serde_json`/`serde_yaml` for patient data; no database layer.
 - Git versioning: Each patient directory is a Git repo; commits signed with X.509 certificates from author.signature.
-- EHR template: `ehr-template/` directory copied to new patient clinical dirs; validated at startup.
+  - Clinical template: `templates/clinical/` directory copied to new patient clinical dirs; validated at startup.
 
 Runtime configuration and environment variables
 - Resolve environment variables **once at process startup** (or CLI startup) and pass configuration down.
@@ -59,7 +59,7 @@ Runtime configuration and environment variables
     - `crates/api-grpc/src/main.rs` (standalone gRPC)
     - `crates/api-rest/src/main.rs` (standalone REST)
     - `crates/cli/src/main.rs` (CLI)
-  - Typical env inputs: `PATIENT_DATA_DIR`, `VPR_EHR_TEMPLATE_DIR`, `RM_SYSTEM_VERSION`, `VPR_NAMESPACE`.
+  - Typical env inputs: `PATIENT_DATA_DIR`, `VPR_CLINICAL_TEMPLATE_DIR`, `RM_SYSTEM_VERSION`, `VPR_NAMESPACE`.
   - Use the helpers in `crates/core/src/config.rs` to resolve/validate template and parse the RM version.
 - `crates/core` (vpr-core) must **not** read environment variables during operations.
   - Do not call `std::env::var` in core service methods or helpers.
@@ -95,7 +95,7 @@ Defensive programming (clinical safety)
   - `api-shared`: Shared API utilities (HealthService, auth, protobuf types)
   - `api-grpc`: gRPC-specific concerns (service implementation, interceptors)
   - `api-rest`: REST-specific concerns (HTTP endpoints, JSON handling)
-  - `main.rs`: Startup validation (patient_data, ehr-template dirs), runtime constants, service orchestration
+  - `main.rs`: Startup validation (patient_data, clinical-template dirs), runtime constants, service orchestration
 
 Testing boundaries
 - Test where the rule lives:
@@ -124,10 +124,9 @@ Edge cases for automated edits
 - Avoid altering patient directory sharding in `core/src/lib.rs` — `list_patients` relies on exact structure.
 - Main.rs runs both servers; changes must maintain concurrency (tokio::join).
 - Docker mounts `./patient_data` for persistence; test with actual file creation/deletion.
-- EHR template validation: `ehr-template/` must exist and contain files; clinical init copies it recursively.
+- Clinical template validation: `clinical-template/` must exist and contain files; clinical init copies it recursively.
 
 If unsure, ask for clarification and provide a short plan: files to change, tests to add, and commands you will run to validate.
 
----
 If you'd like I can expand any section (e.g., CI, proto build details, or example PR checklist).
 

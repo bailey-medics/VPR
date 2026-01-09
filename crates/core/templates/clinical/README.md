@@ -1,1 +1,1 @@
-# EHR Template
+# Clinical Template

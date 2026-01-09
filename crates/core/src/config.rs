@@ -10,7 +10,7 @@
 //! Configuration is typically resolved from environment variables at startup:
 //!
 //! - `PATIENT_DATA_DIR`: Base directory for patient data storage
-//! - `VPR_EHR_TEMPLATE_DIR`: Directory containing EHR templates (optional override)
+//! - `VPR_CLINICAL_TEMPLATE_DIR`: Directory containing clinical templates (optional override)
 //! - `RM_SYSTEM_VERSION`: OpenEHR Reference Model version (optional)
 //! - `VPR_NAMESPACE`: Namespace identifier for this VPR instance
 //!
@@ -23,7 +23,7 @@
 //! ├── clinical/          # Clinical records (Git repos per patient)
 //! └── demographics/      # Demographic data (JSON files per patient)
 //!
-//! ehr_template_dir/
+//! clinical_template_dir/
 //! └── .ehr/             # Template files copied to new patients
 //! ```
 //!
@@ -32,7 +32,7 @@
 //! Configuration values are validated at construction time:
 //!
 //! - Directory paths must exist and be accessible
-//! - EHR templates are scanned for safety (no symlinks, reasonable size limits)
+//! - Clinical templates are scanned for safety (no symlinks, reasonable size limits)
 //! - Namespace cannot be empty
 //! - RM version must be supported
 //!
@@ -42,7 +42,7 @@
 //! // In main.rs or startup code
 //! let config = CoreConfig::new(
 //!     patient_data_dir,
-//!     ehr_template_dir,
+//!     clinical_template_dir,
 //!     rm_version,
 //!     namespace,
 //! )?;
@@ -62,7 +62,7 @@ use std::path::{Path, PathBuf};
 /// and remain immutable throughout the application lifecycle. It provides access to:
 ///
 /// - Patient data storage directories
-/// - EHR template location
+/// - Clinical template location
 /// - OpenEHR Reference Model version
 /// - VPR instance namespace
 ///
@@ -70,7 +70,7 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Debug)]
 pub struct CoreConfig {
     patient_data_dir: PathBuf,
-    ehr_template_dir: PathBuf,
+    clinical_template_dir: PathBuf,
     rm_system_version: openehr::RmVersion,
     vpr_namespace: String,
 }
@@ -81,7 +81,7 @@ impl CoreConfig {
     /// # Arguments
     ///
     /// * `patient_data_dir` - Base directory for patient data storage
-    /// * `ehr_template_dir` - Directory containing EHR templates
+    /// * `clinical_template_dir` - Directory containing clinical templates
     /// * `rm_system_version` - OpenEHR Reference Model version
     /// * `vpr_namespace` - Namespace identifier (cannot be empty)
     ///
@@ -90,7 +90,7 @@ impl CoreConfig {
     /// Returns `PatientError::InvalidInput` if `vpr_namespace` is empty or whitespace-only.
     pub fn new(
         patient_data_dir: PathBuf,
-        ehr_template_dir: PathBuf,
+        clinical_template_dir: PathBuf,
         rm_system_version: openehr::RmVersion,
         vpr_namespace: String,
     ) -> PatientResult<Self> {
@@ -102,7 +102,7 @@ impl CoreConfig {
 
         Ok(Self {
             patient_data_dir,
-            ehr_template_dir,
+            clinical_template_dir,
             rm_system_version,
             vpr_namespace,
         })
@@ -129,11 +129,11 @@ impl CoreConfig {
         self.patient_data_dir.join(DEMOGRAPHICS_DIR_NAME)
     }
 
-    /// Get the EHR template directory.
+    /// Get the clinical template directory.
     ///
-    /// This directory contains template files that are copied when initializing new patients.
-    pub fn ehr_template_dir(&self) -> &Path {
-        &self.ehr_template_dir
+    /// This directory contains template files that are copied when initialising new patients.
+    pub fn clinical_template_dir(&self) -> &Path {
+        &self.clinical_template_dir
     }
 
     /// Get the OpenEHR Reference Model version.
