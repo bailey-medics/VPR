@@ -12,8 +12,8 @@
 //! - **Git Integration**: Functions for adding files to Git index (`add_directory_to_index`)
 
 use crate::constants::EHR_TEMPLATE_DIR;
+use crate::error::{PatientError, PatientResult};
 use crate::uuid::UuidService;
-use crate::{PatientError, PatientResult};
 use std::{
     fs,
     io::{self, ErrorKind},

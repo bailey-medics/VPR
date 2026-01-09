@@ -40,8 +40,9 @@
 //! The verifier in clinical code (`ClinicalService::verify_commit_signature`) expects this
 //! exact scheme.
 
+use crate::author::Author;
+use crate::error::{PatientError, PatientResult};
 use crate::uuid::UuidService;
-use crate::{Author, PatientError, PatientResult};
 use base64::{engine::general_purpose, Engine as _};
 use p256::ecdsa::signature::{Signer, Verifier};
 use p256::ecdsa::{Signature, SigningKey, VerifyingKey};
@@ -875,7 +876,7 @@ impl GitService {
         let head = repo.repo.head().map_err(PatientError::GitHead)?;
         let commit = head.peel_to_commit().map_err(PatientError::GitPeel)?;
 
-        let embedded = match crate::extract_embedded_commit_signature(&commit) {
+        let embedded = match crate::author::extract_embedded_commit_signature(&commit) {
             Ok(v) => v,
             Err(_) => return Ok(false),
         };

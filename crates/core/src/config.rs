@@ -53,7 +53,7 @@
 //! ```
 
 use crate::constants::{CLINICAL_DIR_NAME, DEMOGRAPHICS_DIR_NAME, LATEST_RM};
-use crate::{PatientError, PatientResult};
+use crate::error::{PatientError, PatientResult};
 use std::path::{Path, PathBuf};
 
 /// Core configuration resolved at startup.

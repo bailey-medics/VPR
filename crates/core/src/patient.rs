@@ -4,8 +4,8 @@
 //! including initialising full patient records.
 
 use crate::{
-    repositories::clinical::ClinicalService, repositories::demographics::DemographicsService,
-    Author, PatientResult,
+    author::Author, error::PatientResult, repositories::clinical::ClinicalService,
+    repositories::demographics::DemographicsService,
 };
 
 /// Represents a complete patient record with both demographics and clinical components.
