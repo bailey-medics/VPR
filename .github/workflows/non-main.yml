@@ -3,8 +3,6 @@ name: Non-main branch workflows
 on:
   push:
     branches-ignore: [main, master]
-  pull_request:
-    branches-ignore: [main, master]
 
 permissions:
   contents: write
@@ -19,14 +17,14 @@ jobs:
     runs-on: ubuntu-latest
     name: Security Audit
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo-audit
         id: cache-cargo-audit
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cargo/bin/cargo-audit
           key: cargo-audit-${{ runner.os }}-v0.22.0
@@ -42,14 +40,14 @@ jobs:
     runs-on: ubuntu-latest
     name: Cargo Deny
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo-deny
         id: cache-cargo-deny
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cargo/bin/cargo-deny
           key: cargo-deny-${{ runner.os }}-v0.19.0
@@ -69,7 +67,7 @@ jobs:
       matrix:
         check: [formatting, linting, compilation, tests]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -84,10 +82,10 @@ jobs:
       # Cache protoc installation
       - name: Cache protoc
         id: cache-protoc
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/protoc
-          key: protoc-${{ runner.os }}-v25.1
+          key: protoc-${{ runner.os }}-v33.3
           restore-keys: |
             protoc-${{ runner.os }}-
 
@@ -98,7 +96,7 @@ jobs:
           echo "Installing protoc (not found in cache)..."
           mkdir -p ~/protoc
           cd ~/protoc
-          curl -L https://github.com/protocolbuffers/protobuf/releases/download/v25.1/protoc-25.1-linux-x86_64.zip -o protoc.zip
+          curl -L https://github.com/protocolbuffers/protobuf/releases/download/v33.3/protoc-33.3-linux-x86_64.zip -o protoc.zip
           unzip protoc.zip
           chmod +x bin/protoc
           echo "protoc installed to ~/protoc/bin/protoc"

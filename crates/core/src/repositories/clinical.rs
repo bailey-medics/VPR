@@ -673,6 +673,180 @@ mod tests {
     }
 
     #[test]
+    fn test_initialise_rejects_template_with_forbidden_extension() {
+        let patient_data_dir = TempDir::new().expect("Failed to create temp dir");
+        let clinical_template_dir = TempDir::new().expect("Failed to create template temp dir");
+
+        fs::create_dir_all(clinical_template_dir.path().join(".ehr"))
+            .expect("Failed to create .ehr directory");
+
+        // Create a file with forbidden .exe extension
+        let forbidden_file = clinical_template_dir.path().join("malware.exe");
+        fs::write(&forbidden_file, b"not really malware").expect("Failed to write file");
+
+        let rm_system_version = rm_system_version_from_env_value(None)
+            .expect("rm_system_version_from_env_value should succeed");
+
+        let cfg = Arc::new(
+            CoreConfig::new(
+                patient_data_dir.path().to_path_buf(),
+                clinical_template_dir.path().to_path_buf(),
+                rm_system_version,
+                "vpr.dev.1".into(),
+            )
+            .expect("CoreConfig::new should succeed"),
+        );
+
+        let service = ClinicalService::new(cfg);
+        let author = Author {
+            name: "Test Author".to_string(),
+            role: "Clinician".to_string(),
+            email: "test@example.com".to_string(),
+            registrations: vec![],
+            signature: None,
+            certificate: None,
+        };
+
+        let err = service
+            .initialise(author, "Test Hospital".to_string())
+            .expect_err("initialise should fail when template contains forbidden extension");
+
+        assert!(matches!(err, PatientError::InvalidInput(_)));
+        let err_msg = err.to_string();
+        assert!(
+            err_msg.contains("forbidden extension") || err_msg.contains(".exe"),
+            "Error should mention forbidden extension: {}",
+            err_msg
+        );
+
+        let clinical_dir = patient_data_dir.path().join(CLINICAL_DIR_NAME);
+        assert_eq!(
+            count_allocated_patient_dirs(&clinical_dir),
+            0,
+            "initialise should clean up the patient directory on template validation failure"
+        );
+    }
+
+    #[test]
+    fn test_initialise_rejects_template_with_dangerous_filename() {
+        let patient_data_dir = TempDir::new().expect("Failed to create temp dir");
+        let clinical_template_dir = TempDir::new().expect("Failed to create template temp dir");
+
+        fs::create_dir_all(clinical_template_dir.path().join(".ehr"))
+            .expect("Failed to create .ehr directory");
+
+        // Create a dangerous hidden .git directory
+        let git_dir = clinical_template_dir.path().join(".git");
+        fs::create_dir(&git_dir).expect("Failed to create .git directory");
+
+        let rm_system_version = rm_system_version_from_env_value(None)
+            .expect("rm_system_version_from_env_value should succeed");
+
+        let cfg = Arc::new(
+            CoreConfig::new(
+                patient_data_dir.path().to_path_buf(),
+                clinical_template_dir.path().to_path_buf(),
+                rm_system_version,
+                "vpr.dev.1".into(),
+            )
+            .expect("CoreConfig::new should succeed"),
+        );
+
+        let service = ClinicalService::new(cfg);
+        let author = Author {
+            name: "Test Author".to_string(),
+            role: "Clinician".to_string(),
+            email: "test@example.com".to_string(),
+            registrations: vec![],
+            signature: None,
+            certificate: None,
+        };
+
+        let err = service
+            .initialise(author, "Test Hospital".to_string())
+            .expect_err("initialise should fail when template contains dangerous filename");
+
+        assert!(matches!(err, PatientError::InvalidInput(_)));
+        let err_msg = err.to_string();
+        assert!(
+            err_msg.contains("dangerous filename"),
+            "Error should mention dangerous filename: {}",
+            err_msg
+        );
+
+        let clinical_dir = patient_data_dir.path().join(CLINICAL_DIR_NAME);
+        assert_eq!(
+            count_allocated_patient_dirs(&clinical_dir),
+            0,
+            "initialise should clean up the patient directory on template validation failure"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_initialise_rejects_template_with_executable_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let patient_data_dir = TempDir::new().expect("Failed to create temp dir");
+        let clinical_template_dir = TempDir::new().expect("Failed to create template temp dir");
+
+        fs::create_dir_all(clinical_template_dir.path().join(".ehr"))
+            .expect("Failed to create .ehr directory");
+
+        // Create a file with executable permissions
+        let executable_file = clinical_template_dir.path().join("script.txt");
+        fs::write(&executable_file, b"#!/bin/bash\necho hello").expect("Failed to write file");
+
+        let mut perms = fs::metadata(&executable_file)
+            .expect("Failed to get metadata")
+            .permissions();
+        perms.set_mode(0o755); // Make it executable
+        fs::set_permissions(&executable_file, perms).expect("Failed to set permissions");
+
+        let rm_system_version = rm_system_version_from_env_value(None)
+            .expect("rm_system_version_from_env_value should succeed");
+
+        let cfg = Arc::new(
+            CoreConfig::new(
+                patient_data_dir.path().to_path_buf(),
+                clinical_template_dir.path().to_path_buf(),
+                rm_system_version,
+                "vpr.dev.1".into(),
+            )
+            .expect("CoreConfig::new should succeed"),
+        );
+
+        let service = ClinicalService::new(cfg);
+        let author = Author {
+            name: "Test Author".to_string(),
+            role: "Clinician".to_string(),
+            email: "test@example.com".to_string(),
+            registrations: vec![],
+            signature: None,
+            certificate: None,
+        };
+
+        let err = service
+            .initialise(author, "Test Hospital".to_string())
+            .expect_err("initialise should fail when template contains executable file");
+
+        assert!(matches!(err, PatientError::InvalidInput(_)));
+        let err_msg = err.to_string();
+        assert!(
+            err_msg.contains("executable permissions"),
+            "Error should mention executable permissions: {}",
+            err_msg
+        );
+
+        let clinical_dir = patient_data_dir.path().join(CLINICAL_DIR_NAME);
+        assert_eq!(
+            count_allocated_patient_dirs(&clinical_dir),
+            0,
+            "initialise should clean up the patient directory on template validation failure"
+        );
+    }
+
+    #[test]
     fn test_initialise_returns_invalid_input_if_template_exceeds_max_depth_and_cleans_up() {
         let patient_data_dir = TempDir::new().expect("Failed to create temp dir");
         let clinical_template_dir = TempDir::new().expect("Failed to create template temp dir");

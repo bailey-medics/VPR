@@ -44,9 +44,15 @@ In summary, the VPR merges the rigour of modern software engineering with the pr
 
 ### Data Structure and Standards
 
-The underlying data format follows openEHR models, stored as markdown and JSON-compatible files. These act like non-relational documents – self-contained, structured, and readable – making them easy to process in a wide range of applications.
+The underlying data format follows openEHR models for clinical content and FHIR standards for demographics and coordination data. Files are stored as markdown and JSON-compatible structures. These act like non-relational documents – self-contained, structured, and readable – making them easy to process in a wide range of applications.
 
-This structure recreates the layered design of openEHR – a clear distinction between data content, clinical models, and terminology – without requiring a centralised relational database.
+Patient data is organised into three separate repositories:
+
+- **Clinical repository**: openEHR-based clinical content (observations, diagnoses, clinical letters)
+- **Demographics repository**: FHIR-based patient demographics (name, date of birth, identifiers)
+- **Coordination repository** (Care Coordination Repository): care coordination data (encounters, appointments, episodes, referrals) – format to be determined, may adopt FHIR ideologies
+
+This structure recreates the layered design of openEHR – a clear distinction between data content, clinical models, and terminology – while adding administrative coordination as a separate concern. None of these require a centralised relational database.
 
 ### Versioning and Audit Trail
 

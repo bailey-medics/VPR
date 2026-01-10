@@ -25,8 +25,8 @@
 - [x] Clinical template seeding and validation at startup (required directory exists and is copied into new clinical repos).
 - [x] Commit-signing made optional during development (signing disabled by default in dev environments).
 - [x] Integrate cargo-audit into CI/CD: automatically check dependencies for known security vulnerabilities on every build.
-- [ ] Integrate cargo-deny into CI/CD: enforce dependency licensing policies, detect banned crates, and check for unsafe code usage; configure allowed unsafe patterns and document exceptions.
-- [ ] Harden template validation: enforce symlink bans, size/depth caps, and allowed file types; fail fast with clear errors.
+- [x] Integrate cargo-deny into CI/CD: enforce dependency licensing policies, detect banned crates, and check for unsafe code usage; configure allowed unsafe patterns and document exceptions.
+- [x] Harden template validation: enforce symlink bans, size/depth caps, and allowed file types; fail fast with clear errors.
 - [ ] Tighten traversal and allocation limits for sharded patient discovery; cap patient count per listing call.
 - [ ] Implement a retry and back-off strategy for filesystem and Git operations; clearly document which errors should not be retried.
 - [ ] Perform thorough validation of all input data (such as patient identifiers and namespaces) before allowing any changes to occur; add any necessary protective checks where they are currently missing.
@@ -78,9 +78,11 @@
 **What it means:** The scheduling and tracking system that ensures patients get seen by the right clinician at the right time. Links appointments to clinical records so when a patient arrives for their cardiology follow-up, the cardiologist can see relevant history immediately.
 
 - [ ] Define coordination domain model (encounters/episodes/appointments/referrals) and identifiers.
+- [ ] Implement Care Coordination Repository: sharded storage under `patient_data/coordination/<s1>/<s2>/<uuid>/` with Git-backed versioning, aligned with clinical and demographics patterns.
 - [ ] Link coordination artefacts to clinical and demographics records (stable references across repos).
 - [ ] Authorisation model for coordination actions; align with patient-level access rules.
-- [ ] Persistence layout and sharding approach for coordination data; migration plan if new directories/repos are introduced.
+- [ ] Coordination data formats: define JSON/YAML schemas for encounters, appointments, episodes, and referrals; validate structure and required fields.
+- [ ] Migration plan: create coordination shard subdirectories at startup; document coordination template or seed structure if required.
 
 ## Epic 6. Operational Hardening (Observability, Resilience, Backup, Performance, Security)
 

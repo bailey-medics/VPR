@@ -3,14 +3,14 @@
 ## Purpose and Scope
 
 - Define how LLM tooling supports the VPR project while respecting safety, auditability, and architecture boundaries.
-- Focus on assistant-driven code/docs changes and developer workflows; avoid introducing runtime LLM features unless explicitly approved.
+- Focus on assistant-driven code/docs changes and developer workflows; avoid introducing runtime LLM features.
 - Keep this spec aligned with [docs/src/llm/copilot-instructions.md](./copilot-instructions.md) (canonical guidance for AI contributors).
 
 ## System Context
 
 - VPR is a Rust Cargo workspace delivering dual gRPC/REST services plus a CLI over a file-based, Git-versioned patient record store.
 - Core data operations live in `crates/core`; transports live in `crates/api-grpc` and `crates/api-rest`; shared proto/auth/health in `crates/api-shared`; certificate utilities in `crates/certificates`; CLI in `crates/cli`.
-- Patient data is stored on disk, sharded by UUID under `patient_data/`, with separate clinical and demographics repos per patient and Git history for audit.
+- Patient data is stored on disk, sharded by UUID under `patient_data/`, with separate clinical, demographics, and coordination repos per patient and Git history for audit.
 
 ## LLM Responsibilities (assistant mode)
 
@@ -20,10 +20,10 @@
 
 ## Data and Storage Invariants
 
-- Sharded directories: `patient_data/clinical/<s1>/<s2>/<uuid>/` and `patient_data/demographics/<s1>/<s2>/<uuid>/` (s1/s2 are first 4 hex chars).
-- Clinical repo seeded from validated clinical template directory (no symlinks; depth/size limits enforced); demographics repo holds FHIR-like `patient.json`.
+- Sharded directories: `patient_data/clinical/<s1>/<s2>/<uuid>/`, `patient_data/demographics/<s1>/<s2>/<uuid>/`, and `patient_data/coordination/<s1>/<s2>/<uuid>/` (s1/s2 are first 4 hex chars).
+- Clinical repo seeded from validated clinical template directory (no symlinks; depth/size limits enforced); demographics repo holds FHIR-like `patient.json`; coordination repo (Care Coordination Repository) holds encounters, episodes, appointments, and referrals.
 - Git repos per patient with signed commits (ECDSA P-256) where configured; single branch `main`.
-- Clinical `ehr_status` links to demographics via external reference.
+- Clinical `ehr_status` links to demographics via external reference; coordination entries reference both clinical and demographics records.
 
 ## API Surfaces (high level)
 
@@ -34,7 +34,7 @@
 ## Configuration and Startup
 
 - Env resolved once at startup in binaries/CLI, then passed via `CoreConfig`: `PATIENT_DATA_DIR`, `VPR_CLINICAL_TEMPLATE_DIR`, `RM_SYSTEM_VERSION`, `VPR_NAMESPACE`, API key, bind addresses, reflection flag, dev guard for destructive CLI.
-- Startup flow (vpr-run): validate patient_data and template dirs, ensure shard subdirs exist, build config, launch REST and gRPC concurrently with `tokio::join`.
+- Startup flow (vpr-run): validate patient_data and template dirs, ensure shard subdirs exist (clinical, demographics, coordination), build config, launch REST and gRPC concurrently with `tokio::join`.
 
 ## Safety and Quality Bar
 

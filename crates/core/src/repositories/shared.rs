@@ -20,6 +20,46 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// Whitelist of allowed file extensions for template and patient data files.
+///
+/// These extensions are considered safe for storage in patient repositories.
+/// Files with other extensions will be rejected during validation to prevent
+/// code injection and malicious file uploads.
+pub(crate) const ALLOWED_EXTENSIONS: &[&str] = &[
+    "md", "txt", "yaml", "yml", "json", "xml", "html", "css", "js", "pdf", "png", "jpg", "jpeg",
+    "gif", "svg", "csv", "tsv",
+];
+
+/// Dangerous file patterns that must be rejected in templates and patient uploads.
+///
+/// These patterns represent security risks including:
+/// - Executable files (.exe, .dll, .so, .sh, .bat, etc.)
+/// - Shell scripts and command files
+/// - Path traversal attempts (../, ..)
+/// - Hidden system directories (.git, .ssh)
+///
+/// Any file or path containing these patterns will be rejected during validation.
+pub(crate) const FORBIDDEN_FILESYSTEM_PATTERNS: &[&str] = &[
+    ".git/hooks/",
+    ".ssh/",
+    "../",
+    "..",
+    ".exe",
+    ".dll",
+    ".so",
+    ".dylib", // cspell:ignore dylib
+    ".sh",
+    ".bash",
+    ".zsh",
+    ".fish",
+    ".bat",
+    ".cmd",
+    ".ps1",
+    ".app",
+    ".bin",
+    ".run",
+];
+
 /// The supported types of repository templates in the VPR system.
 ///
 /// This enum is deliberately *closed* to ensure only known template types
@@ -190,20 +230,87 @@ pub fn add_directory_to_index(index: &mut git2::Index, dir: &Path) -> Result<(),
 ///
 /// This function performs comprehensive validation of template directories:
 /// - Checks for required subfolders based on template kind
-/// - Scans for symlinks (not allowed)
+/// - Scans for symlinks (strictly forbidden)
 /// - Enforces file count and size limits
 /// - Validates directory depth
+/// - Whitelists allowed file extensions
+/// - Detects dangerous file names and paths
+/// - Checks for executable permissions on Unix systems
+///
+/// # Security
+///
+/// This validation is critical for preventing:
+/// - Code injection via executable files
+/// - Symlink attacks to read sensitive files
+/// - DoS via excessive file sizes or counts
+/// - Directory traversal attacks
 ///
 /// # Arguments
 /// * `kind` - The type of template directory being validated
 /// * `template_dir` - Path to the template directory
 ///
 /// # Errors
-/// Returns `PatientError::InvalidInput` if validation fails
+/// Returns `PatientError::InvalidInput` with detailed error messages if validation fails
 pub fn validate_template(kind: &TemplateDirKind, template_dir: &Path) -> PatientResult<()> {
     const MAX_FILES: usize = 2_000;
     const MAX_TOTAL_BYTES: u64 = 50 * 1024 * 1024; // 50 MiB
     const MAX_DEPTH: usize = 20;
+    const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10 MiB per file
+
+    /// Check if a file extension is allowed
+    fn is_allowed_extension(path: &Path) -> bool {
+        if let Some(ext) = path.extension() {
+            if let Some(ext_str) = ext.to_str() {
+                return ALLOWED_EXTENSIONS.contains(&ext_str.to_lowercase().as_str());
+            }
+        }
+        // Files without extensions are allowed (e.g., LICENSE, README)
+        // Hidden files starting with . are checked separately
+        true
+    }
+
+    /// Check if a path contains dangerous patterns
+    fn contains_forbidden_pattern(path: &Path) -> Option<&'static str> {
+        let path_str = path.to_string_lossy().to_lowercase();
+        FORBIDDEN_FILESYSTEM_PATTERNS
+            .iter()
+            .find(|&&pattern| path_str.contains(pattern))
+            .copied()
+    }
+
+    /// Check if a filename is dangerous
+    fn is_dangerous_filename(name: &str) -> bool {
+        // Reject files starting with multiple dots (hidden/special)
+        if name.starts_with("..") {
+            return true;
+        }
+        // Reject certain dangerous hidden directories
+        if name == ".git" || name == ".ssh" || name == ".gnupg" {
+            // cspell:ignore gnupg
+            return true;
+        }
+        false
+    }
+
+    #[cfg(unix)]
+    fn check_executable_bit(metadata: &std::fs::Metadata, path: &Path) -> PatientResult<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = metadata.permissions().mode();
+        // Check if any execute bit is set (owner, group, or other)
+        if mode & 0o111 != 0 {
+            return Err(PatientError::InvalidInput(format!(
+                "Template file has executable permissions (forbidden): {}",
+                path.display()
+            )));
+        }
+        Ok(())
+    }
+
+    #[cfg(not(unix))]
+    fn check_executable_bit(_metadata: &std::fs::Metadata, _path: &Path) -> PatientResult<()> {
+        // On non-Unix systems, skip executable bit check
+        Ok(())
+    }
 
     fn scan_dir(
         path: &Path,
@@ -213,9 +320,12 @@ pub fn validate_template(kind: &TemplateDirKind, template_dir: &Path) -> Patient
         kind: &TemplateDirKind,
     ) -> PatientResult<()> {
         if depth > MAX_DEPTH {
-            return Err(PatientError::InvalidInput(
-                "Template directory exceeds maximum nesting depth".into(),
-            ));
+            return Err(PatientError::InvalidInput(format!(
+                "{} exceeds maximum nesting depth ({} levels) at: {}",
+                kind.display_name(),
+                MAX_DEPTH,
+                path.display()
+            )));
         }
 
         for entry in std::fs::read_dir(path).map_err(PatientError::FileRead)? {
@@ -225,28 +335,95 @@ pub fn validate_template(kind: &TemplateDirKind, template_dir: &Path) -> Patient
                 std::fs::symlink_metadata(&entry_path).map_err(PatientError::FileRead)?;
             let file_type = metadata.file_type();
 
+            // Check for symlinks (critical security check)
             if file_type.is_symlink() {
                 return Err(PatientError::InvalidInput(format!(
-                    "{} must not contain symlinks",
-                    kind.display_name()
+                    "{} must not contain symlinks (found at: {})",
+                    kind.display_name(),
+                    entry_path.display()
                 )));
             }
 
+            // Check for dangerous path patterns
+            if let Some(pattern) = contains_forbidden_pattern(&entry_path) {
+                return Err(PatientError::InvalidInput(format!(
+                    "{} contains forbidden path pattern '{}' at: {}",
+                    kind.display_name(),
+                    pattern,
+                    entry_path.display()
+                )));
+            }
+
+            // Check filename for dangerous patterns
+            if let Some(file_name) = entry_path.file_name() {
+                if let Some(name_str) = file_name.to_str() {
+                    if is_dangerous_filename(name_str) {
+                        return Err(PatientError::InvalidInput(format!(
+                            "{} contains dangerous filename: {}",
+                            kind.display_name(),
+                            entry_path.display()
+                        )));
+                    }
+                }
+            }
+
             if file_type.is_file() {
+                // Check file extension whitelist
+                if !is_allowed_extension(&entry_path) {
+                    if let Some(ext) = entry_path.extension() {
+                        return Err(PatientError::InvalidInput(format!(
+                            "{} contains file with forbidden extension '.{}' at: {}",
+                            kind.display_name(),
+                            ext.to_string_lossy(),
+                            entry_path.display()
+                        )));
+                    }
+                }
+
+                // Check for executable permissions on Unix
+                check_executable_bit(&metadata, &entry_path)?;
+
+                // Track file count and total size
                 *files += 1;
-                *bytes += metadata.len();
-                if *files > MAX_FILES || *bytes > MAX_TOTAL_BYTES {
+                let file_size = metadata.len();
+                *bytes += file_size;
+
+                // Check individual file size
+                if file_size > MAX_FILE_SIZE {
                     return Err(PatientError::InvalidInput(format!(
-                        "{} exceeds maximum file count or total size",
-                        kind.display_name()
+                        "{} contains file exceeding maximum size ({} bytes > {} bytes): {}",
+                        kind.display_name(),
+                        file_size,
+                        MAX_FILE_SIZE,
+                        entry_path.display()
+                    )));
+                }
+
+                // Check total limits
+                if *files > MAX_FILES {
+                    return Err(PatientError::InvalidInput(format!(
+                        "{} exceeds maximum file count ({} files > {} allowed)",
+                        kind.display_name(),
+                        *files,
+                        MAX_FILES
+                    )));
+                }
+                if *bytes > MAX_TOTAL_BYTES {
+                    return Err(PatientError::InvalidInput(format!(
+                        "{} exceeds maximum total size ({} bytes > {} bytes allowed)",
+                        kind.display_name(),
+                        *bytes,
+                        MAX_TOTAL_BYTES
                     )));
                 }
             } else if file_type.is_dir() {
                 scan_dir(&entry_path, depth + 1, files, bytes, kind)?;
             } else {
+                // Catch any other file types (devices, pipes, sockets, etc.)
                 return Err(PatientError::InvalidInput(format!(
-                    "{} contains unsupported file types",
-                    kind.display_name()
+                    "{} contains unsupported file type at: {}",
+                    kind.display_name(),
+                    entry_path.display()
                 )));
             }
         }

@@ -33,13 +33,20 @@ cargo build
 
 As the docs run on a cache, you will likely need to nuke the docs if you remove files. Just manually run `nuke docs cache (manual)` from GitHub Actions.
 
-## Documentation
+## Future: Database Projections
 
-postgres single entry is 22.45 ops/sec git is 8.11 ops / sec
+**Note:** The following database benchmarks and setup instructions are for planned future implementation of database projections (Postgres) and caching (Redis) for performance optimisation. The current system uses file-based storage only.
 
-so almost 3 times fast with postgres
+### Time trial benchmarks
 
-## Time trial
+Preliminary benchmarks comparing Postgres vs Git for single entry operations:
+
+- Postgres: 22.45 ops/sec
+- Git: 8.11 ops/sec
+
+Postgres is approximately 3 times faster for these operations.
+
+### Postgres setup (for future implementation)
 
 ```bash
 brew install hyperfine
