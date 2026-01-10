@@ -8,7 +8,7 @@ on:
   workflow_dispatch: {}
   workflow_run:
     workflows: ["Non-main branch workflows"]
-    types: [success]
+    types: [completed]
 
 permissions:
   contents: read
@@ -26,6 +26,7 @@ jobs:
   security_audit:
     runs-on: ubuntu-latest
     name: Security Audit
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     steps:
       - uses: actions/checkout@v6
 
@@ -49,6 +50,7 @@ jobs:
   cargo_deny:
     runs-on: ubuntu-latest
     name: Cargo Deny
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     steps:
       - uses: actions/checkout@v6
 
@@ -71,6 +73,7 @@ jobs:
 
   build-and-deploy-docs:
     runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     steps:
       - uses: actions/checkout@v6
 
