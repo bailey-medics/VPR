@@ -96,6 +96,8 @@
     "rustc",
     "rustdoc",
     "RUSTDOCFLAGS",
+    "rustls",
+    "RUSTSEC",
     "rustup",
     "Segoe",
     "serde",
@@ -111,25 +113,18 @@
     "Utoipa",
     "vars",
     "Venkaresan",
+    "webpki-roots",
     "writable"
   ],
-  "ignoreWords": [
-    "Exampletown"
-  ],
+  "ignoreWords": ["Exampletown"],
   "languageSettings": [
     {
       "languageId": "rust",
-      "includeRegExpList": [
-        "string",
-        "comment",
-        "doc"
-      ]
+      "includeRegExpList": ["string", "comment", "doc"]
     },
     {
       "languageId": "markdown",
-      "includeRegExpList": [
-        ".*"
-      ]
+      "includeRegExpList": [".*"]
     }
   ]
 }
