@@ -27,14 +27,14 @@ jobs:
     runs-on: ubuntu-latest
     name: Security Audit
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo-audit
         id: cache-cargo-audit
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cargo/bin/cargo-audit
           key: cargo-audit-${{ runner.os }}-v0.22.0
@@ -50,14 +50,14 @@ jobs:
     runs-on: ubuntu-latest
     name: Cargo Deny
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo-deny
         id: cache-cargo-deny
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cargo/bin/cargo-deny
           key: cargo-deny-${{ runner.os }}-v0.19.0
@@ -72,7 +72,7 @@ jobs:
   build-and-deploy-docs:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # Pin rust toolchain (uses rust-toolchain.toml if present)
       - uses: dtolnay/rust-toolchain@stable
@@ -82,10 +82,10 @@ jobs:
       # ---------- protoc cache/install ----------
       - name: Cache protoc
         id: cache-protoc
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/protoc
-          key: protoc-${{ runner.os }}-v25.1
+          key: protoc-${{ runner.os }}-v33.3
           restore-keys: |
             protoc-${{ runner.os }}-
 
@@ -95,7 +95,7 @@ jobs:
           set -euxo pipefail
           mkdir -p ~/protoc
           cd ~/protoc
-          curl -L https://github.com/protocolbuffers/protobuf/releases/download/v25.1/protoc-25.1-linux-x86_64.zip -o protoc.zip
+          curl -L https://github.com/protocolbuffers/protobuf/releases/download/v33.3/protoc-33.3-linux-x86_64.zip -o protoc.zip
           unzip -q protoc.zip
           chmod +x bin/protoc
 
@@ -106,7 +106,7 @@ jobs:
 
       # ---------- Cache Rust build ----------
       - name: Cache Rust
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/bin/
@@ -121,15 +121,15 @@ jobs:
       # ---------- Cache mdBook binary (separate, small, versioned) ----------
       - name: Cache mdBook
         id: cache-mdbook
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cargo/bin/mdbook
-          key: mdbook-${{ runner.os }}-v0.4.52
+          key: mdbook-${{ runner.os }}-v0.5.2
 
       # Install mdBook only if cache is cold
       - name: Install mdBook
         if: steps.cache-mdbook.outputs.cache-hit != 'true'
-        run: cargo install mdbook --version 0.4.52 --locked
+        run: cargo install mdbook --version 0.5.2 --locked
 
       # ---------- Build rustdoc + mdBook ----------
       - name: Build rustdoc and mdBook
@@ -184,7 +184,7 @@ jobs:
       # ---------- Deploy to GitHub Pages ----------
       - uses: actions/configure-pages@v5
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v4
         with:
           path: docs/book
 
