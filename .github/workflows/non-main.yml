@@ -3,8 +3,6 @@ name: Non-main branch workflows
 on:
   push:
     branches-ignore: [main, master]
-  pull_request:
-    branches-ignore: [main, master]
 
 permissions:
   contents: write
