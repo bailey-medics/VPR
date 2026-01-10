@@ -11,6 +11,9 @@
 - [ ] Retry/back-off policy for filesystem/Git operations; document non-retriable errors.
 - [ ] Exhaustive validation of inputs (identifiers (IDs), namespaces) before side effects; add missing guards where needed.
 - [ ] Monitoring hooks: surface template validation failures in logs/metrics.
+- [ ] Consider `git gc` on repo periodically.
+- [ ] Add patient comments (? unsigned).
+- [ ] No symlinks ever. Need to parse incoming and current repos.
 
 ## Epic 2. openEHR Alignment and Reference Model (RM) Semantics
 
@@ -56,12 +59,13 @@
 - [ ] Optimise sharding/path operations if bottlenecks found; cache where safe.
 - [ ] Define Protected Health Information (PHI) handling expectations and redaction rules across logs/metrics/storage. **Question:** What PHI redaction rules and boundaries are required across logs/metrics/storage?
 - [ ] Decide storage encryption posture (at-rest options, filesystem or repository-level) and in-transit defaults; document key management for certificates and API keys. **Question:** Which encryption approach (filesystem/repository/Key Management Service (KMS)) and key management/rotation policy should we adopt?
+- [ ] GH dependabot
+- [ ] Unit test src/main.rs
 
 ## Epic 7. API Transport and Auth Layer
 
 - [x] Dual API transports: gRPC (tonic) and REST (axum/utoipa) with shared protobuf types; health endpoints on both; optional gRPC reflection wiring present.
-- [x] Basic auth guard on gRPC via API key interceptor.
-- [ ] REST auth parity with gRPC: enforce API key model (per decision: “yes”), document required header, error model, and config flags. **Question:** Is there a target timeline or environment scope for adding mutual Transport Layer Security (mTLS)/alternative auth alongside API keys?
+- [x] Basic auth guard on gRPC via API key interceptor.- [ ] Turn off reflections in production- [ ] REST auth parity with gRPC: enforce API key model (per decision: “yes”), document required header, error model, and config flags. **Question:** Is there a target timeline or environment scope for adding mutual Transport Layer Security (mTLS)/alternative auth alongside API keys?
 - [ ] Optional mTLS design (if needed later): propose cert layout, trust store management, and dual-mode support. **Question:** Should we plan mTLS now or later, and what trust distribution mechanism is preferred?
 - [ ] Explicit error models for REST/gRPC (structured errors, consistent status mapping).
 - [ ] Pagination and limits for listing APIs; input validation coverage for all request fields.
@@ -72,6 +76,7 @@
 ## Epic 8. API Projection and Documentation Layer
 
 - [ ] Add projections and caching layer for API reads: define projection formats, cache keys/TTL, and consistency rules with underlying Git-backed stores.
+- [ ] Projections for speed optimisation
 - [ ] Update OpenAPI/Proto docs and examples to match behaviours.
 - [ ] Artefact builds: binaries and container images; publish instructions and SBOMs if required.
 - [ ] Pagination and limits for listing APIs; input validation coverage for all request fields. (Keep requirements in sync with projections.)

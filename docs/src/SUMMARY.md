@@ -5,7 +5,6 @@
 - [Literature Review](./literature-review.md)
 - [Development](./development.md)
 - [Specifications](./specifications.md)
-- [To Do](./todo.md)
 - [Technical](./technical.md)
   - [Design Decisions](./design-decisions.md)
     - [openEHR file structure](./open-ehr/index.md)
