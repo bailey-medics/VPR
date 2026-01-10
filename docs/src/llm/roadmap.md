@@ -25,7 +25,7 @@
 - [x] Clinical template seeding and validation at startup (required directory exists and is copied into new clinical repos).
 - [x] Commit-signing made optional during development (signing disabled by default in dev environments).
 - [x] Integrate cargo-audit into CI/CD: automatically check dependencies for known security vulnerabilities on every build.
-- [ ] Integrate cargo-deny into CI/CD: enforce dependency licensing policies, detect banned crates, and check for unsafe code usage; configure allowed unsafe patterns and document exceptions.
+- [x] Integrate cargo-deny into CI/CD: enforce dependency licensing policies, detect banned crates, and check for unsafe code usage; configure allowed unsafe patterns and document exceptions.
 - [ ] Harden template validation: enforce symlink bans, size/depth caps, and allowed file types; fail fast with clear errors.
 - [ ] Tighten traversal and allocation limits for sharded patient discovery; cap patient count per listing call.
 - [ ] Implement a retry and back-off strategy for filesystem and Git operations; clearly document which errors should not be retried.

@@ -6,7 +6,7 @@ Focus: be pragmatic, reference concrete files, and keep changes minimal and well
 
 These notes are for automated coding agents and should be short, concrete, and codebase-specific.
 
-Specifications live in [spec.md](spec2.md); roadmap is tracked in [roadmap.md](roadmap.md). Keep this document consistent with those sources.
+Specifications live in [spec.md](spec.md); roadmap is tracked in [roadmap.md](roadmap.md). Keep this document consistent with those sources.
 
 Overview
 - Purpose: VPR is a file-based patient record system with Git-like versioning, built as a Rust Cargo workspace. It provides dual gRPC and REST APIs for health checks and patient creation. The system stores patient data as JSON/YAML files in a sharded directory structure under `patient_data/`, with each patient having their own Git repositories (clinical, demographics, and coordination) for version control.
