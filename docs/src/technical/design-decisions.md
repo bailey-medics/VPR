@@ -2,6 +2,8 @@
 
 This document captures the key architectural and governance decisions behind VPR, and the reasoning for each. The emphasis throughout is on auditability, clinical accountability, privacy, and long-term robustness.
 
+A standing keystone for every decision is the pairing of patient-first intent with human-readable files as the canonical record. VPR should make patient agency primary while keeping the record legible, portable, and auditable as plain files.
+
 File layouts can be seen at [openEHR file structure](open-ehr/index.md).
 
 ---
@@ -205,17 +207,18 @@ VPR uses different on-disk file formats depending on the **nature of the clinica
 
 - **Machine-dense or high-volume data**  
   (for example large panels, waveforms, derived analytics outputs)  
-  → **JSON, if needed**
+  → **YAML by default; JSON only if interoperability tooling absolutely requires it**
 
-- **APIs and external integrations**  
-  → **JSON always**
+- **APIs and external integrations (REST/gRPC, internet-facing)**  
+  → **JSON by default** (wire format and payload shape). Use YAML/Markdown only for offline/shared on-disk artefacts we control end-to-end, not for internet APIs.
 
 ### Rationale
 
 - **Markdown** preserves clinical narrative, nuance, and intent, and produces clear, reviewable Git diffs.
 - **YAML** is human-readable, diff-friendly, and well suited to structured clinical data that may need manual review or audit.
-- **JSON** is optimal for transport and high-density machine processing, but less suitable for direct human review in Git.
-- **APIs** standardise on JSON for interoperability and tooling compatibility.
+- **YAML** is the preferred structured format when human review in Git matters; only fall back to JSON when an external consumer requires it.
+- **JSON** remains available for interoperability edge cases, but should be avoided when YAML/Markdown will suffice.
+- **APIs** use JSON for internet-facing REST/gRPC. YAML/Markdown stay for on-disk/shared artefacts or tightly controlled internal flows, not for public API payloads.
 
 This approach keeps clinical records legible to clinicians, robust under version control, and straightforward to serialise for external systems. The underlying data model remains the same regardless of file format; only the on-disk representation differs.
 

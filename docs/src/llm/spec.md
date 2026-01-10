@@ -12,6 +12,14 @@
 - Core data operations live in `crates/core`; transports live in `crates/api-grpc` and `crates/api-rest`; shared proto/auth/health in `crates/api-shared`; certificate utilities in `crates/certificates`; CLI in `crates/cli`.
 - Patient data is stored on disk, sharded by UUID under `patient_data/`, with separate clinical, demographics, and coordination repos per patient and Git history for audit.
 
+## Patient-Centred Posture
+
+- Put the patient at the centre of every decision: safety, clarity, and agency outweigh convenience.
+- Treat the combination of patient-first intent and human-readable files as the keystone: files remain the canonical, inspectable record that patients and clinicians can understand and carry.
+- Support two deployment shapes: (a) patient/self-hosted mode on a personal machine using CLI and a simple UX (to be built later in the epics), and (b) enterprise/organisation mode serving hundreds or thousands of patients.
+- Design interfaces and logging with the assumption that patients may access their own records; avoid leaking PHI in tooling output while keeping auditability for clinical and organisational users.
+- Keep on-disk formats human-readable (YAML and Markdown with front matter) so patients and clinicians can inspect history; use JSON only for internet-facing APIs (REST/gRPC) where required.
+
 ## LLM Responsibilities (assistant mode)
 
 - Follow canonical contributor instructions: defensive programming, British English docs, architecture boundaries, startup config resolution in binaries only.

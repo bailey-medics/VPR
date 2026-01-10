@@ -48,6 +48,7 @@
     "healthcheck",
     "HIER",
     "Hyperledger",
+    "inspectable",
     "IPFS",
     "Justfile",
     "Kerrache",
@@ -116,15 +117,23 @@
     "webpki-roots",
     "writable"
   ],
-  "ignoreWords": ["Exampletown"],
+  "ignoreWords": [
+    "Exampletown"
+  ],
   "languageSettings": [
     {
       "languageId": "rust",
-      "includeRegExpList": ["string", "comment", "doc"]
+      "includeRegExpList": [
+        "string",
+        "comment",
+        "doc"
+      ]
     },
     {
       "languageId": "markdown",
-      "includeRegExpList": [".*"]
+      "includeRegExpList": [
+        ".*"
+      ]
     }
   ]
 }

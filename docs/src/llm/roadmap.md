@@ -24,16 +24,16 @@
 - [x] File-based patient record store with sharded layout and per-patient Git repos (clinical + demographics separation).
 - [x] Clinical template seeding and validation at startup (required directory exists and is copied into new clinical repos).
 - [x] Commit-signing made optional during development (signing disabled by default in dev environments).
-- [x] Integrate cargo-audit into CI/CD: automatically check dependencies for known security vulnerabilities on every build.
-- [x] Integrate cargo-deny into CI/CD: enforce dependency licensing policies, detect banned crates, and check for unsafe code usage; configure allowed unsafe patterns and document exceptions.
+- [x] Integrate cargo-audit into CI/CD (Continuous Integration/Continuous Deployment): automatically check dependencies for known security vulnerabilities on every build.
+- [x] Integrate cargo-deny into CI/CD (Continuous Integration/Continuous Deployment): enforce dependency licensing policies, detect banned crates, and check for unsafe code usage; configure allowed unsafe patterns and document exceptions.
 - [x] Harden template validation: enforce symlink bans, size/depth caps, and allowed file types; fail fast with clear errors.
 - [ ] Tighten traversal and allocation limits for sharded patient discovery; cap patient count per listing call.
 - [ ] Implement a retry and back-off strategy for filesystem and Git operations; clearly document which errors should not be retried.
 - [ ] Perform thorough validation of all input data (such as patient identifiers and namespaces) before allowing any changes to occur; add any necessary protective checks where they are currently missing.
 - [ ] Add monitoring capabilities to detect and report template validation failures through system logs and performance metrics.
-- [ ] Consider `git gc` on repo periodically.
+- [ ] Consider periodic `git gc` for per-patient repos to compact packs, prune unreachable objects safely, and keep disk usage/performance under control (choose a conservative prune window so no recent history is dropped).
 - [ ] Add patient comments (? unsigned).
-- [ ] No symlinks ever. Need to parse incoming and current repos.
+- [ ] No symlinks ever: scan current patient repos and any incoming data/imports for symlinks or dangerous nodes; reject or remediate before write.
 
 ## Epic 2. openEHR Alignment and Reference Model (RM) Semantics
 
@@ -41,27 +41,17 @@
 
 **What it means:** Like ensuring our medical records can be understood by any hospital system worldwide, not just our own. openEHR is an internationally recognised standard for structuring clinical data that ensures longevity and portability of patient information.
 
-- [ ] Clarify Reference Model (RM) system version handling and namespace expectations; document RM compatibility matrix.
+- [ ] Define how we select and validate Reference Model (RM) versions (e.g., openEHR RM releases) for VPR.
+- [ ] Specify how namespaces are formed and validated for `ehr://{namespace}` URIs (allowed characters, length, collision rules, safety in EHR status links).
+- [ ] Publish a compatibility matrix showing which RM versions and namespaces are supported per deployment/environment.
 - [ ] Ensure `ehr_status` and clinical content align with openEHR references (external_ref linkage to demographics).
-- [ ] Map clinical template contents to openEHR archetype expectations; document any divergences.
+- [ ] Map clinical template contents to openEHR archetype expectations; document any divergences (we have rm_version now as a variable in the yaml).
 - [ ] Add validation/linters (where practical) to catch RM/archetype mismatches early.
-- [ ] Define and support initial data types for the first VPR build: `ehr_status`, clinical letters, documents (PDF), and patient-to-clinic messaging (storage layout, validation, and linkage to demographics/clinical records).
+- [ ] Define and support initial data types for the first VPR build: `ehr_status` (YAML), clinical letters (Markdown with YAML front matter and/or PDF attachments with required metadata), documents (PDF binaries plus sidecar metadata), and patient-to-clinic messaging (structured JSON/YAML threads with required fields), including storage layout, validation, and linkage to demographics/clinical records.
 
-## Epic 3. Logging and Auditability
+## Epic 3. Demographics via FHIR (Fast Healthcare Interoperability Resources)
 
-**Business Value:** Creates a complete, searchable audit trail of all system activities for compliance (GDPR, HIPAA), security incident investigation, and performance troubleshooting. Essential for demonstrating duty of care and regulatory compliance.
-
-**What it means:** Every action in the system is logged—who accessed what record, when, and what they did. Like CCTV for data access, but with appropriate privacy protections. Enables answering "who viewed this patient's record?" or "why did this operation fail?"
-
-- [ ] Define a consistent logging schema across all binaries and services (fields, levels, correlation identifiers/request identifiers).
-- [ ] Ensure sensitive data handling: redact PHI (Protected Health Information) in logs; document safe logging patterns.
-- [ ] Standardise error reporting in logs (error categories, causes, user-facing vs. internal detail).
-- [ ] Correlate requests across REST/gRPC and core operations using propagated request identifiers.
-- [ ] Document logging configuration, sinks, and rotation/retention expectations.
-
-## Epic 4. Demographics via FHIR (Fast Healthcare Interoperability Resources)
-
-**Business Value:** Implements patient demographics (name, date of birth, address, contact details) using FHIR, the global standard for healthcare data exchange. Enables integration with NHS systems, GP practices, and third-party health apps.
+**Business Value:** Implements patient demographics (name, date of birth, address, contact details) using FHIR, the global standard for healthcare data exchange. Enables integration with NHS (UK National Health Service) systems, GP practices, and third-party health apps.
 
 **What it means:** Patient demographic data stored in a format that any modern healthcare system can understand and exchange. FHIR is to healthcare what HTML is to websites—a universal standard that enables systems to talk to each other.
 
@@ -70,6 +60,20 @@
 - [ ] Validate demographics against a chosen FHIR profile (fields, required elements, formats, namespaces).
 - [ ] Add pagination/limits and stronger validation for demographics listing/queries.
 - [ ] Document demographics data contract and evolution strategy.
+
+## Epic 4. Logging and Auditability
+
+**Business Value:** Creates a complete, searchable audit trail of system activities for compliance (GDPR—General Data Protection Regulation, HIPAA—US Health Insurance Portability and Accountability Act), security incident investigation, and performance troubleshooting. Essential for demonstrating duty of care and regulatory compliance.
+
+**What it means:** Log system operations with privacy-safe context so we can answer "what action happened, when, and did it succeed?" without exposing patient content. Focus on events, outcomes, and traceability even if there is only a single front-end client.
+
+- [ ] Define a consistent logging schema across all binaries and services (fields, levels, correlation/request IDs supplied by the front end and propagated end-to-end).
+- [ ] Ensure sensitive data handling: redact PHI (Protected Health Information) in logs; prefer patient UUIDs and record types over payloads; scrub error paths.
+- [ ] Standardise error reporting and categories (validation vs I/O vs Git vs auth), with user-facing vs internal detail separated.
+- [ ] Correlate operations end-to-end using propagated request identifiers (from the front end or caller) across core actions; include operation type, target resource, outcome, latency, and Git commit ID for write operations.
+- [ ] Log security/validation events: auth failures (API key/service account), rejected inputs (UUID/namespace/format), denied uploads (symlink/dangerous content), and template validation failures.
+- [ ] Log operational/health signals: retries/back-off events, rate-limit/abuse triggers (if enabled), cache hits/misses (if added), and background maintenance (e.g., git gc, audits).
+- [ ] Document logging configuration, sinks, retention/rotation, and redaction rules.
 
 ## Epic 5. Coordination / Patient Administration System (PAS)-like Functions
 
@@ -81,7 +85,7 @@
 - [ ] Implement Care Coordination Repository: sharded storage under `patient_data/coordination/<s1>/<s2>/<uuid>/` with Git-backed versioning, aligned with clinical and demographics patterns.
 - [ ] Link coordination artefacts to clinical and demographics records (stable references across repos).
 - [ ] Authorisation model for coordination actions; align with patient-level access rules.
-- [ ] Coordination data formats: define JSON/YAML schemas for encounters, appointments, episodes, and referrals; validate structure and required fields.
+- [ ] Coordination data formats: define YAML schemas (and Markdown with front matter where suitable) for encounters, appointments, episodes, and referrals; validate structure and required fields. Include user experience (UX) state for the front end where relevant (e.g., which messages/tasks have been read) so the client can persist and display read/unread/task completion status alongside coordination artefacts.
 - [ ] Migration plan: create coordination shard subdirectories at startup; document coordination template or seed structure if required.
 
 ## Epic 6. Operational Hardening (Observability, Resilience, Backup, Performance, Security)
@@ -99,7 +103,7 @@
 - [ ] Restore drills: scripted restore into clean environment; verify integrity and signatures where applicable.
 - [ ] Document Recovery Point Objective (RPO—maximum acceptable data loss) and Recovery Time Objective (RTO—maximum acceptable downtime) targets once agreed. **Question:** What RPO/RTO targets should we commit to for patient data and templates?
 - [ ] Benchmark patient create/list under load; profile filesystem and Git hotspots.
-- [ ] Set target latency/throughput SLOs (Service Level Objectives—performance promises) and document measurement method. **Question:** What latency/availability SLOs should we target for create/list/health?
+- [ ] Set target latency/throughput Service Level Objectives (SLOs—performance promises) and document measurement method. **Question:** What latency/availability SLOs should we target for create/list/health?
 - [ ] Optimise sharding/path operations if bottlenecks found; cache where safe.
 - [ ] Define PHI (Protected Health Information—patient identifiable data) handling expectations and redaction rules across logs/metrics/storage. **Question:** What PHI redaction rules and boundaries are required across logs/metrics/storage?
 - [ ] Decide storage encryption posture (at-rest options, filesystem or repository-level) and in-transit defaults; document key management for certificates and API keys. **Question:** Which encryption approach (filesystem/repository/KMS—Key Management Service) and key management/rotation policy should we adopt?
@@ -117,7 +121,7 @@
 
 **What it means:** The secure doorway into the system. Like having both a traditional door lock (API keys) and biometric scanner (mTLS certificates) options. Ensures only authorised clinical applications can access patient data, and all access is authenticated and logged.
 
-- [x] Dual API transports: gRPC (tonic) and REST (axum/utoipa) with shared protobuf types; health endpoints on both; optional gRPC reflection wiring present.
+- [x] Dual Application Programming Interface (API) transports: gRPC (gRPC Remote Procedure Calls) and REST (Representational State Transfer) with shared protobuf types; health endpoints on both; optional gRPC reflection wiring present.
 - [x] Basic auth guard on gRPC via API key interceptor.
 - [ ] Turn off reflections in production
 - [ ] REST auth parity with gRPC: enforce API key model (per decision: "yes"), document required header, error model, and config flags. **Question:** Is there a target timeline or environment scope for adding mTLS (mutual Transport Layer Security—certificate-based authentication)/alternative auth alongside API keys?
@@ -163,59 +167,3 @@
 - [ ] Define patient authentication/consent requirements for upload: ensure patient identity verification and explicit consent before allowing record modification.
 - [ ] Document data portability formats and migration guides for patients transitioning between providers.
 - [ ] **Question:** Should patients be able to upload records signed by other systems, or only unsigned personal records? How do we handle trust boundaries for external signatures?
-
----
-
-## Open Questions (Requiring Leadership Decision)
-
-These questions require input from clinical leadership, information governance, or technical governance boards:
-
-- Runtime LLM (Large Language Model) features: not planned for foreseeable future (LLM remains contributor-assistance only).
-
----
-
-## Glossary
-
-**API (Application Programming Interface):** The methods by which software systems communicate with each other.
-
-**CI (Continuous Integration):** Automated testing and building of software on each code change.
-
-**FHIR (Fast Healthcare Interoperability Resources):** International standard for exchanging healthcare information electronically.
-
-**Git:** Version control system that tracks all changes to files with complete history and audit trail.
-
-**gRPC:** High-performance communication protocol for services to talk to each other (technical implementation detail).
-
-**HIPAA:** US healthcare privacy law (Health Insurance Portability and Accountability Act).
-
-**KMS (Key Management Service):** Secure system for storing and managing encryption keys.
-
-**mTLS (mutual Transport Layer Security):** Certificate-based authentication where both parties prove their identity.
-
-**openEHR:** International standard for modelling and storing clinical data in a vendor-neutral way.
-
-**PAS (Patient Administration System):** Software managing appointments, admissions, referrals, and patient flow.
-
-**PDF (Portable Document Format):** Standard document file format.
-
-**PHI (Protected Health Information):** Any patient-identifiable health information that must be kept confidential.
-
-**REST:** Common API style for web applications (Representational State Transfer).
-
-**RM (Reference Model):** In openEHR, the foundational data structures for clinical information.
-
-**RPO (Recovery Point Objective):** Maximum acceptable amount of data loss measured in time (e.g., "can lose up to 1 hour of data").
-
-**RTO (Recovery Time Objective):** Maximum acceptable downtime (e.g., "must restore service within 4 hours").
-
-**SBOM (Software Bill of Materials):** List of all software components and dependencies (for security auditing).
-
-**SLO (Service Level Objective):** Performance target the system commits to achieving (e.g., "95% of requests complete within 200ms").
-
-**TTL (Time To Live):** How long cached data remains valid before refresh.
-
----
-
-*Document maintained by: Technical Team*  
-*Last updated: January 2026*  
-*Next review: Quarterly or upon major architectural decisions*
