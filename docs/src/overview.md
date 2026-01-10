@@ -10,6 +10,8 @@ The Versioned Patient Repository (VPR) introduces a shift in this paradigm by pl
 
 The VPR is a file-based health record architecture where each patient’s data is stored as structured, human-readable documents. Instead of overwriting records, each change creates a new version, managed through Git-like version control. This produces an immutable audit trail while maintaining portability and interoperability.
 
+At the heart of VPR is a combined keystone principle: the patient comes first, and the canonical record is kept as human-readable files. Every design choice should reinforce patient agency while preserving an auditable, legible, file-based record that patients and clinicians alike can inspect and carry with them.
+
 ### Patients first
 
 When treating a patient, we put the patient at the heart of every decision. Their needs, preferences, and rights guide our actions. The same patient-first principle should extend to health data. Current EPR implementations, however, are built around organisational needs rather than those of the individual. We need to step back and reimagine the health record from the patient’s perspective. In fact, we need to make the patient's data portable and accessible wherever they go. This is where the `file` shows its strength.
