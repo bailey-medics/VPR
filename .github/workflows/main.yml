@@ -9,7 +9,7 @@ permissions:
   contents: read
   pages: write
   id-token: write
-
+# test
 concurrency:
   group: pages
   cancel-in-progress: true
@@ -126,7 +126,7 @@ jobs:
       # Install mdBook only if cache is cold
       - name: Install mdBook
         if: steps.cache-mdbook.outputs.cache-hit != 'true'
-        run: cargo install mdbook --version 0.5.2 --locked
+        run: cargo install mdbook --version 0.5.2 --locked --force
 
       # ---------- Build rustdoc + mdBook ----------
       - name: Build rustdoc and mdBook
