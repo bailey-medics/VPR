@@ -80,6 +80,7 @@
     "PGURL",
     "pipefail",
     "POMR",
+    "proc-macro-error",
     "prost",
     "protoc",
     "protos",

@@ -24,7 +24,7 @@
 - [x] File-based patient record store with sharded layout and per-patient Git repos (clinical + demographics separation).
 - [x] Clinical template seeding and validation at startup (required directory exists and is copied into new clinical repos).
 - [x] Commit-signing made optional during development (signing disabled by default in dev environments).
-- [ ] Integrate cargo-audit into CI/CD: automatically check dependencies for known security vulnerabilities on every build.
+- [x] Integrate cargo-audit into CI/CD: automatically check dependencies for known security vulnerabilities on every build.
 - [ ] Integrate cargo-deny into CI/CD: enforce dependency licensing policies, detect banned crates, and check for unsafe code usage; configure allowed unsafe patterns and document exceptions.
 - [ ] Harden template validation: enforce symlink bans, size/depth caps, and allowed file types; fail fast with clear errors.
 - [ ] Tighten traversal and allocation limits for sharded patient discovery; cap patient count per listing call.
@@ -105,6 +105,7 @@
 - [ ] **Implement signature verification on read paths:** Add capability to verify Git commit signatures when reading patient data; make behaviour configurable (skip verification, warn on invalid/missing signatures, or fail hard and refuse to serve data). Coordinate with commit-signing policy decision.
 - [ ] Integrate Miri into CI/CD: run Miri (Rust's interpreter) on test suite to detect undefined behaviour, use-after-free, and other subtle memory safety issues.
 - [ ] Integrate sanitizers into CI/CD: configure AddressSanitizer, ThreadSanitizer, and MemorySanitizer for runtime detection of memory errors, data races, and uninitialized memory usage; run on comprehensive test suite.
+- [ ] Resolve all cargo-audit warnings: address unmaintained dependencies (e.g., proc-macro-error from utoipa), either by updating to maintained alternatives, working with upstream maintainers, or documenting accepted risks in audit.toml with justification.
 - [ ] GH dependabot
 - [ ] Unit test src/main.rs
 
