@@ -164,8 +164,13 @@ jobs:
 
       - name: Merge branch into main and push
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PUSH_TOKEN: ${{ secrets.ACTIONS_TRIGGER_PAT }}
         run: |
+          if [ -z "$PUSH_TOKEN" ]; then
+            echo "ERROR: ACTIONS_TRIGGER_PAT is not set. Add a PAT with 'repo' and 'workflow' scopes to trigger main workflow." >&2
+            exit 1
+          fi
+
           # Ensure we have latest main locally
           git fetch origin main:main || git fetch origin refs/heads/main:main
 
@@ -201,4 +206,5 @@ jobs:
             exit 1
           fi
 
-          git push origin main
+          # Push with PAT so the push event triggers main workflow
+          git push https://x-access-token:${PUSH_TOKEN}@github.com/bailey-medics/VPR.git main
