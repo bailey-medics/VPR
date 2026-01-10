@@ -9,7 +9,7 @@ These notes are for automated coding agents and should be short, concrete, and c
 Specifications live in [docs/src/llm/spec.md](docs/src/llm/spec.md); roadmap is tracked in [docs/src/llm/roadmap.md](docs/src/llm/roadmap.md). Keep this document consistent with those sources.
 
 Overview
-- Purpose: VPR is a file-based patient record system with Git-like versioning, built as a Rust Cargo workspace. It provides dual gRPC and REST APIs for health checks and patient creation. The system stores patient data as JSON/YAML files in a sharded directory structure under `patient_data/`, with each patient having their own Git repository for version control.
+- Purpose: VPR is a file-based patient record system with Git-like versioning, built as a Rust Cargo workspace. It provides dual gRPC and REST APIs for health checks and patient creation. The system stores patient data as JSON/YAML files in a sharded directory structure under `patient_data/`, with each patient having their own Git repositories (clinical, demographics, and coordination) for version control.
 - Key crates:
   - `crates/core` (vpr-core) — **PURE DATA OPERATIONS ONLY**: File/folder management, patient data CRUD, Git versioning with X.509 commit signing. **NO API concerns** (authentication, HTTP/gRPC servers, service interfaces).
   - `crates/api-shared` — Shared utilities and definitions for both APIs: Protobuf types, HealthService, authentication utilities.
@@ -20,7 +20,7 @@ Overview
 - Main binary: `vpr-run` (defined in root `Cargo.toml`), runs both gRPC (port 50051) and REST (port 3000) servers concurrently using tokio::join.
 
 Important files to reference
-- `src/main.rs` — Main binary that performs startup validation (checks for patient_data, clinical-template directories; creates clinical/demographics subdirs), creates runtime constants, and starts both gRPC (port 50051) and REST (port 3000) servers concurrently using tokio::join.
+- `src/main.rs` — Main binary that performs startup validation (checks for patient_data, clinical-template directories; creates clinical/demographics/coordination subdirs), creates runtime constants, and starts both gRPC (port 50051) and REST (port 3000) servers concurrently using tokio::join.
 - `crates/core/src/lib.rs` — **PURE DATA OPERATIONS**: Services for file/folder operations (sharded storage, directory traversal, Git repos per patient). **NO API CODE**.
 - `crates/core/src/config.rs` — `CoreConfig` and helpers used to resolve/validate configuration **once at startup**.
 - `crates/core/src/clinical.rs` — ClinicalService: Initialises patients with clinical template copy, creates Git repo, signs commits with X.509.
@@ -46,6 +46,7 @@ Conventions and patterns to follow
 - Patient storage: Sharded under the configured patient data directory (default: `patient_data`):
   - Clinical: `clinical/<s1>/<s2>/<32hex-uuid>/` (ehr_status.yaml, copied clinical-template files, Git repo)
   - Demographics: `demographics/<s1>/<s2>/<32hex-uuid>/patient.json` (FHIR-like JSON, Git repo)
+  - Coordination: `coordination/<s1>/<s2>/<32hex-uuid>/` (Care Coordination Repository: encounters, appointments, episodes, referrals; Git repo)
   where s1/s2 are first 4 hex chars of UUID.
 - APIs: Dual gRPC/REST with identical functionality; REST uses axum, utoipa for OpenAPI.
 - Logging: `tracing` with `RUST_LOG` env var (e.g., `vpr=debug`).

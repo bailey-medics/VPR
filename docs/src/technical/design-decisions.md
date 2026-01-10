@@ -6,25 +6,28 @@ File layouts can be seen at [openEHR file structure](open-ehr/index.md).
 
 ---
 
-## Separation of demographics and clinical data
+## Separation of demographics, clinical, and coordination data
 
-VPR stores **patient demographics** and **clinical data** in separate repositories.
+VPR stores **patient demographics**, **clinical data**, and **coordination data** in separate repositories.
 
 - The **demographics repository** (equivalent to a Master Patient Index) contains personal identifiers such as name, date of birth, and national identifiers.
-- The **clinical repository** contains all medical content, including observations, diagnoses, encounters, and results.
+- The **clinical repository** contains all medical content, including observations, diagnoses, clinical letters, and results.
+- The **coordination repository** (Care Coordination Repository) contains administrative and care coordination information such as encounters, episodes of care, appointments, and referrals.
 
-The only link between the two is a reference stored in `ehr_status.subject.external_ref` within the clinical repository, pointing to the corresponding demographic record.
+The demographics repository is linked to the clinical repository via a reference stored in `ehr_status.subject.external_ref`. The coordination repository references both demographics (for patient identity) and clinical records (for clinical context).
 
 This design follows established openEHR principles and provides several benefits:
 
 - Clinical data can be shared, versioned, and audited independently of personally identifiable information.
+- Coordination data (appointments, referrals, encounters) can be managed separately from clinical content, allowing administrative workflows to evolve independently.
 - Privacy risks are reduced by minimising the spread of identifiers.
-- Systems remain modular, allowing demographics and clinical services to evolve separately.
+- Systems remain modular, allowing demographics, clinical, and coordination services to evolve separately.
 
 In practice:
 
 - **FHIR** is used for demographics.
 - **openEHR** is used for structured clinical data.
+- **Coordination data** format is to be determined (may adopt FHIR ideologies for encounters, appointments, episodes).
 
 Reference:  
 https://specifications.openehr.org/releases/1.0.1/html/architecture/overview/Output/design_of_ehr.html
@@ -102,6 +105,8 @@ Concrete examples of defensive measures include:
 - Returning a distinct error when initialisation fails and cleanup also fails, so operators can detect and investigate residual on-disk state.
 
 These practices reduce the likelihood of corrupted or ambiguous record state, improve operational visibility when something goes wrong, and keep clinical behaviour deterministic.
+
+---
 
 ## Signed Git commits in VPR (summary)
 
@@ -294,7 +299,3 @@ Both are essential. They answer different questions and are optimised for differ
 - CQRS-style separation keeps the system auditable, performant, and safe
 
 This design allows VPR to combine strong clinical governance with a responsive modern user experience, without compromising either.
-
-
----
-

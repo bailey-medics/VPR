@@ -78,9 +78,11 @@
 **What it means:** The scheduling and tracking system that ensures patients get seen by the right clinician at the right time. Links appointments to clinical records so when a patient arrives for their cardiology follow-up, the cardiologist can see relevant history immediately.
 
 - [ ] Define coordination domain model (encounters/episodes/appointments/referrals) and identifiers.
+- [ ] Implement Care Coordination Repository: sharded storage under `patient_data/coordination/<s1>/<s2>/<uuid>/` with Git-backed versioning, aligned with clinical and demographics patterns.
 - [ ] Link coordination artefacts to clinical and demographics records (stable references across repos).
 - [ ] Authorisation model for coordination actions; align with patient-level access rules.
-- [ ] Persistence layout and sharding approach for coordination data; migration plan if new directories/repos are introduced.
+- [ ] Coordination data formats: define JSON/YAML schemas for encounters, appointments, episodes, and referrals; validate structure and required fields.
+- [ ] Migration plan: create coordination shard subdirectories at startup; document coordination template or seed structure if required.
 
 ## Epic 6. Operational Hardening (Observability, Resilience, Backup, Performance, Security)
 
