@@ -26,7 +26,7 @@
 - [x] Commit-signing made optional during development (signing disabled by default in dev environments).
 - [x] Integrate cargo-audit into CI/CD: automatically check dependencies for known security vulnerabilities on every build.
 - [x] Integrate cargo-deny into CI/CD: enforce dependency licensing policies, detect banned crates, and check for unsafe code usage; configure allowed unsafe patterns and document exceptions.
-- [ ] Harden template validation: enforce symlink bans, size/depth caps, and allowed file types; fail fast with clear errors.
+- [x] Harden template validation: enforce symlink bans, size/depth caps, and allowed file types; fail fast with clear errors.
 - [ ] Tighten traversal and allocation limits for sharded patient discovery; cap patient count per listing call.
 - [ ] Implement a retry and back-off strategy for filesystem and Git operations; clearly document which errors should not be retried.
 - [ ] Perform thorough validation of all input data (such as patient identifiers and namespaces) before allowing any changes to occur; add any necessary protective checks where they are currently missing.
