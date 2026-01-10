@@ -40,6 +40,7 @@ As the docs run on a cache, you will likely need to nuke the docs if you remove 
 ### Time trial benchmarks
 
 Preliminary benchmarks comparing Postgres vs Git for single entry operations:
+
 - Postgres: 22.45 ops/sec
 - Git: 8.11 ops/sec
 
