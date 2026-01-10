@@ -208,19 +208,3 @@ jobs:
 
           # Push with PAT so the push event triggers main workflow
           git push https://x-access-token:${PUSH_TOKEN}@github.com/bailey-medics/VPR.git main
-
-      - name: Trigger main workflow (fallback)
-        env:
-          PUSH_TOKEN: ${{ secrets.ACTIONS_TRIGGER_PAT }}
-        run: |
-          if [ -z "$PUSH_TOKEN" ]; then
-            echo "Skipping workflow dispatch: ACTIONS_TRIGGER_PAT not set";
-            exit 0;
-          fi
-
-          echo "Dispatching main workflow explicitly as a fallback..."
-          curl -L -X POST \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${PUSH_TOKEN}" \
-            https://api.github.com/repos/bailey-medics/VPR/actions/workflows/main.yml/dispatches \
-            -d '{"ref":"main"}'
