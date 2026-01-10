@@ -46,6 +46,29 @@ jobs:
       - name: Run cargo-audit
         run: cargo audit
 
+  cargo_deny:
+    runs-on: ubuntu-latest
+    name: Cargo Deny
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo-deny
+        id: cache-cargo-deny
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-deny
+          key: cargo-deny-${{ runner.os }}-v0.19.0
+
+      - name: Install cargo-deny
+        if: steps.cache-cargo-deny.outputs.cache-hit != 'true'
+        run: cargo install cargo-deny --version 0.19.0 --locked
+
+      - name: Run cargo-deny
+        run: cargo deny check
+
   build-and-deploy-docs:
     runs-on: ubuntu-latest
     steps:
@@ -166,7 +189,7 @@ jobs:
           path: docs/book
 
   deploy:
-    needs: [security_audit, build-and-deploy-docs]
+    needs: [security_audit, cargo_deny, build-and-deploy-docs]
     runs-on: ubuntu-latest
     environment:
       name: github-pages

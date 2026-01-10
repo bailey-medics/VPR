@@ -18,9 +18,9 @@ edition = "2024"
 default-run = "vpr-run"
 
 [dependencies]
-api-grpc = { path = "crates/api-grpc" }
-api-shared = { path = "crates/api-shared" }
-vpr-core = { path = "crates/core" }
+api-grpc = { path = "crates/api-grpc", version = "0.1.0" }
+api-shared = { path = "crates/api-shared", version = "0.1.0" }
+vpr-core = { path = "crates/core", version = "0.1.0" }
 axum = "0.7"
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }

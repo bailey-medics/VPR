@@ -1,0 +1,65 @@
+# cargo-deny configuration
+# See https://embarkstudios.github.io/cargo-deny/ for documentation
+
+[advisories]
+# Check for security vulnerabilities in dependencies
+version = 2
+yanked = "deny"
+
+# Ignore specific advisories (with justification)
+ignore = [
+    "RUSTSEC-2024-0370",  # proc-macro-error unmaintained - accepted risk, used only in utoipa build macros
+]
+
+[licenses]
+# Ensure all dependencies use acceptable licenses
+version = 2
+# Allow common permissive licenses for medical software
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "BSD-2-Clause",
+    "ISC",
+    "0BSD",
+    "Zlib",
+    "Unicode-3.0",           # Unicode License v3 - used by ICU crates for internationalization
+    "CDLA-Permissive-2.0",  # Community Data License - used by webpki-roots for root certificates
+]
+# NOTE: In version 2, the "deny" list is removed. Any license not in "allow" or "exceptions" is automatically denied.
+# Confidence threshold for license detection (0.0 - 1.0)
+confidence-threshold = 0.8
+
+# Allow licenses for specific crates if needed
+exceptions = [
+    # VPR workspace crates use AGPL-3.0-or-later per project license
+    { allow = ["AGPL-3.0-or-later"], name = "vpr-run" },
+    { allow = ["AGPL-3.0-or-later"], name = "vpr-core" },
+    { allow = ["AGPL-3.0-or-later"], name = "openehr" },
+    { allow = ["AGPL-3.0-or-later"], name = "api-grpc" },
+    { allow = ["AGPL-3.0-or-later"], name = "api-rest" },
+    { allow = ["AGPL-3.0-or-later"], name = "api-shared" },
+    { allow = ["AGPL-3.0-or-later"], name = "vpr-certificates" },
+]
+
+[bans]
+# Prevent specific crates from being used
+multiple-versions = "warn"  # Warn about duplicate versions (can be "deny" for stricter)
+wildcards = "deny"           # Deny wildcard dependencies
+deny = [
+    # Example banned crates:
+    # { name = "openssl", reason = "Use rustls instead for pure-Rust TLS" },
+]
+
+# Skip checking certain crates (e.g., internal workspace members)
+skip = []
+
+# Skip checking specific tree branches
+skip-tree = []
+
+[sources]
+# Ensure dependencies come from trusted sources
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
