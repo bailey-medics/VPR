@@ -8,7 +8,7 @@ on:
   workflow_dispatch: {}
   workflow_run:
     workflows: ["Non-main branch workflows"]
-    types: [completed]
+    types: [success]
 
 permissions:
   contents: read
@@ -93,11 +93,13 @@ jobs:
         if: steps.cache-protoc.outputs.cache-hit != 'true'
         run: |
           set -euxo pipefail
+          rm -rf ~/protoc
           mkdir -p ~/protoc
           cd ~/protoc
           curl -L https://github.com/protocolbuffers/protobuf/releases/download/v33.3/protoc-33.3-linux-x86_64.zip -o protoc.zip
-          unzip -q protoc.zip
+          unzip -o -q protoc.zip
           chmod +x bin/protoc
+          rm protoc.zip
 
       - name: Setup protoc PATH
         run: |
