@@ -107,6 +107,54 @@ pub enum OpenEhrError {
 /// Type alias for Results that can fail with an [`OpenEhrError`].
 pub type OpenEhrResult<T> = Result<T, OpenEhrError>;
 
+/// openEHR file types and their canonical filenames.
+///
+/// Each variant represents a distinct openEHR component type with its own
+/// on-disk filename.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum OpenEhrFileType {
+    /// EHR_STATUS component.
+    ///
+    /// Filename: `ehr_status.yaml`
+    EhrStatus,
+    /// Letter component.
+    ///
+    /// Filename: `letter.yaml`
+    Letter,
+    /// Message component.
+    ///
+    /// Filename: `message.yaml`
+    Message,
+}
+
+impl OpenEhrFileType {
+    /// Returns the canonical filename for this file type.
+    ///
+    /// # Returns
+    ///
+    /// Returns the filename as a string slice.
+    pub const fn filename(&self) -> &'static str {
+        match self {
+            Self::EhrStatus => "ehr_status.yaml",
+            Self::Letter => "letters/letter.yaml",
+            Self::Message => "messages/message.yaml",
+        }
+    }
+
+    /// Returns the human-readable name for this file type.
+    ///
+    /// # Returns
+    ///
+    /// Returns the display name as a string slice.
+    pub const fn display_name(&self) -> &'static str {
+        match self {
+            Self::EhrStatus => "EHR Status",
+            Self::Letter => "Letter",
+            Self::Message => "Message",
+        }
+    }
+}
+
 /// Render an `EHR_STATUS` YAML string for the specified RM version.
 ///
 /// # Arguments

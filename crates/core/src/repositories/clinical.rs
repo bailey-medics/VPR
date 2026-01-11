@@ -15,7 +15,7 @@
 
 use crate::author::Author;
 use crate::config::CoreConfig;
-use crate::constants::{CLINICAL_DIR_NAME, EHR_STATUS_FILENAME};
+use crate::constants::CLINICAL_DIR_NAME;
 use crate::error::{PatientError, PatientResult};
 use crate::git::{GitService, VprCommitAction, VprCommitDomain, VprCommitMessage};
 use crate::repositories::shared::{
@@ -24,7 +24,7 @@ use crate::repositories::shared::{
 use crate::uuid::UuidService;
 use openehr::{
     ehr_status_render, extract_rm_version, validation::validate_namespace_uri_safe, EhrId,
-    ExternalReference,
+    ExternalReference, OpenEhrFileType::EhrStatus,
 };
 use std::{
     fs, io,
@@ -120,7 +120,7 @@ impl ClinicalService {
             let rm_version = self.cfg.rm_system_version();
 
             // Create initial EHR status YAML file
-            let filename = patient_dir.join(EHR_STATUS_FILENAME);
+            let filename = patient_dir.join(EhrStatus.filename());
             let ehr_id = EhrId::from_uuid(clinical_uuid.uuid());
 
             let yaml_content = ehr_status_render(rm_version, None, Some(&ehr_id), None)?;
@@ -199,7 +199,7 @@ impl ClinicalService {
         // let rm_version = self.cfg.rm_system_version();
 
         let patient_dir = self.clinical_patient_dir(&clinical_uuid);
-        let filename = patient_dir.join(EHR_STATUS_FILENAME);
+        let filename = patient_dir.join(EhrStatus.filename());
 
         let external_reference = Some(vec![ExternalReference {
             namespace: format!("ehr://{}/mpi", namespace),
@@ -220,27 +220,15 @@ impl ClinicalService {
             None,
             external_reference,
         )?;
-        fs::write(&filename, yaml_content).map_err(PatientError::FileWrite)?;
 
-        let repo = GitService::open(&patient_dir)?;
-        // Pass relative path to commit_paths to avoid path canonicalization mismatches
-        let relative_filename = PathBuf::from(EHR_STATUS_FILENAME);
-        let commit_result =
-            repo.commit_paths(author, &msg, std::slice::from_ref(&relative_filename));
-        if let Err(e) = commit_result {
-            // Best-effort rollback: avoid leaving uncommitted state when the commit fails.
-            match previous_data {
-                Some(contents) => {
-                    let _ = fs::write(&filename, contents);
-                }
-                None => {
-                    let _ = fs::remove_file(&filename);
-                }
-            }
-            return Err(e);
-        }
-
-        Ok(())
+        self.write_and_commit_file(
+            author,
+            &msg,
+            Path::new(EhrStatus.filename()),
+            &patient_dir,
+            &yaml_content,
+            previous_data.as_deref(),
+        )
     }
 }
 
@@ -274,6 +262,70 @@ impl ClinicalService {
     fn clinical_patient_dir(&self, clinical_uuid: &UuidService) -> PathBuf {
         let clinical_dir = self.clinical_dir();
         clinical_uuid.sharded_dir(&clinical_dir)
+    }
+
+    /// Writes content to a file and commits it to Git with rollback on failure.
+    ///
+    /// This internal helper wraps file write and Git commit operations in a closure,
+    /// enabling automatic rollback if either operation fails. If the file previously
+    /// existed, it is restored to its previous state on error; otherwise, it is removed.
+    ///
+    /// # Arguments
+    ///
+    /// * `author` - The author information for the Git commit.
+    /// * `msg` - The commit message.
+    /// * `file_path_relative` - The relative path to the file within the patient directory.
+    /// * `patient_dir` - The patient's repository directory.
+    /// * `content` - The new content to write to the file.
+    /// * `old_content` - The previous file content for rollback (None if file is new).
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `PatientError` if:
+    /// - the file write fails,
+    /// - opening the Git repository fails,
+    /// - the Git commit fails.
+    fn write_and_commit_file(
+        &self,
+        author: &Author,
+        msg: &VprCommitMessage,
+        file_path_relative: &Path,
+        patient_dir: &Path,
+        content: &str,
+        old_content: Option<&str>,
+    ) -> PatientResult<()> {
+        let full_path = patient_dir.join(file_path_relative);
+
+        // Wrap the potentially failing operations in a closure to enable rollback on failure.
+        let result: PatientResult<()> = (|| {
+            fs::write(&full_path, content).map_err(PatientError::FileWrite)?;
+
+            let repo = GitService::open(patient_dir)?;
+            // Pass relative path to commit_paths to avoid path canonicalization mismatches
+            repo.commit_paths(author, msg, &[file_path_relative.to_path_buf()])?;
+
+            Ok(())
+        })();
+
+        // On error, attempt to rollback the file to its previous state.
+        match result {
+            Ok(()) => Ok(()),
+            Err(write_error) => {
+                match old_content {
+                    Some(contents) => {
+                        let _ = fs::write(&full_path, contents);
+                    }
+                    None => {
+                        let _ = fs::remove_file(&full_path);
+                    }
+                }
+                Err(write_error)
+            }
+        }
     }
 }
 
