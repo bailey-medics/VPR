@@ -73,7 +73,7 @@ The `<thread-id>` is generated in the format `YYYYMMDDTHHMMSS.sssZ-UUID`:
 
 - `YYYYMMDDTHHMMSS.sssZ`: ISO 8601 timestamp with millisecond precision (e.g., `20260111T120000.123Z`)
 - `UUID`: Randomly generated UUID v4
-- Example: `20260111T120000.123Z-550e8400-e29b-41d4-a716-446655440000`
+- Example: `20260111T143522.045Z-550e8400e29b41d4a716446655440000`
 
 This ensures thread IDs are globally unique and chronologically sortable.
 
