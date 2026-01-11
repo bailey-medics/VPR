@@ -201,25 +201,25 @@ impl ClinicalService {
         let patient_dir = self.clinical_patient_dir(&clinical_uuid);
         let filename = patient_dir.join(EhrStatus.filename());
 
+        // ehr_status.yaml must exist; it is created during initialise()
+        if !filename.exists() {
+            return Err(PatientError::InvalidInput(format!(
+                "{} does not exist for clinical record {}",
+                EhrStatus.filename(),
+                clinical_uuid
+            )));
+        }
+
         let external_reference = Some(vec![ExternalReference {
             namespace: format!("ehr://{}/mpi", namespace),
             id: demographics_uuid.uuid(),
         }]);
 
-        let previous_data = if filename.exists() {
-            Some(fs::read_to_string(&filename).map_err(PatientError::FileRead)?)
-        } else {
-            None
-        };
+        let previous_data = fs::read_to_string(&filename).map_err(PatientError::FileRead)?;
+        let rm_version = extract_rm_version(&previous_data)?;
 
-        let rm_version = extract_rm_version(previous_data.as_deref().unwrap_or(""))?;
-
-        let yaml_content = ehr_status_render(
-            rm_version,
-            previous_data.as_deref(),
-            None,
-            external_reference,
-        )?;
+        let yaml_content =
+            ehr_status_render(rm_version, Some(&previous_data), None, external_reference)?;
 
         self.write_and_commit_file(
             author,
@@ -227,7 +227,7 @@ impl ClinicalService {
             Path::new(EhrStatus.filename()),
             &patient_dir,
             &yaml_content,
-            previous_data.as_deref(),
+            Some(&previous_data),
         )
     }
 }
@@ -1437,6 +1437,174 @@ mod tests {
             )
             .expect_err("expected validation failure");
         assert!(matches!(err, PatientError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn test_link_to_demographics_rejects_invalid_demographics_uuid() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let cfg = test_cfg(temp_dir.path());
+        let service = ClinicalService::new(cfg);
+
+        // Create a valid clinical record first
+        let author = Author {
+            name: "Test Author".to_string(),
+            role: "Clinician".to_string(),
+            email: "test@example.com".to_string(),
+            registrations: vec![],
+            signature: None,
+            certificate: None,
+        };
+
+        let clinical_uuid = service
+            .initialise(author.clone(), "Test Hospital".to_string())
+            .expect("initialise should succeed");
+        let clinical_uuid_str = clinical_uuid.simple().to_string();
+
+        // Try to link with invalid demographics UUID
+        let err = service
+            .link_to_demographics(
+                &author,
+                "Test Hospital".to_string(),
+                &clinical_uuid_str,
+                "invalid-demographics-uuid",
+                None,
+            )
+            .expect_err("expected validation failure for invalid demographics UUID");
+        assert!(matches!(err, PatientError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn test_link_to_demographics_rejects_invalid_namespace() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let cfg = test_cfg(temp_dir.path());
+        let service = ClinicalService::new(cfg);
+
+        // Create a valid clinical record
+        let author = Author {
+            name: "Test Author".to_string(),
+            role: "Clinician".to_string(),
+            email: "test@example.com".to_string(),
+            registrations: vec![],
+            signature: None,
+            certificate: None,
+        };
+
+        let clinical_uuid = service
+            .initialise(author.clone(), "Test Hospital".to_string())
+            .expect("initialise should succeed");
+        let clinical_uuid_str = clinical_uuid.to_string();
+
+        // Try to link with unsafe namespace containing invalid characters
+        let demographics_uuid = UuidService::new();
+        let demographics_uuid_str = demographics_uuid.to_string();
+
+        let err = service
+            .link_to_demographics(
+                &author,
+                "Test Hospital".to_string(),
+                &clinical_uuid_str,
+                &demographics_uuid_str,
+                Some("unsafe<namespace>with/special\\chars".to_string()),
+            )
+            .expect_err("expected validation failure for unsafe namespace");
+        assert!(matches!(err, PatientError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn test_link_to_demographics_fails_when_ehr_status_missing() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let cfg = test_cfg(temp_dir.path());
+        let service = ClinicalService::new(cfg);
+
+        // Manually create a clinical directory without ehr_status.yaml
+        let clinical_dir = temp_dir.path().join(CLINICAL_DIR_NAME);
+        let clinical_uuid = UuidService::new();
+        let patient_dir = clinical_uuid.sharded_dir(&clinical_dir);
+        fs::create_dir_all(&patient_dir).expect("Failed to create patient dir");
+
+        // Initialize Git repo but don't create ehr_status.yaml
+        GitService::init(&patient_dir).expect("Failed to init git");
+
+        let author = Author {
+            name: "Test Author".to_string(),
+            role: "Clinician".to_string(),
+            email: "test@example.com".to_string(),
+            registrations: vec![],
+            signature: None,
+            certificate: None,
+        };
+
+        let demographics_uuid = UuidService::new();
+        let clinical_uuid_str = clinical_uuid.to_string();
+        let demographics_uuid_str = demographics_uuid.to_string();
+
+        // Should fail because ehr_status.yaml doesn't exist
+        let err = service
+            .link_to_demographics(
+                &author,
+                "Test Hospital".to_string(),
+                &clinical_uuid_str,
+                &demographics_uuid_str,
+                None,
+            )
+            .expect_err("link_to_demographics should fail when ehr_status.yaml is missing");
+
+        assert!(
+            matches!(err, PatientError::InvalidInput(_)),
+            "Should return InvalidInput error when ehr_status.yaml is missing"
+        );
+    }
+
+    #[test]
+    fn test_link_to_demographics_rejects_corrupted_ehr_status() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let cfg = test_cfg(temp_dir.path());
+        let service = ClinicalService::new(cfg);
+
+        // Create a clinical directory with corrupted ehr_status.yaml
+        let clinical_dir = temp_dir.path().join(CLINICAL_DIR_NAME);
+        let clinical_uuid = UuidService::new();
+        let patient_dir = clinical_uuid.sharded_dir(&clinical_dir);
+        fs::create_dir_all(&patient_dir).expect("Failed to create patient dir");
+
+        // Initialize Git repo
+        GitService::init(&patient_dir).expect("Failed to init git");
+
+        // Write corrupted YAML (missing required rm_version field)
+        let ehr_status_file = patient_dir.join(EhrStatus.filename());
+        fs::write(&ehr_status_file, "archetype_node_id: some_id\nname: Test")
+            .expect("Failed to write corrupted file");
+
+        let author = Author {
+            name: "Test Author".to_string(),
+            role: "Clinician".to_string(),
+            email: "test@example.com".to_string(),
+            registrations: vec![],
+            signature: None,
+            certificate: None,
+        };
+
+        let demographics_uuid = UuidService::new();
+        let clinical_uuid_str = clinical_uuid.to_string();
+        let demographics_uuid_str = demographics_uuid.to_string();
+
+        let err = service
+            .link_to_demographics(
+                &author,
+                "Test Hospital".to_string(),
+                &clinical_uuid_str,
+                &demographics_uuid_str,
+                None,
+            )
+            .expect_err("expected failure due to corrupted ehr_status");
+
+        // Should fail when trying to extract RM version from corrupted file
+        assert!(matches!(
+            err,
+            PatientError::InvalidInput(_)
+                | PatientError::YamlDeserialization(_)
+                | PatientError::Openehr(_)
+        ));
     }
 
     #[test]
