@@ -10,8 +10,6 @@ It is designed to:
 - remain human-readable without specialist software,
 - withstand audit, legal, and regulatory review.
 
-Letters in VPR are treated as **formal clinical documents**, not drafts, messages, or workflow artefacts.
-
 ---
 
 ## Letters are immutable once issued
@@ -75,7 +73,7 @@ It records:
 
 - the full letter content,
 - authorship,
-- recipients,
+- intended recipients,
 - date of issue,
 - clinical intent.
 
@@ -83,8 +81,8 @@ It records:
 
 ### Properties
 
-- Immutable once written
-- Human-readable Markdown
+- Immutable once `issued`
+- Human-readable Markdown with front matter metadata
 - Git-versioned
 - Suitable for audit, legal review, and patient access
 
@@ -129,7 +127,7 @@ A corrective letter:
 - has its own `letter_id`,
 - references the prior letter via `references: <letter_id>`.
 
-The original letter is never modified.
+The original letter is never modified once issued.
 
 This preserves an honest and legally defensible historical record.
 
@@ -148,30 +146,9 @@ Letters represent communication, not behaviour.
 
 ---
 
-## `comments.md` – Authored statements related to the letter
+## `comments.md`
 
-### Purpose
-
-`comments.md` contains **append-only authored statements** related to the letter.
-
-Comments may be authored by:
-
-- patients,
-- relatives or carers,
-- clinicians.
-
-These statements are part of the patient record but **do not modify, correct, or supersede the letter**.
-
----
-
-### Properties
-
-- Append-only
-- Each entry has explicit authorship and timestamp
-- Human-readable Markdown
-- Git-versioned
-
-If a comment is incorrect or withdrawn, this is handled by adding a new comment, not editing an existing one.
+See [Comments section](../../comments.md) for details.
 
 ---
 
@@ -179,23 +156,7 @@ If a comment is incorrect or withdrawn, this is handled by adding a new comment,
 
 ### Purpose
 
-`ledger.yaml` stores **contextual and policy metadata**, not clinical prose.
-
-It answers:
-
-> “Who issued this letter, to whom, and under what rules?”
-
----
-
-### Typical contents
-
-- author and issuing organisation,
-- intended recipients and roles,
-- letter type (clinic, discharge, referral, advice),
-- sensitivity and visibility flags,
-- access control rules,
-- status (draft, issued, superseded),
-- lineage information (for example, supersedes).
+`ledger.yaml` stores **contextual and policy metadata**, not clinical prose. Mainly used for external letters that have been uploaded into the system.
 
 ---
 
@@ -232,25 +193,11 @@ From a clinical and audit perspective, these artefacts are first-class parts of 
 
 ---
 
-## Supersession and lineage
-
-Later letters may **supersede** earlier ones.
-
-Supersession:
-
-- is declared explicitly in `ledger.yaml`,
-- never alters the original letter,
-- allows consuming systems to identify the most current guidance.
-
-Historical letters remain valid records of what was communicated at the time.
-
----
-
 ## Design decisions explicitly rejected
 
 The following were deliberately excluded:
 
-- inline editing of letters after issue,
+- editing of letters after issue,
 - read receipts or confirmations,
 - urgency flags,
 - task or workflow semantics.
