@@ -9,9 +9,6 @@ pub const CLINICAL_DIR_NAME: &str = "clinical";
 /// Default directory for patient data storage when no explicit directory is configured.
 pub const DEFAULT_PATIENT_DATA_DIR: &str = "patient_data";
 
-/// Filename for EHR status YAML files.
-pub const EHR_STATUS_FILENAME: &str = "ehr_status.yaml";
-
 /// Directory name for clinical templates.
 pub const CLINICAL_TEMPLATE_DIR: &str = "crates/core/templates/clinical";
 

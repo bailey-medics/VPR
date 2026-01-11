@@ -76,6 +76,7 @@
     "Ommix",
     "onprem",
     "openehr",
+    "Overwriteable",
     "Parmar",
     "PGPASSWORD",
     "PGURL",
@@ -116,25 +117,18 @@
     "vars",
     "Venkaresan",
     "webpki-roots",
-    "writable"
+    "writable",
+    "YYYYMMDDTHHMMSS"
   ],
-  "ignoreWords": [
-    "Exampletown"
-  ],
+  "ignoreWords": ["Exampletown"],
   "languageSettings": [
     {
       "languageId": "rust",
-      "includeRegExpList": [
-        "string",
-        "comment",
-        "doc"
-      ]
+      "includeRegExpList": ["string", "comment", "doc"]
     },
     {
       "languageId": "markdown",
-      "includeRegExpList": [
-        ".*"
-      ]
+      "includeRegExpList": [".*"]
     }
   ]
 }
