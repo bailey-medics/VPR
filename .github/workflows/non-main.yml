@@ -145,7 +145,7 @@ jobs:
         if: matrix.check == 'tests'
         run: |
           echo "🧪 Running tests..."
-          cargo test --all-features
+          cargo test --workspace --all-features
 
   # ---------- Merge to main (only on push, never from main) ----------
   merge-to-main:

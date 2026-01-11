@@ -1031,16 +1031,41 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let service = GitService::init(temp_dir.path()).unwrap();
         let repo = service.into_repo();
-        assert!(repo.workdir().unwrap() == temp_dir.path());
+        let workdir = repo.workdir().expect("repo should have workdir");
+        let expected = temp_dir.path();
+
+        // Compare canonicalized paths to handle symlinks (e.g., /var -> /private/var on macOS)
+        let workdir_canonical = workdir
+            .canonicalize()
+            .unwrap_or_else(|_| workdir.to_path_buf());
+        let expected_canonical = expected
+            .canonicalize()
+            .unwrap_or_else(|_| expected.to_path_buf());
+
+        assert_eq!(workdir_canonical, expected_canonical);
     }
 
     #[test]
     fn verifying_key_from_pem() {
-        // Sample ECDSA P-256 public key PEM
-        let pem = "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE4f5wg2l2hKsTeNem/V41fGnJm6gO\nXUM8z5RZVKQ7Xwxo+7ZyQfYqQZUw8fQtFkQ7l2p4i3v4z1+L8Q8jQJvAQ==\n-----END PUBLIC KEY-----";
-        let key = verifying_key_from_public_key_or_cert_pem(pem).unwrap();
-        // Just check it parses without error
-        assert!(!key.to_encoded_point(false).as_bytes().is_empty());
+        use p256::pkcs8::EncodePublicKey;
+
+        // Generate a valid ECDSA P-256 key pair
+        let signing_key = SigningKey::random(&mut rand::thread_rng());
+        let verifying_key = signing_key.verifying_key();
+
+        // Encode the public key as PEM
+        let pem = verifying_key
+            .to_public_key_pem(p256::pkcs8::LineEnding::LF)
+            .expect("Failed to encode public key");
+
+        // Parse it back
+        let parsed_key = verifying_key_from_public_key_or_cert_pem(&pem).unwrap();
+
+        // Verify they match
+        assert_eq!(
+            verifying_key.to_encoded_point(false).as_bytes(),
+            parsed_key.to_encoded_point(false).as_bytes()
+        );
     }
 
     #[test]

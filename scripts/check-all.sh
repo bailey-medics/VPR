@@ -15,6 +15,6 @@ echo "3. Compilation check..."
 cargo check --all-targets --all-features
 
 echo "4. Running tests..."
-cargo test --all-features
+cargo test --workspace --all-features
 
 echo "✅ All checks passed!"
