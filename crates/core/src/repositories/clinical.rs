@@ -1112,7 +1112,7 @@ mod tests {
             .expect("Failed to create .ehr directory");
 
         // Force EHR status file write to fail by ensuring the target path already exists as a dir.
-        fs::create_dir_all(clinical_template_dir.path().join(EHR_STATUS_FILENAME))
+        fs::create_dir_all(clinical_template_dir.path().join(EhrStatus.filename()))
             .expect("Failed to create ehr_status.yaml directory");
 
         let rm_system_version = rm_system_version_from_env_value(None)
@@ -1406,7 +1406,7 @@ mod tests {
         let patient_dir = UuidService::parse(&clinical_uuid_str)
             .expect("clinical_uuid should be canonical")
             .sharded_dir(&clinical_dir);
-        let ehr_status_file = patient_dir.join(EHR_STATUS_FILENAME);
+        let ehr_status_file = patient_dir.join(EhrStatus.filename());
 
         assert!(ehr_status_file.exists(), "ehr_status.yaml should exist");
     }
