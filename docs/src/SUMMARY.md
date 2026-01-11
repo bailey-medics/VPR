@@ -15,6 +15,7 @@
   - [Care Coordination](./technical/coordination/index.md)
   - [Writing Workers](./technical/design-decisions-writing-workers.md)
   - [Git](./technical/git.md)
+  - [Comments](./technical/comments.md)
 - [Installation](./installation.md)
 - [CLI](./cli.md)
 - [LLM](./llm/index.md)
