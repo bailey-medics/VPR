@@ -11,6 +11,7 @@
 - VPR is a Rust Cargo workspace delivering dual gRPC/REST services plus a CLI over a file-based, Git-versioned patient record store.
 - Core data operations live in `crates/core`; transports live in `crates/api-grpc` and `crates/api-rest`; shared proto/auth/health in `crates/api-shared`; certificate utilities in `crates/certificates`; CLI in `crates/cli`.
 - Patient data is stored on disk, sharded by UUID under `patient_data/`, with separate clinical, demographics, and coordination repos per patient and Git history for audit.
+- Future separation: we may split the core VPR code into its own library crate; it must remain independent of organisational layers (security, APIs, enterprise back-office). Core must not depend on organisational code, but organisational layers may depend on core.
 
 ## Patient-Centred Posture
 
