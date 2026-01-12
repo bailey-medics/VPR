@@ -39,11 +39,9 @@
 //! - **Scalability**: Supports millions of patient records without performance degradation
 
 use crate::error::{PatientError, PatientResult};
+use chrono::{DateTime, Duration, Utc};
 use std::path::{Path, PathBuf};
 use std::{fmt, str::FromStr};
-
-/// Re-exported for convenience within `vpr-core`.
-pub(crate) use ::uuid::Uuid;
 
 /// VPR's canonical UUID representation (32 lowercase hex characters, no hyphens).
 ///
@@ -202,6 +200,125 @@ impl FromStr for UuidService {
     /// Returns [`PatientError::InvalidInput`] if the string is not in canonical UUID form.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         UuidService::parse(s)
+    }
+}
+
+/// Re-exported for convenience within `vpr-core`.
+pub(crate) use ::uuid::Uuid;
+
+/// A time-prefixed timestamp identifier.
+///
+/// Format:
+/// `YYYYMMDDTHHMMSS.mmmZ-<canonical_uuid>`
+///
+/// Example:
+/// `20260111T143522.045Z-550e8400e29b41d4a716446655440000`
+///
+/// This identifier is:
+/// - Globally unique (UUID)
+/// - Human-readable
+/// - Monotonic per patient when generated inside a per-patient lock
+///
+/// # Monotonicity Guarantee
+///
+/// When calling [`TimestampUuid::generate`] with the previous timestamp UID,
+/// the timestamp is guaranteed to be strictly greater than the previous one
+/// (incremented by at least 1ms if necessary). This ensures correct ordering
+/// of compositions within a patient record.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[allow(dead_code)]
+pub(crate) struct TimestampUuid {
+    timestamp: DateTime<Utc>,
+    uuid: UuidService,
+}
+
+impl TimestampUuid {
+    /// Returns the timestamp component of this timestamp UID.
+    #[allow(dead_code)]
+    pub(crate) fn timestamp(&self) -> DateTime<Utc> {
+        self.timestamp
+    }
+
+    /// Returns a reference to the UUID component of this timestamp UID.
+    #[allow(dead_code)]
+    pub(crate) fn uuid(&self) -> &UuidService {
+        &self.uuid
+    }
+}
+
+impl FromStr for TimestampUuid {
+    type Err = PatientError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (ts_str, uuid_str) = s.split_once('-').ok_or_else(|| {
+            PatientError::InvalidInput(format!("Invalid timestamp UID format: '{}'", s))
+        })?;
+
+        // Parse the timestamp portion (without the Z suffix)
+        if !ts_str.ends_with('Z') {
+            return Err(PatientError::InvalidInput(format!(
+                "Timestamp must end with 'Z': '{}'",
+                ts_str
+            )));
+        }
+
+        let ts_no_z = &ts_str[..ts_str.len() - 1];
+        let naive =
+            chrono::NaiveDateTime::parse_from_str(ts_no_z, "%Y%m%dT%H%M%S%.3f").map_err(|e| {
+                PatientError::InvalidInput(format!("Invalid timestamp format '{}': {}", ts_str, e))
+            })?;
+
+        let timestamp = DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc);
+
+        let uuid = UuidService::parse(uuid_str)?;
+
+        Ok(Self { timestamp, uuid })
+    }
+}
+
+impl fmt::Display for TimestampUuid {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}-{}",
+            self.timestamp.format("%Y%m%dT%H%M%S%.3fZ"),
+            self.uuid
+        )
+    }
+}
+
+impl TimestampUuid {
+    /// Generate a new timestamp UID.
+    ///
+    /// If `last_uid` is provided, the timestamp is guaranteed to be
+    /// strictly greater than the last one (by at least 1 ms).
+    ///
+    /// This is designed to be called **inside a per-patient lock**.
+    #[allow(dead_code)]
+    pub(crate) fn generate(last_uid: Option<&TimestampUuid>) -> Self {
+        let now = Utc::now();
+
+        let timestamp = match last_uid {
+            Some(prev) if now <= prev.timestamp => prev.timestamp + Duration::milliseconds(1),
+            _ => now,
+        };
+
+        Self {
+            timestamp,
+            uuid: UuidService::new(),
+        }
+    }
+}
+
+impl TimestampUuid {
+    #[allow(dead_code)]
+    pub(crate) fn generate_from_str(last_uid: Option<&str>) -> PatientResult<Self> {
+        let parsed = match last_uid {
+            Some(s) => Some(TimestampUuid::from_str(s)?),
+            None => None,
+        };
+
+        Ok(Self::generate(parsed.as_ref()))
     }
 }
 
@@ -438,5 +555,177 @@ mod tests {
 
         // Debug format should contain the UUID value
         assert!(debug.contains("550e8400"));
+    }
+
+    // TimestampUuid tests
+
+    #[test]
+    fn test_timestamp_uid_generate_new() {
+        let uid = TimestampUuid::generate(None);
+
+        // Should have a valid UUID component
+        let uuid_str = uid.uuid().to_string();
+        assert_eq!(uuid_str.len(), 32);
+        assert!(UuidService::is_canonical(&uuid_str));
+    }
+
+    #[test]
+    fn test_timestamp_uid_generate_monotonic() {
+        let uid1 = TimestampUuid::generate(None);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let uid2 = TimestampUuid::generate(Some(&uid1));
+
+        // Second timestamp should be strictly greater
+        assert!(uid2.timestamp() > uid1.timestamp());
+    }
+
+    #[test]
+    fn test_timestamp_uid_generate_monotonic_same_instant() {
+        let uid1 = TimestampUuid::generate(None);
+        // Don't sleep - force the monotonic increment logic
+        let uid2 = TimestampUuid::generate(Some(&uid1));
+
+        // Even with no elapsed time, second should be strictly later
+        assert!(uid2.timestamp() > uid1.timestamp());
+    }
+
+    #[test]
+    fn test_timestamp_uid_display_format() {
+        let uid = TimestampUuid::generate(None);
+        let displayed = uid.to_string();
+
+        // Should contain a hyphen separator
+        assert!(displayed.contains('-'));
+
+        // Should end with 'Z' in the timestamp portion
+        assert!(displayed.starts_with("20"));
+
+        // Should be parseable
+        let parts: Vec<&str> = displayed.split('-').collect();
+        assert_eq!(parts.len(), 2);
+        assert!(parts[0].ends_with('Z'));
+        assert!(UuidService::is_canonical(parts[1]));
+    }
+
+    #[test]
+    fn test_timestamp_uid_parse_valid() {
+        let valid = "20260111T143522.045Z-550e8400e29b41d4a716446655440000";
+        let result = TimestampUuid::from_str(valid);
+
+        assert!(result.is_ok());
+        let uid = result.unwrap();
+        assert_eq!(uid.uuid().to_string(), "550e8400e29b41d4a716446655440000");
+    }
+
+    #[test]
+    fn test_timestamp_uid_parse_missing_hyphen() {
+        let invalid = "20260111T143522.045Z550e8400e29b41d4a716446655440000";
+        let result = TimestampUuid::from_str(invalid);
+
+        assert!(result.is_err());
+        match result {
+            Err(PatientError::InvalidInput(msg)) => {
+                assert!(msg.contains("Invalid timestamp UID format"));
+            }
+            _ => panic!("Expected InvalidInput error"),
+        }
+    }
+
+    #[test]
+    fn test_timestamp_uid_parse_missing_z_suffix() {
+        let invalid = "20260111T143522.045-550e8400e29b41d4a716446655440000";
+        let result = TimestampUuid::from_str(invalid);
+
+        assert!(result.is_err());
+        match result {
+            Err(PatientError::InvalidInput(msg)) => {
+                assert!(msg.contains("must end with 'Z'"));
+            }
+            _ => panic!("Expected InvalidInput error"),
+        }
+    }
+
+    #[test]
+    fn test_timestamp_uid_parse_invalid_timestamp() {
+        let invalid = "20260199T143522.045Z-550e8400e29b41d4a716446655440000";
+        let result = TimestampUuid::from_str(invalid);
+
+        assert!(result.is_err());
+        match result {
+            Err(PatientError::InvalidInput(msg)) => {
+                assert!(msg.contains("Invalid timestamp format"));
+            }
+            _ => panic!("Expected InvalidInput error"),
+        }
+    }
+
+    #[test]
+    fn test_timestamp_uid_parse_invalid_uuid() {
+        let invalid = "20260111T143522.045Z-not-a-valid-uuid";
+        let result = TimestampUuid::from_str(invalid);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_timestamp_uid_round_trip() {
+        // Use a specific timestamp that has no sub-millisecond precision
+        // to ensure clean round-trip through the %.3f format
+        let original_str = "20260111T143522.045Z-550e8400e29b41d4a716446655440000";
+        let original = TimestampUuid::from_str(original_str).unwrap();
+        let as_string = original.to_string();
+        let parsed = TimestampUuid::from_str(&as_string).unwrap();
+
+        assert_eq!(as_string, original_str);
+        assert_eq!(original, parsed);
+        assert_eq!(original.timestamp(), parsed.timestamp());
+        assert_eq!(original.uuid(), parsed.uuid());
+    }
+
+    #[test]
+    fn test_timestamp_uid_generate_from_str_with_previous() {
+        let prev = "20260111T143522.045Z-550e8400e29b41d4a716446655440000";
+        let result = TimestampUuid::generate_from_str(Some(prev));
+
+        assert!(result.is_ok());
+        let new_uid = result.unwrap();
+        let prev_uid = TimestampUuid::from_str(prev).unwrap();
+
+        assert!(new_uid.timestamp() > prev_uid.timestamp());
+    }
+
+    #[test]
+    fn test_timestamp_uid_generate_from_str_without_previous() {
+        let result = TimestampUuid::generate_from_str(None);
+
+        assert!(result.is_ok());
+        let uid = result.unwrap();
+        assert!(UuidService::is_canonical(&uid.uuid().to_string()));
+    }
+
+    #[test]
+    fn test_timestamp_uid_generate_from_str_invalid() {
+        let invalid = "not-a-valid-timestamp-uid";
+        let result = TimestampUuid::generate_from_str(Some(invalid));
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_timestamp_uid_equality() {
+        let uid1 = TimestampUuid::from_str("20260111T143522.045Z-550e8400e29b41d4a716446655440000")
+            .unwrap();
+        let uid2 = TimestampUuid::from_str("20260111T143522.045Z-550e8400e29b41d4a716446655440000")
+            .unwrap();
+
+        assert_eq!(uid1, uid2);
+    }
+
+    #[test]
+    fn test_timestamp_uid_clone() {
+        let uid1 = TimestampUuid::generate(None);
+        let uid2 = uid1.clone();
+
+        assert_eq!(uid1, uid2);
     }
 }
