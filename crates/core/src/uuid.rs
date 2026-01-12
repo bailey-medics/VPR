@@ -204,3 +204,239 @@ impl FromStr for UuidService {
         UuidService::parse(s)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new_generates_valid_uuid() {
+        let uuid_service = UuidService::new();
+        let canonical = uuid_service.to_string();
+
+        // Verify the generated UUID is in canonical form
+        assert_eq!(canonical.len(), 32);
+        assert!(UuidService::is_canonical(&canonical));
+    }
+
+    #[test]
+    fn test_parse_valid_canonical_uuid() {
+        let canonical = "550e8400e29b41d4a716446655440000";
+        let result = UuidService::parse(canonical);
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().to_string(), canonical);
+    }
+
+    #[test]
+    fn test_parse_rejects_hyphenated_uuid() {
+        let hyphenated = "550e8400-e29b-41d4-a716-446655440000";
+        let result = UuidService::parse(hyphenated);
+
+        assert!(result.is_err());
+        match result {
+            Err(PatientError::InvalidInput(msg)) => {
+                assert!(msg.contains("32 lowercase hex characters"));
+            }
+            _ => panic!("Expected InvalidInput error"),
+        }
+    }
+
+    #[test]
+    fn test_parse_rejects_uppercase_uuid() {
+        let uppercase = "550E8400E29B41D4A716446655440000";
+        let result = UuidService::parse(uppercase);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_rejects_mixed_case_uuid() {
+        let mixed = "550e8400E29b41d4A716446655440000";
+        let result = UuidService::parse(mixed);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_rejects_too_short() {
+        let short = "550e8400e29b41d4a71644665544000";
+        let result = UuidService::parse(short);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_rejects_too_long() {
+        let long = "550e8400e29b41d4a7164466554400000";
+        let result = UuidService::parse(long);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_rejects_invalid_characters() {
+        let invalid = "550e8400e29b41d4a716446655440zzz";
+        let result = UuidService::parse(invalid);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_is_canonical_valid() {
+        assert!(UuidService::is_canonical(
+            "550e8400e29b41d4a716446655440000"
+        ));
+        assert!(UuidService::is_canonical(
+            "00000000000000000000000000000000"
+        ));
+        assert!(UuidService::is_canonical(
+            "ffffffffffffffffffffffffffffffff"
+        ));
+    }
+
+    #[test]
+    fn test_is_canonical_invalid() {
+        // Uppercase
+        assert!(!UuidService::is_canonical(
+            "550E8400E29B41D4A716446655440000"
+        ));
+
+        // Hyphenated
+        assert!(!UuidService::is_canonical(
+            "550e8400-e29b-41d4-a716-446655440000"
+        ));
+
+        // Too short
+        assert!(!UuidService::is_canonical(
+            "550e8400e29b41d4a71644665544000"
+        ));
+
+        // Too long
+        assert!(!UuidService::is_canonical(
+            "550e8400e29b41d4a7164466554400000"
+        ));
+
+        // Invalid characters
+        assert!(!UuidService::is_canonical(
+            "550e8400e29b41d4a716446655440zzz"
+        ));
+
+        // Empty string
+        assert!(!UuidService::is_canonical(""));
+    }
+
+    #[test]
+    fn test_sharded_dir_structure() {
+        let uuid = UuidService::parse("550e8400e29b41d4a716446655440000").unwrap();
+        let parent = Path::new("/patient_data/clinical");
+        let sharded = uuid.sharded_dir(parent);
+
+        assert_eq!(
+            sharded,
+            PathBuf::from("/patient_data/clinical/55/0e/550e8400e29b41d4a716446655440000")
+        );
+    }
+
+    #[test]
+    fn test_sharded_dir_different_uuids() {
+        let uuid1 = UuidService::parse("00112233445566778899aabbccddeeff").unwrap();
+        let uuid2 = UuidService::parse("aabbccddeeff00112233445566778899").unwrap();
+
+        let parent = Path::new("/data");
+
+        let sharded1 = uuid1.sharded_dir(parent);
+        let sharded2 = uuid2.sharded_dir(parent);
+
+        assert_eq!(
+            sharded1,
+            PathBuf::from("/data/00/11/00112233445566778899aabbccddeeff")
+        );
+        assert_eq!(
+            sharded2,
+            PathBuf::from("/data/aa/bb/aabbccddeeff00112233445566778899")
+        );
+        assert_ne!(sharded1, sharded2);
+    }
+
+    #[test]
+    fn test_display_format() {
+        let uuid = UuidService::parse("550e8400e29b41d4a716446655440000").unwrap();
+        let displayed = format!("{}", uuid);
+
+        assert_eq!(displayed, "550e8400e29b41d4a716446655440000");
+        assert!(UuidService::is_canonical(&displayed));
+    }
+
+    #[test]
+    fn test_from_str_valid() {
+        let canonical = "550e8400e29b41d4a716446655440000";
+        let result: Result<UuidService, _> = canonical.parse();
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().to_string(), canonical);
+    }
+
+    #[test]
+    fn test_from_str_invalid() {
+        let hyphenated = "550e8400-e29b-41d4-a716-446655440000";
+        let result: Result<UuidService, _> = hyphenated.parse();
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_uuid_method_returns_valid_uuid() {
+        let uuid_service = UuidService::parse("550e8400e29b41d4a716446655440000").unwrap();
+        let inner_uuid = uuid_service.uuid();
+
+        // Verify the inner UUID matches the canonical form
+        assert_eq!(
+            inner_uuid.simple().to_string(),
+            "550e8400e29b41d4a716446655440000"
+        );
+    }
+
+    #[test]
+    fn test_round_trip_new_to_string_to_parse() {
+        let original = UuidService::new();
+        let as_string = original.to_string();
+        let parsed = UuidService::parse(&as_string).unwrap();
+
+        assert_eq!(original, parsed);
+    }
+
+    #[test]
+    fn test_clone_and_equality() {
+        let uuid1 = UuidService::parse("550e8400e29b41d4a716446655440000").unwrap();
+        let uuid2 = uuid1.clone();
+
+        assert_eq!(uuid1, uuid2);
+    }
+
+    #[test]
+    fn test_hash_consistency() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let uuid1 = UuidService::parse("550e8400e29b41d4a716446655440000").unwrap();
+        let uuid2 = UuidService::parse("550e8400e29b41d4a716446655440000").unwrap();
+
+        let mut hasher1 = DefaultHasher::new();
+        let mut hasher2 = DefaultHasher::new();
+
+        uuid1.hash(&mut hasher1);
+        uuid2.hash(&mut hasher2);
+
+        assert_eq!(hasher1.finish(), hasher2.finish());
+    }
+
+    #[test]
+    fn test_debug_format() {
+        let uuid = UuidService::parse("550e8400e29b41d4a716446655440000").unwrap();
+        let debug = format!("{:?}", uuid);
+
+        // Debug format should contain the UUID value
+        assert!(debug.contains("550e8400"));
+    }
+}
