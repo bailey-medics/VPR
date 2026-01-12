@@ -187,6 +187,49 @@ pub fn ehr_status_render(
     }
 }
 
+/// Render a `COMPOSITION` (letter) YAML string for the specified RM version.
+///
+/// # Arguments
+///
+/// * `version` - RM version identifier.
+/// * `previous_data` - Optional YAML text representing an existing letter.
+/// * `rm_version` - Optional RM version string to update.
+/// * `uid` - Optional UID string to update.
+/// * `composer_name` - Optional composer name to update.
+/// * `composer_role` - Optional composer role to update.
+/// * `start_time` - Optional start time to update.
+///
+/// # Returns
+///
+/// Returns a YAML string representation of the letter.
+///
+/// # Errors
+///
+/// Returns [`OpenEhrError`] if:
+/// - the RM version is not supported,
+/// - the previous_data YAML is invalid,
+/// - required fields are missing when creating a new letter.
+pub fn letter_render(
+    version: RmVersion,
+    previous_data: Option<&str>,
+    rm_version: Option<&str>,
+    uid: Option<&str>,
+    composer_name: Option<&str>,
+    composer_role: Option<&str>,
+    start_time: Option<&str>,
+) -> Result<String, OpenEhrError> {
+    match version {
+        RmVersion::rm_1_1_0 => rm_1_1_0::letter::letter_render(
+            previous_data,
+            rm_version,
+            uid,
+            composer_name,
+            composer_role,
+            start_time,
+        ),
+    }
+}
+
 /// Extract the RM version from a YAML string.
 ///
 /// This function parses the provided YAML string and extracts the `rm_version` field,

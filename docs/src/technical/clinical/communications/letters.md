@@ -33,13 +33,13 @@ This mirrors established professional, legal, and regulatory practice.
 Each letter is stored as a self-contained folder:
 
 ```text
-communications/
-    letters/
+correspondence/
+    letter/
         <letter-id>/
-            letter.md
-            comments.md
-            ledger.yaml
-            letter.pdf   # via Git LFS pointer if large
+            composition.yaml
+            body.md
+            attachments/
+                letter.pdf
 ```
 
 This structure ensures that all artefacts related to a single letter are co-located and auditable.
@@ -62,6 +62,36 @@ This ensures letters are:
 - safe for distributed and concurrent systems.
 
 ---
+
+```yaml
+rm_version: "1.0.4" # updatable via api
+uid: "20260111T143522.045Z-550e8400e29b41d4a716446655440000"  # updatable via api
+archetype_node_id: "openEHR-EHR-COMPOSITION.correspondence.v1"
+name:
+  value: "Clinical letter"
+category:
+  value: "event"
+composer:
+  name: "Dr Jane Smith"  # updatable via api
+  role: "Consultant Physician"  # updatable via api
+context:
+  start_time: "2026-01-12T10:14:00Z"  # updatable via api
+content:
+  - section:
+      archetype_node_id: "openEHR-EHR-SECTION.correspondence.v1"
+      name:
+        value: "Correspondence"
+      items:
+        - evaluation:
+            archetype_node_id: "openEHR-EHR-EVALUATION.clinical_correspondence.v1"
+            name:
+              value: "Clinical correspondence"
+
+            data:
+              narrative:
+                type: "external_text"
+                path: "./body.md"
+```
 
 ## `letter.md` – Canonical clinical letter
 
@@ -152,36 +182,9 @@ See [Comments section](../../comments.md) for details.
 
 ---
 
-## `ledger.yaml` – Letter context and policy
-
-### Purpose
-
-`ledger.yaml` stores **contextual and policy metadata**, not clinical prose. Mainly used for external letters that have been uploaded into the system.
-
----
-
-### Properties
-
-- Mutable
-- Overwriteable
-- Git-audited
-- Changes are intentional and relatively infrequent
-
----
-
-### Explicit exclusions
-
-`ledger.yaml` does NOT contain:
-
-- letter narrative content,
-- editing history of prose,
-- UX or presentation hints.
-
----
-
 ## Large binary artefacts
 
-Large binary artefacts (for example PDFs with embedded images or scans) are stored using **Git Large File Storage (Git LFS)**.
+Large binary artefacts (for example PDFs with embedded images or scans) are stored using c.
 
 In practice this means:
 

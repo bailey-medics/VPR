@@ -10,3 +10,4 @@ pub const CURRENT_RM_VERSION: RmVersion = RmVersion::rm_1_1_0;
 
 pub mod constants;
 pub mod ehr_status;
+pub mod letter;
