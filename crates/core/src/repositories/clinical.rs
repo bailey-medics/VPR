@@ -21,7 +21,7 @@ use crate::git::{GitService, VprCommitAction, VprCommitDomain, VprCommitMessage}
 use crate::repositories::shared::{
     copy_dir_recursive, create_uuid_and_shard_dir, validate_template, TemplateDirKind,
 };
-use crate::uuid::UuidService;
+use crate::UuidService;
 use openehr::{
     ehr_status_render, extract_rm_version, validation::validate_namespace_uri_safe, EhrId,
     ExternalReference, OpenEhrFileType::EhrStatus,
@@ -1436,7 +1436,7 @@ mod tests {
                 None,
             )
             .expect_err("expected validation failure");
-        assert!(matches!(err, PatientError::InvalidInput(_)));
+        assert!(matches!(err, PatientError::Uuid(_)));
     }
 
     #[test]
@@ -1470,7 +1470,7 @@ mod tests {
                 None,
             )
             .expect_err("expected validation failure for invalid demographics UUID");
-        assert!(matches!(err, PatientError::InvalidInput(_)));
+        assert!(matches!(err, PatientError::Uuid(_)));
     }
 
     #[test]
@@ -1492,7 +1492,7 @@ mod tests {
         let clinical_uuid = service
             .initialise(author.clone(), "Test Hospital".to_string())
             .expect("initialise should succeed");
-        let clinical_uuid_str = clinical_uuid.to_string();
+        let clinical_uuid_str = clinical_uuid.simple().to_string();
 
         // Try to link with unsafe namespace containing invalid characters
         let demographics_uuid = UuidService::new();
@@ -1507,7 +1507,7 @@ mod tests {
                 Some("unsafe<namespace>with/special\\chars".to_string()),
             )
             .expect_err("expected validation failure for unsafe namespace");
-        assert!(matches!(err, PatientError::InvalidInput(_)));
+        assert!(matches!(err, PatientError::Openehr(_)));
     }
 
     #[test]

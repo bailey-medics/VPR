@@ -93,6 +93,8 @@ content:
                 path: "./body.md"
 ```
 
+NB: `# updatable via api` is placed to indicate fields that may be modified by the OpenEHR API.
+
 ## `letter.md` – Canonical clinical letter
 
 ### Purpose

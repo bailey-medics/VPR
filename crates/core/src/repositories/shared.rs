@@ -13,7 +13,7 @@
 
 use crate::constants::CLINICAL_TEMPLATE_DIR;
 use crate::error::{PatientError, PatientResult};
-use crate::uuid::UuidService;
+use crate::UuidService;
 use std::{
     fs,
     io::{self, ErrorKind},

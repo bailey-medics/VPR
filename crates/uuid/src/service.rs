@@ -1,47 +1,15 @@
-//! UUID and sharded-path utilities.
+//! Internal implementation of UUID services.
 //!
-//! VPR stores patient records under sharded directories derived from a UUID.
-//!
-//! To keep path derivation deterministic and consistent across the codebase, VPR uses a *canonical*
-//! UUID representation for storage identifiers: **32 lowercase hexadecimal characters** (no
-//! hyphens).
-//!
-//! This module provides:
-//! - A small wrapper type ([`UuidService`]) that *guarantees* the canonical format once
-//!   constructed.
-//! - Shared sharding logic to derive patient directory locations from an identifier.
-//!
-//! ## Canonical UUID form
-//! - Length: 32
-//! - Characters: `0-9` and `a-f` only
-//! - Example: `550e8400e29b41d4a716446655440000`
-//!
-//! Notes:
-//! - This is the same value you would get from `Uuid::new_v4().simple().to_string()`.
-//! - Canonical form is *required* for externally supplied identifiers (for example, from CLI/API
-//!   inputs). Use [`UuidService::parse`] to validate an input string.
-//! - Non-canonical values (uppercase, hyphenated, wrong length, non-hex) are rejected.
-//!
-//! ## Sharded directory layout
-//! For a canonical UUID `u`, VPR stores data under:
-//! `parent_dir/<u[0..2]>/<u[2..4]>/<u>/`
-//!
-//! Example:
-//! `patient_data/clinical/55/0e/550e8400e29b41d4a716446655440000/`
-//!
-//! This scheme prevents very large fan-out in a single directory.
-//!
-//! ## Benefits of sharding
-//!
-//! - **Performance**: Limits directory size to prevent filesystem slowdowns
-//! - **Backup efficiency**: Allows incremental backups of specific shards
-//! - **Load distribution**: Spreads I/O across multiple directories
-//! - **Scalability**: Supports millions of patient records without performance degradation
+//! This module contains the implementation details for UUID and timestamp-based
+//! unique identifiers used throughout the VPR system.
 
-use crate::error::{PatientError, PatientResult};
+use crate::{UuidError, UuidResult};
 use chrono::{DateTime, Duration, Utc};
 use std::path::{Path, PathBuf};
 use std::{fmt, str::FromStr};
+
+/// Re-exported for convenience.
+pub use ::uuid::Uuid;
 
 /// VPR's canonical UUID representation (32 lowercase hex characters, no hyphens).
 ///
@@ -63,14 +31,20 @@ use std::{fmt, str::FromStr};
 /// - [`UuidService::parse`] validates an externally supplied identifier.
 ///
 /// # Errors
-/// [`UuidService::parse`] returns [`PatientError::InvalidInput`] if the input is not already
+/// [`UuidService::parse`] returns [`UuidError::InvalidInput`] if the input is not already
 /// canonical.
 ///
 /// # Display format
 /// When displayed or converted to string, `UuidService` always produces the canonical
 /// 32-character lowercase hex format without hyphens.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct UuidService(Uuid);
+pub struct UuidService(Uuid);
+
+impl Default for UuidService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl UuidService {
     /// Generates a new UUID in VPR's canonical form.
@@ -81,7 +55,7 @@ impl UuidService {
     /// # Returns
     ///
     /// Returns a newly generated canonical UUID wrapped in `UuidService`.
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self(Uuid::new_v4())
     }
 
@@ -101,14 +75,14 @@ impl UuidService {
     ///
     /// # Errors
     ///
-    /// Returns [`PatientError::InvalidInput`] if `input` is not in canonical form.
-    pub(crate) fn parse(input: &str) -> PatientResult<Self> {
+    /// Returns [`UuidError::InvalidInput`] if `input` is not in canonical form.
+    pub fn parse(input: &str) -> UuidResult<Self> {
         if Self::is_canonical(input) {
             // SAFETY: is_canonical guarantees valid hex, so parse_str will succeed
             let uuid = Uuid::parse_str(input).expect("is_canonical guarantees valid UUID");
             return Ok(Self(uuid));
         }
-        Err(PatientError::InvalidInput(format!(
+        Err(UuidError::InvalidInput(format!(
             "UUID must be 32 lowercase hex characters without hyphens, got: '{}'",
             input
         )))
@@ -127,7 +101,7 @@ impl UuidService {
     ///
     /// The returned UUID is guaranteed to be valid since `UuidService` only
     /// contains validated UUIDs.
-    pub(crate) fn uuid(&self) -> Uuid {
+    pub fn uuid(&self) -> Uuid {
         self.0
     }
 
@@ -146,7 +120,7 @@ impl UuidService {
     /// # Returns
     ///
     /// Returns `true` if `input` is canonical, otherwise `false`.
-    pub(crate) fn is_canonical(input: &str) -> bool {
+    pub fn is_canonical(input: &str) -> bool {
         input.len() == 32
             && input
                 .bytes()
@@ -170,7 +144,7 @@ impl UuidService {
     /// # Returns
     ///
     /// Returns the fully qualified sharded directory path for this UUID.
-    pub(crate) fn sharded_dir(&self, parent_dir: &Path) -> PathBuf {
+    pub fn sharded_dir(&self, parent_dir: &Path) -> PathBuf {
         let canonical = self.0.simple().to_string();
         let s1 = &canonical[0..2];
         let s2 = &canonical[2..4];
@@ -189,7 +163,7 @@ impl fmt::Display for UuidService {
 }
 
 impl FromStr for UuidService {
-    type Err = PatientError;
+    type Err = UuidError;
 
     /// Parses a string into a `UuidService`, requiring canonical form.
     ///
@@ -197,14 +171,11 @@ impl FromStr for UuidService {
     ///
     /// # Errors
     ///
-    /// Returns [`PatientError::InvalidInput`] if the string is not in canonical UUID form.
+    /// Returns [`UuidError::InvalidInput`] if the string is not in canonical UUID form.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         UuidService::parse(s)
     }
 }
-
-/// Re-exported for convenience within `vpr-core`.
-pub(crate) use ::uuid::Uuid;
 
 /// A time-prefixed timestamp identifier.
 ///
@@ -227,7 +198,7 @@ pub(crate) use ::uuid::Uuid;
 /// of compositions within a patient record.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[allow(dead_code)]
-pub(crate) struct TimestampUuid {
+pub struct TimestampUuid {
     timestamp: DateTime<Utc>,
     uuid: UuidService,
 }
@@ -235,28 +206,28 @@ pub(crate) struct TimestampUuid {
 impl TimestampUuid {
     /// Returns the timestamp component of this timestamp UID.
     #[allow(dead_code)]
-    pub(crate) fn timestamp(&self) -> DateTime<Utc> {
+    pub fn timestamp(&self) -> DateTime<Utc> {
         self.timestamp
     }
 
     /// Returns a reference to the UUID component of this timestamp UID.
     #[allow(dead_code)]
-    pub(crate) fn uuid(&self) -> &UuidService {
+    pub fn uuid(&self) -> &UuidService {
         &self.uuid
     }
 }
 
 impl FromStr for TimestampUuid {
-    type Err = PatientError;
+    type Err = UuidError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let (ts_str, uuid_str) = s.split_once('-').ok_or_else(|| {
-            PatientError::InvalidInput(format!("Invalid timestamp UID format: '{}'", s))
+            UuidError::InvalidInput(format!("Invalid timestamp UID format: '{}'", s))
         })?;
 
         // Parse the timestamp portion (without the Z suffix)
         if !ts_str.ends_with('Z') {
-            return Err(PatientError::InvalidInput(format!(
+            return Err(UuidError::InvalidInput(format!(
                 "Timestamp must end with 'Z': '{}'",
                 ts_str
             )));
@@ -265,7 +236,7 @@ impl FromStr for TimestampUuid {
         let ts_no_z = &ts_str[..ts_str.len() - 1];
         let naive =
             chrono::NaiveDateTime::parse_from_str(ts_no_z, "%Y%m%dT%H%M%S%.3f").map_err(|e| {
-                PatientError::InvalidInput(format!("Invalid timestamp format '{}': {}", ts_str, e))
+                UuidError::InvalidInput(format!("Invalid timestamp format '{}': {}", ts_str, e))
             })?;
 
         let timestamp = DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc);
@@ -295,7 +266,7 @@ impl TimestampUuid {
     ///
     /// This is designed to be called **inside a per-patient lock**.
     #[allow(dead_code)]
-    pub(crate) fn generate(last_uid: Option<&TimestampUuid>) -> Self {
+    pub fn generate(last_uid: Option<&TimestampUuid>) -> Self {
         let now = Utc::now();
 
         let timestamp = match last_uid {
@@ -312,7 +283,7 @@ impl TimestampUuid {
 
 impl TimestampUuid {
     #[allow(dead_code)]
-    pub(crate) fn generate_from_str(last_uid: Option<&str>) -> PatientResult<Self> {
+    pub fn generate_from_str(last_uid: Option<&str>) -> UuidResult<Self> {
         let parsed = match last_uid {
             Some(s) => Some(TimestampUuid::from_str(s)?),
             None => None,
@@ -352,7 +323,7 @@ mod tests {
 
         assert!(result.is_err());
         match result {
-            Err(PatientError::InvalidInput(msg)) => {
+            Err(UuidError::InvalidInput(msg)) => {
                 assert!(msg.contains("32 lowercase hex characters"));
             }
             _ => panic!("Expected InvalidInput error"),
@@ -624,7 +595,7 @@ mod tests {
 
         assert!(result.is_err());
         match result {
-            Err(PatientError::InvalidInput(msg)) => {
+            Err(UuidError::InvalidInput(msg)) => {
                 assert!(msg.contains("Invalid timestamp UID format"));
             }
             _ => panic!("Expected InvalidInput error"),
@@ -638,7 +609,7 @@ mod tests {
 
         assert!(result.is_err());
         match result {
-            Err(PatientError::InvalidInput(msg)) => {
+            Err(UuidError::InvalidInput(msg)) => {
                 assert!(msg.contains("must end with 'Z'"));
             }
             _ => panic!("Expected InvalidInput error"),
@@ -652,7 +623,7 @@ mod tests {
 
         assert!(result.is_err());
         match result {
-            Err(PatientError::InvalidInput(msg)) => {
+            Err(UuidError::InvalidInput(msg)) => {
                 assert!(msg.contains("Invalid timestamp format"));
             }
             _ => panic!("Expected InvalidInput error"),

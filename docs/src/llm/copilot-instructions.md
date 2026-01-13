@@ -75,8 +75,7 @@ Defensive programming (clinical safety)
 - Prefer bounded work over unbounded behaviour (retry limits, traversal depth, file counts/sizes, timeouts where applicable).
 - Avoid silent fallbacks and “best effort” behaviour in core logic: return a typed error when something is invalid.
 - Avoid `panic!`/`expect()` on paths influenced by inputs or environment; reserve them for internal invariants only.
-- When partial work has occurred, attempt cleanup/rollback and do not ignore cleanup failures.
-- Spelling: Use British English (en-GB) for documentation and other prose (mdBook pages, README, Rustdoc/comments).
+- When partial work has occurred, attempt cleanup/rollback and do not ignore cleanup failures.- **Strong static typing**: Leverage Rust's type system to encode invariants and prevent errors at compile time. Use wrapper types to represent validated data (e.g., `UuidService` for canonical UUIDs, `Author` for validated commit authors). Avoid stringly-typed data, primitive obsession, and runtime checks where types can express constraints. Prefer newtype patterns and distinct types over raw strings, integers, or booleans when domain concepts have specific rules.- Spelling: Use British English (en-GB) for documentation and other prose (mdBook pages, README, Rustdoc/comments).
 - Documentation style:
   - Use **Rustdoc** (doc comments) with standard section headings.
   - For functions/methods, include clear `# Arguments`, `# Returns`, and `# Errors` sections **when applicable**.
