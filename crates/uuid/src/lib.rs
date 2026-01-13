@@ -41,7 +41,7 @@
 mod service;
 
 // Re-export public types
-pub use service::{TimestampUuid, Uuid, UuidService};
+pub use service::{TimestampId, TimestampIdGenerator, Uuid, UuidService};
 
 /// Error type for UUID operations.
 #[derive(Debug, thiserror::Error)]

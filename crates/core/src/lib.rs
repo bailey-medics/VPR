@@ -31,4 +31,4 @@ pub use author::{Author, AuthorRegistration};
 pub use patient::PatientService;
 
 // Re-export UUID types from vpr-uuid crate
-pub use vpr_uuid::{TimestampUuid, Uuid, UuidService};
+pub use vpr_uuid::{TimestampId, TimestampIdGenerator, Uuid, UuidService};

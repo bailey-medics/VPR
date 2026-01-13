@@ -35,6 +35,7 @@ exceptions = [
     # VPR workspace crates use AGPL-3.0-or-later per project license
     { allow = ["AGPL-3.0-or-later"], name = "vpr-run" },
     { allow = ["AGPL-3.0-or-later"], name = "vpr-core" },
+    { allow = ["AGPL-3.0-or-later"], name = "vpr-uuid" },
     { allow = ["AGPL-3.0-or-later"], name = "openehr" },
     { allow = ["AGPL-3.0-or-later"], name = "api-grpc" },
     { allow = ["AGPL-3.0-or-later"], name = "api-rest" },

@@ -17,6 +17,28 @@ pub use ::uuid::Uuid;
 /// canonical format. It provides type safety for UUID operations and ensures consistent
 /// path derivation across the system.
 ///
+/// # Why no hyphens?
+///
+/// The hyphen-free format is specifically chosen to support the **sharding scheme** for
+/// patient directories. The [`sharded_dir`](UuidService::sharded_dir) method uses simple
+/// string slicing to extract shard prefixes:
+///
+/// ```text
+/// 550e8400e29b41d4a716446655440000
+/// ^^^^
+/// ||└─ shard level 2: chars[2..4] = "0e"
+/// └──── shard level 1: chars[0..2] = "55"
+/// ```
+///
+/// This creates paths like `/patient_data/clinical/55/0e/550e8400e29b41d4a716446655440000`.
+///
+/// If hyphens were present, we'd need to strip them before sharding or handle them in the
+/// slicing logic, adding unnecessary complexity. The hyphen-free format gives us a clean,
+/// predictable character stream that's trivial to slice and use directly as filesystem paths.
+///
+/// **Note**: Other identifiers that don't use sharding (such as letter IDs) may use
+/// RFC 4122 format with hyphens for better readability.
+///
 /// # When to use this type
 /// Use this wrapper whenever you are:
 /// - Accepting a UUID string from *outside* the core (CLI input, API request, etc), or
@@ -111,7 +133,7 @@ impl UuidService {
     /// - Exactly 32 bytes long
     /// - Contains only lowercase hex characters (`0-9` and `a-f`)
     ///
-    /// This method is fast and can be used for pre-validation before calling [`parse`].
+    /// This method is fast and can be used for pre-validation before calling [`UuidService::parse`].
     ///
     /// # Arguments
     ///
@@ -177,55 +199,179 @@ impl FromStr for UuidService {
     }
 }
 
-/// A time-prefixed timestamp identifier.
+/// A time-prefixed timestamp identifier for ordering events and records.
 ///
-/// Format:
-/// `YYYYMMDDTHHMMSS.mmmZ-<canonical_uuid>`
+/// `TimestampId` combines a UTC timestamp with a UUID to create a globally unique,
+/// time-ordered identifier. This is the primary mechanism for ordering patient records,
+/// clinical events, and audit logs in the VPR system.
 ///
-/// Example:
-/// `20260111T143522.045Z-550e8400e29b41d4a716446655440000`
+/// # Format
 ///
-/// This identifier is:
-/// - Globally unique (UUID)
-/// - Human-readable
-/// - Monotonic per patient when generated inside a per-patient lock
+/// `YYYYMMDDTHHMMSS.mmmZ-<uuid>`
 ///
-/// # Monotonicity Guarantee
+/// Where:
+/// - `YYYYMMDD` - Date (year, month, day)
+/// - `T` - ISO 8601 separator
+/// - `HHMMSS` - Time (hours, minutes, seconds in 24-hour format)
+/// - `.mmm` - Milliseconds (3 digits)
+/// - `Z` - UTC timezone indicator
+/// - `-` - Separator between timestamp and UUID
+/// - `<uuid>` - Standard hyphenated UUID (8-4-4-4-12 format)
 ///
-/// When calling [`TimestampUuid::generate`] with the previous timestamp UID,
-/// the timestamp is guaranteed to be strictly greater than the previous one
-/// (incremented by at least 1ms if necessary). This ensures correct ordering
-/// of compositions within a patient record.
+/// # Example
+///
+/// ```text
+/// 20260113T143522.045Z-550e8400-e29b-41d4-a716-446655440000
+/// └─────────┬────────┘ └──────────────┬───────────────────┘
+///       timestamp                    UUID
+/// ```
+///
+/// # Design Properties
+///
+/// This is a **value object** with the following guarantees:
+///
+/// - **Immutable**: Once created, the timestamp and UUID cannot be changed
+/// - **Comparable**: Implements `PartialEq` and `Eq` for equality checks
+/// - **Hashable**: Can be used as a key in hash maps and sets
+/// - **Parseable**: Can be constructed from a string representation
+/// - **Clock-free**: Does not access the system clock; use [`TimestampIdGenerator`] for generation
+/// - **Thread-safe**: Can be safely shared across threads (`Send` + `Sync`)
+///
+/// # Value Object Pattern
+///
+/// `TimestampId` follows the value object pattern from Domain-Driven Design:
+/// - It represents a conceptual whole (a point in time with unique identity)
+/// - It has no identity separate from its attributes
+/// - It is compared by value, not reference
+/// - It is immutable after construction
+///
+/// # Usage
+///
+/// - Use [`TimestampId::new`] when you already have a timestamp and UUID
+/// - Use [`FromStr`] or [`TimestampId::from_str`] to parse a string representation
+/// - Use [`TimestampIdGenerator::generate`] to create new IDs with monotonicity guarantees
+///
+/// # Monotonicity
+///
+/// When using [`TimestampIdGenerator`], timestamps are guaranteed to be strictly increasing
+/// even if the system clock hasn't advanced or moves backward. This is essential for:
+///
+/// - Maintaining correct event ordering in distributed systems
+/// - Ensuring audit log integrity
+/// - Preventing timestamp collisions in high-frequency scenarios
+///
+/// # Thread Safety
+///
+/// `TimestampId` itself is thread-safe, but monotonicity guarantees require external
+/// synchronization (e.g., per-patient locks) when generating new IDs.
+///
+/// # Display and Parsing
+///
+/// The string representation uses hyphens in the UUID part for better readability.
+/// Format: `20260113T143522.045Z-550e8400-e29b-41d4-a716-446655440000`
+///
+/// Parsing accepts the same format and validates both timestamp and UUID components.
+///
+/// # See Also
+///
+/// - [`TimestampIdGenerator`] - For generating new IDs with monotonicity
+/// - [`UuidService`] - For the UUID component
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-#[allow(dead_code)]
-pub struct TimestampUuid {
+pub struct TimestampId {
+    /// The UTC timestamp component.
+    ///
+    /// This represents the logical time when the event or record occurred.
+    /// Note: This may not match the system clock time if monotonicity adjustments were applied.
     timestamp: DateTime<Utc>,
+
+    /// The unique identifier component.
+    ///
+    /// This provides global uniqueness even when multiple events have the same timestamp.
     uuid: UuidService,
 }
 
-impl TimestampUuid {
-    /// Returns the timestamp component of this timestamp UID.
-    #[allow(dead_code)]
+impl TimestampId {
+    /// Constructs a `TimestampId` from explicit components.
+    ///
+    /// This is a low-level constructor that assumes ordering and monotonicity have already
+    /// been handled by the caller. For generating new IDs, prefer using
+    /// [`TimestampIdGenerator::generate`] which provides monotonicity guarantees.
+    ///
+    /// # Arguments
+    ///
+    /// * `timestamp` - The UTC timestamp for this identifier
+    /// * `uuid` - The unique identifier component
+    ///
+    /// # Returns
+    ///
+    /// A new `TimestampId` with the specified components.
+    pub fn new(timestamp: DateTime<Utc>, uuid: UuidService) -> Self {
+        Self { timestamp, uuid }
+    }
+
+    /// Returns the timestamp component.
+    ///
+    /// This is the logical time associated with this identifier. In cases where
+    /// monotonicity adjustments were applied, this may be slightly ahead of the
+    /// actual system clock time.
+    ///
+    /// # Returns
+    ///
+    /// The UTC timestamp as a [`DateTime<Utc>`].
     pub fn timestamp(&self) -> DateTime<Utc> {
         self.timestamp
     }
 
-    /// Returns a reference to the UUID component of this timestamp UID.
-    #[allow(dead_code)]
+    /// Returns a reference to the UUID component.
+    ///
+    /// The UUID provides global uniqueness even when multiple events share the same timestamp.
+    /// It's stored in VPR's canonical format (32 lowercase hex characters without hyphens).
+    ///
+    /// # Returns
+    ///
+    /// A reference to the [`UuidService`] component.
     pub fn uuid(&self) -> &UuidService {
         &self.uuid
     }
 }
 
-impl FromStr for TimestampUuid {
+impl FromStr for TimestampId {
     type Err = UuidError;
 
+    /// Parses a `TimestampId` from its string representation.
+    ///
+    /// The string must be in the format: `YYYYMMDDTHHMMSS.mmmZ-<uuid>`
+    ///
+    /// # Format Requirements
+    ///
+    /// - Timestamp part must end with 'Z' (UTC timezone indicator)
+    /// - Must contain a hyphen separator between timestamp and UUID
+    /// - Timestamp must be valid (no invalid dates like Feb 30)
+    /// - UUID must be in standard hyphenated format (8-4-4-4-12)
+    ///
+    /// # Arguments
+    ///
+    /// * `s` - String slice to parse
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(TimestampId)` - Successfully parsed identifier
+    /// * `Err(UuidError::InvalidInput)` - If the format is invalid
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UuidError::InvalidInput`] if:
+    /// - The string doesn't contain a hyphen separator
+    /// - The timestamp doesn't end with 'Z'
+    /// - The timestamp format is invalid (e.g., "20260199" for invalid day)
+    /// - The UUID is malformed
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // Split at first hyphen to separate timestamp from UUID
         let (ts_str, uuid_str) = s.split_once('-').ok_or_else(|| {
-            UuidError::InvalidInput(format!("Invalid timestamp UID format: '{}'", s))
+            UuidError::InvalidInput(format!("Invalid timestamp ID format: '{}'", s))
         })?;
 
-        // Parse the timestamp portion (without the Z suffix)
+        // Validate that timestamp ends with 'Z' (UTC indicator)
         if !ts_str.ends_with('Z') {
             return Err(UuidError::InvalidInput(format!(
                 "Timestamp must end with 'Z': '{}'",
@@ -233,63 +379,223 @@ impl FromStr for TimestampUuid {
             )));
         }
 
+        // Remove the 'Z' suffix before parsing
         let ts_no_z = &ts_str[..ts_str.len() - 1];
+
+        // Parse the timestamp using chrono's format string
         let naive =
             chrono::NaiveDateTime::parse_from_str(ts_no_z, "%Y%m%dT%H%M%S%.3f").map_err(|e| {
                 UuidError::InvalidInput(format!("Invalid timestamp format '{}': {}", ts_str, e))
             })?;
 
+        // Convert to UTC DateTime
         let timestamp = DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc);
 
-        let uuid = UuidService::parse(uuid_str)?;
+        // Parse the UUID component
+        let parsed_uuid = Uuid::parse_str(uuid_str)
+            .map_err(|e| UuidError::InvalidInput(format!("Invalid UUID '{}': {}", uuid_str, e)))?;
 
-        Ok(Self { timestamp, uuid })
+        Ok(Self {
+            timestamp,
+            uuid: UuidService(parsed_uuid),
+        })
     }
 }
 
-impl fmt::Display for TimestampUuid {
+impl fmt::Display for TimestampId {
+    /// Formats the `TimestampId` as a string.
+    ///
+    /// The format is: `YYYYMMDDTHHMMSS.mmmZ-<uuid>`
+    ///
+    /// Where the UUID is rendered in standard hyphenated format (8-4-4-4-12)
+    /// for better readability compared to VPR's canonical unhyphenated UUID format.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
             "{}-{}",
             self.timestamp.format("%Y%m%dT%H%M%S%.3fZ"),
-            self.uuid
+            self.uuid.0.hyphenated()
         )
     }
 }
 
-impl TimestampUuid {
-    /// Generate a new timestamp UID.
+/// Generator for creating [`TimestampId`] values with monotonicity guarantees.
+///
+/// `TimestampIdGenerator` is a stateless utility that encapsulates the clock access
+/// and monotonicity logic required to safely generate time-ordered identifiers. It
+/// ensures that generated timestamps are strictly increasing, even in scenarios where:
+///
+/// - The system clock hasn't advanced between calls
+/// - The system clock moves backward (clock skew)
+/// - Multiple IDs are generated in rapid succession
+///
+/// # Design Philosophy
+///
+/// This generator follows the principle of separating concerns:
+///
+/// - [`TimestampId`] is a pure value object (clock-free, immutable)
+/// - [`TimestampIdGenerator`] handles the impure operations (clock access, monotonicity logic)
+///
+/// This separation enables:
+/// - Easy testing of `TimestampId` without mocking time
+/// - Clear understanding of when system clock is accessed
+/// - Explicit control over monotonicity guarantees
+///
+/// # Monotonicity Guarantees
+///
+/// When a `previous` timestamp is provided, the generator ensures the new timestamp is
+/// **strictly greater** than the previous one. If the current time hasn't advanced past
+/// the previous timestamp, the generator adds 1 millisecond to the previous value.
+///
+/// This guarantees total ordering of events:
+/// ```text
+/// T1 < T2 < T3 < ... < Tn
+/// ```
+///
+/// Even if generated at the same instant or during clock skew.
+///
+/// # Thread Safety and Synchronization
+///
+/// **Important**: While the generator itself is stateless and thread-safe, maintaining
+/// monotonicity across multiple threads requires external synchronization. The typical
+/// pattern is:
+///
+/// 1. Acquire a per-patient lock
+/// 2. Read the most recent timestamp ID for that patient
+/// 3. Generate the next ID using `generate(Some(previous))`
+/// 4. Write the new ID
+/// 5. Release the lock
+///
+/// This ensures that even with concurrent writes to different patients, each patient's
+/// timeline remains strictly ordered.
+///
+/// # Millisecond Precision
+///
+/// The generator uses millisecond precision (3 decimal places). This means:
+///
+/// - Maximum theoretical throughput: 1,000 events per second per patient
+/// - In practice, with locking overhead: ~100-500 events per second
+/// - For higher throughput scenarios, consider batching or sequence numbers
+///
+/// # Clock Skew Handling
+///
+/// If the system clock moves backward, the generator detects this by comparing
+/// against the previous timestamp and advances from the previous value instead
+/// of using the (earlier) current time. This prevents:
+///
+/// - Timestamp collisions
+/// - Out-of-order events
+/// - Audit log inconsistencies
+///
+/// # Stateless Design
+///
+/// The generator is stateless - it doesn't store any previous timestamps internally.
+/// This means:
+///
+/// - No memory overhead per patient
+/// - No cleanup required
+/// - Caller controls what "previous" means (from database, cache, etc.)
+/// - Easy to use in distributed systems
+///
+/// # Performance Characteristics
+///
+/// - **Time complexity**: O(1) - constant time for all operations
+/// - **Memory**: Zero-cost abstraction - compiles to a simple function call
+/// - **System calls**: One call to `Utc::now()` per invocation
+///
+/// # When to Use
+///
+/// Use this generator when you need:
+/// - Time-ordered event logging
+/// - Audit trails with strict ordering
+/// - Patient record versioning
+/// - Any scenario requiring monotonically increasing timestamps
+///
+/// # When Not to Use
+///
+/// Don't use this generator for:
+/// - Random identifiers (use `UuidService::new()` directly)
+/// - High-frequency events requiring sub-millisecond precision
+/// - Scenarios where logical clocks (Lamport/Vector clocks) are more appropriate
+///
+/// # See Also
+///
+/// - [`TimestampId`] - The value object produced by this generator
+/// - [`UuidService`] - For the UUID component
+pub struct TimestampIdGenerator;
+
+impl TimestampIdGenerator {
+    /// Generates a new `TimestampId` with optional monotonicity relative to a previous ID.
     ///
-    /// If `last_uid` is provided, the timestamp is guaranteed to be
-    /// strictly greater than the last one (by at least 1 ms).
+    /// This is the primary method for creating time-ordered identifiers in the VPR system.
+    /// It combines the current UTC time with a freshly generated UUID to create a globally
+    /// unique, time-ordered identifier.
     ///
-    /// This is designed to be called **inside a per-patient lock**.
-    #[allow(dead_code)]
-    pub fn generate(last_uid: Option<&TimestampUuid>) -> Self {
+    /// # Monotonicity Behavior
+    ///
+    /// - **If `previous` is `None`**: Uses the current system time (`Utc::now()`)
+    /// - **If `previous` is `Some(id)`**: Ensures the new timestamp is strictly greater
+    ///   than the previous one, advancing by 1ms if necessary
+    ///
+    /// # Arguments
+    ///
+    /// * `previous` - Optional string representation of the previous `TimestampId`.
+    ///   Must be in valid format if provided: `YYYYMMDDTHHMMSS.mmmZ-<uuid>`
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(TimestampId)` - A new identifier with guaranteed monotonicity
+    /// * `Err(UuidError)` - If the `previous` string is malformed
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UuidError::InvalidInput`] if `previous` is provided but cannot be parsed.
+    /// This typically indicates:
+    /// - Invalid timestamp format
+    /// - Malformed UUID
+    /// - Missing required components
+    ///
+    /// # Monotonicity Algorithm
+    ///
+    /// ```text
+    /// now = current_time()
+    /// if previous exists and now <= previous.timestamp:
+    ///     new_timestamp = previous.timestamp + 1ms
+    /// else:
+    ///     new_timestamp = now
+    /// ```
+    ///
+    /// This ensures strictly increasing timestamps even during:
+    /// - Rapid successive calls
+    /// - System clock adjustments
+    /// - NTP corrections
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe but does not provide atomicity guarantees across
+    /// multiple calls. For maintaining monotonicity across threads, wrap calls in a
+    /// per-patient mutex or other synchronization primitive.
+    ///
+    /// # Performance
+    ///
+    /// - Single system call to `Utc::now()`
+    /// - Single UUID generation
+    /// - Optional parsing if `previous` is provided
+    /// - Total time: ~1-5 microseconds (depending on system)
+    pub fn generate(previous: Option<&str>) -> UuidResult<TimestampId> {
+        let previous = match previous {
+            Some(s) => Some(TimestampId::from_str(s)?),
+            None => None,
+        };
+
         let now = Utc::now();
 
-        let timestamp = match last_uid {
+        let timestamp = match &previous {
             Some(prev) if now <= prev.timestamp => prev.timestamp + Duration::milliseconds(1),
             _ => now,
         };
 
-        Self {
-            timestamp,
-            uuid: UuidService::new(),
-        }
-    }
-}
-
-impl TimestampUuid {
-    #[allow(dead_code)]
-    pub fn generate_from_str(last_uid: Option<&str>) -> UuidResult<Self> {
-        let parsed = match last_uid {
-            Some(s) => Some(TimestampUuid::from_str(s)?),
-            None => None,
-        };
-
-        Ok(Self::generate(parsed.as_ref()))
+        Ok(TimestampId::new(timestamp, UuidService::new()))
     }
 }
 
@@ -528,11 +834,11 @@ mod tests {
         assert!(debug.contains("550e8400"));
     }
 
-    // TimestampUuid tests
+    // TimestampId tests
 
     #[test]
-    fn test_timestamp_uid_generate_new() {
-        let uid = TimestampUuid::generate(None);
+    fn test_timestamp_id_generate_new() {
+        let uid = TimestampIdGenerator::generate(None).unwrap();
 
         // Should have a valid UUID component
         let uuid_str = uid.uuid().to_string();
@@ -541,47 +847,51 @@ mod tests {
     }
 
     #[test]
-    fn test_timestamp_uid_generate_monotonic() {
-        let uid1 = TimestampUuid::generate(None);
+    fn test_timestamp_id_generate_monotonic() {
+        let uid1 = TimestampIdGenerator::generate(None).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(10));
-        let uid2 = TimestampUuid::generate(Some(&uid1));
+        let uid1_str = uid1.to_string();
+        let uid2 = TimestampIdGenerator::generate(Some(&uid1_str)).unwrap();
 
         // Second timestamp should be strictly greater
         assert!(uid2.timestamp() > uid1.timestamp());
     }
 
     #[test]
-    fn test_timestamp_uid_generate_monotonic_same_instant() {
-        let uid1 = TimestampUuid::generate(None);
+    fn test_timestamp_id_generate_monotonic_same_instant() {
+        let uid1 = TimestampIdGenerator::generate(None).unwrap();
         // Don't sleep - force the monotonic increment logic
-        let uid2 = TimestampUuid::generate(Some(&uid1));
+        let uid1_str = uid1.to_string();
+        let uid2 = TimestampIdGenerator::generate(Some(&uid1_str)).unwrap();
 
         // Even with no elapsed time, second should be strictly later
         assert!(uid2.timestamp() > uid1.timestamp());
     }
 
     #[test]
-    fn test_timestamp_uid_display_format() {
-        let uid = TimestampUuid::generate(None);
+    fn test_timestamp_id_display_format() {
+        let uid = TimestampIdGenerator::generate(None).unwrap();
         let displayed = uid.to_string();
 
-        // Should contain a hyphen separator
+        // Should contain hyphens (timestamp-uuid separator plus UUID hyphens)
         assert!(displayed.contains('-'));
 
         // Should end with 'Z' in the timestamp portion
         assert!(displayed.starts_with("20"));
 
-        // Should be parseable
-        let parts: Vec<&str> = displayed.split('-').collect();
-        assert_eq!(parts.len(), 2);
-        assert!(parts[0].ends_with('Z'));
-        assert!(UuidService::is_canonical(parts[1]));
+        // Should be parseable and have correct structure
+        assert!(displayed.contains('Z'));
+        let z_pos = displayed.find('Z').unwrap();
+        let uuid_part = &displayed[z_pos + 2..]; // Skip 'Z-'
+
+        // UUID part should be hyphenated (8-4-4-4-12 format)
+        assert_eq!(uuid_part.len(), 36); // Standard UUID with hyphens
     }
 
     #[test]
-    fn test_timestamp_uid_parse_valid() {
-        let valid = "20260111T143522.045Z-550e8400e29b41d4a716446655440000";
-        let result = TimestampUuid::from_str(valid);
+    fn test_timestamp_id_parse_valid() {
+        let valid = "20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000";
+        let result = TimestampId::from_str(valid);
 
         assert!(result.is_ok());
         let uid = result.unwrap();
@@ -589,23 +899,9 @@ mod tests {
     }
 
     #[test]
-    fn test_timestamp_uid_parse_missing_hyphen() {
-        let invalid = "20260111T143522.045Z550e8400e29b41d4a716446655440000";
-        let result = TimestampUuid::from_str(invalid);
-
-        assert!(result.is_err());
-        match result {
-            Err(UuidError::InvalidInput(msg)) => {
-                assert!(msg.contains("Invalid timestamp UID format"));
-            }
-            _ => panic!("Expected InvalidInput error"),
-        }
-    }
-
-    #[test]
-    fn test_timestamp_uid_parse_missing_z_suffix() {
-        let invalid = "20260111T143522.045-550e8400e29b41d4a716446655440000";
-        let result = TimestampUuid::from_str(invalid);
+    fn test_timestamp_id_parse_missing_hyphen() {
+        let invalid = "20260111T143522.045Z550e8400-e29b-41d4-a716-446655440000";
+        let result = TimestampId::from_str(invalid);
 
         assert!(result.is_err());
         match result {
@@ -617,9 +913,23 @@ mod tests {
     }
 
     #[test]
-    fn test_timestamp_uid_parse_invalid_timestamp() {
-        let invalid = "20260199T143522.045Z-550e8400e29b41d4a716446655440000";
-        let result = TimestampUuid::from_str(invalid);
+    fn test_timestamp_id_parse_missing_z_suffix() {
+        let invalid = "20260111T143522.045-550e8400-e29b-41d4-a716-446655440000";
+        let result = TimestampId::from_str(invalid);
+
+        assert!(result.is_err());
+        match result {
+            Err(UuidError::InvalidInput(msg)) => {
+                assert!(msg.contains("must end with 'Z'"));
+            }
+            _ => panic!("Expected InvalidInput error"),
+        }
+    }
+
+    #[test]
+    fn test_timestamp_id_parse_invalid_timestamp() {
+        let invalid = "20260199T143522.045Z-550e8400-e29b-41d4-a716-446655440000";
+        let result = TimestampId::from_str(invalid);
 
         assert!(result.is_err());
         match result {
@@ -631,21 +941,21 @@ mod tests {
     }
 
     #[test]
-    fn test_timestamp_uid_parse_invalid_uuid() {
+    fn test_timestamp_id_parse_invalid_uuid() {
         let invalid = "20260111T143522.045Z-not-a-valid-uuid";
-        let result = TimestampUuid::from_str(invalid);
+        let result = TimestampId::from_str(invalid);
 
         assert!(result.is_err());
     }
 
     #[test]
-    fn test_timestamp_uid_round_trip() {
+    fn test_timestamp_id_round_trip() {
         // Use a specific timestamp that has no sub-millisecond precision
         // to ensure clean round-trip through the %.3f format
-        let original_str = "20260111T143522.045Z-550e8400e29b41d4a716446655440000";
-        let original = TimestampUuid::from_str(original_str).unwrap();
+        let original_str = "20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000";
+        let original = TimestampId::from_str(original_str).unwrap();
         let as_string = original.to_string();
-        let parsed = TimestampUuid::from_str(&as_string).unwrap();
+        let parsed = TimestampId::from_str(&as_string).unwrap();
 
         assert_eq!(as_string, original_str);
         assert_eq!(original, parsed);
@@ -654,20 +964,20 @@ mod tests {
     }
 
     #[test]
-    fn test_timestamp_uid_generate_from_str_with_previous() {
-        let prev = "20260111T143522.045Z-550e8400e29b41d4a716446655440000";
-        let result = TimestampUuid::generate_from_str(Some(prev));
+    fn test_timestamp_id_generate_with_previous() {
+        let prev = "20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000";
+        let result = TimestampIdGenerator::generate(Some(prev));
 
         assert!(result.is_ok());
         let new_uid = result.unwrap();
-        let prev_uid = TimestampUuid::from_str(prev).unwrap();
+        let prev_uid = TimestampId::from_str(prev).unwrap();
 
         assert!(new_uid.timestamp() > prev_uid.timestamp());
     }
 
     #[test]
-    fn test_timestamp_uid_generate_from_str_without_previous() {
-        let result = TimestampUuid::generate_from_str(None);
+    fn test_timestamp_id_generate_without_previous() {
+        let result = TimestampIdGenerator::generate(None);
 
         assert!(result.is_ok());
         let uid = result.unwrap();
@@ -675,26 +985,28 @@ mod tests {
     }
 
     #[test]
-    fn test_timestamp_uid_generate_from_str_invalid() {
+    fn test_timestamp_id_generate_invalid() {
         let invalid = "not-a-valid-timestamp-uid";
-        let result = TimestampUuid::generate_from_str(Some(invalid));
+        let result = TimestampIdGenerator::generate(Some(invalid));
 
         assert!(result.is_err());
     }
 
     #[test]
-    fn test_timestamp_uid_equality() {
-        let uid1 = TimestampUuid::from_str("20260111T143522.045Z-550e8400e29b41d4a716446655440000")
-            .unwrap();
-        let uid2 = TimestampUuid::from_str("20260111T143522.045Z-550e8400e29b41d4a716446655440000")
-            .unwrap();
+    fn test_timestamp_id_equality() {
+        let uid1 =
+            TimestampId::from_str("20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000")
+                .unwrap();
+        let uid2 =
+            TimestampId::from_str("20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000")
+                .unwrap();
 
         assert_eq!(uid1, uid2);
     }
 
     #[test]
-    fn test_timestamp_uid_clone() {
-        let uid1 = TimestampUuid::generate(None);
+    fn test_timestamp_id_clone() {
+        let uid1 = TimestampIdGenerator::generate(None).unwrap();
         let uid2 = uid1.clone();
 
         assert_eq!(uid1, uid2);

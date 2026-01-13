@@ -109,6 +109,7 @@
     "shopt",
     "Smartcard",
     "Smartcards",
+    "SNOMED-CT",
     "stringly",
     "subdirs",
     "Szilagyi",
@@ -123,23 +124,15 @@
     "writable",
     "YYYYMMDDTHHMMSS"
   ],
-  "ignoreWords": [
-    "Exampletown"
-  ],
+  "ignoreWords": ["Exampletown"],
   "languageSettings": [
     {
       "languageId": "rust",
-      "includeRegExpList": [
-        "string",
-        "comment",
-        "doc"
-      ]
+      "includeRegExpList": ["string", "comment", "doc"]
     },
     {
       "languageId": "markdown",
-      "includeRegExpList": [
-        ".*"
-      ]
+      "includeRegExpList": [".*"]
     }
   ]
 }
