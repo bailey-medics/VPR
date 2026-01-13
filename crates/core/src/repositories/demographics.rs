@@ -10,6 +10,7 @@ use crate::author::Author;
 use crate::config::CoreConfig;
 use crate::error::{PatientError, PatientResult};
 use crate::git::{GitService, VprCommitAction, VprCommitDomain, VprCommitMessage};
+use crate::UuidService;
 use api_shared::pb;
 use chrono;
 use serde::{Deserialize, Serialize};
@@ -78,7 +79,7 @@ impl DemographicsService {
     pub fn initialise(&self, author: Author, care_location: String) -> PatientResult<String> {
         let data_dir = self.cfg.patient_data_dir();
 
-        let demographics_uuid = crate::uuid::UuidService::new();
+        let demographics_uuid = UuidService::new();
         let created_at = chrono::Utc::now().to_rfc3339();
 
         // Create initial patient JSON
@@ -151,7 +152,7 @@ impl DemographicsService {
         let data_dir = self.cfg.patient_data_dir();
         let demographics_dir = data_dir.join(crate::constants::DEMOGRAPHICS_DIR_NAME);
 
-        let demographics_uuid = crate::uuid::UuidService::parse(demographics_uuid)?;
+        let demographics_uuid = UuidService::parse(demographics_uuid)?;
         let patient_dir = demographics_uuid.sharded_dir(&demographics_dir);
         let filename = patient_dir.join(crate::constants::PATIENT_JSON_FILENAME);
 

@@ -2913,6 +2913,7 @@ dependencies = [
  "tonic",
  "tracing",
  "uuid",
+ "vpr-uuid",
  "x509-parser",
 ]
 
@@ -2942,6 +2943,16 @@ dependencies = [
  "utoipa-swagger-ui",
  "uuid",
  "vpr-core",
+]
+
+[[package]]
+name = "vpr-uuid"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "tempfile",
+ "thiserror 1.0.69",
+ "uuid",
 ]
 
 [[package]]

@@ -42,7 +42,7 @@
 
 use crate::author::Author;
 use crate::error::{PatientError, PatientResult};
-use crate::uuid::UuidService;
+use crate::UuidService;
 use base64::{engine::general_purpose, Engine as _};
 use p256::ecdsa::signature::{Signer, Verifier};
 use p256::ecdsa::{Signature, SigningKey, VerifyingKey};

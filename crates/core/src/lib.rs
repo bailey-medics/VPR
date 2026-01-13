@@ -14,7 +14,6 @@ pub mod config;
 pub mod constants;
 pub mod git;
 pub mod repositories;
-pub(crate) mod uuid;
 
 pub mod error;
 
@@ -30,3 +29,6 @@ pub use author::{Author, AuthorRegistration};
 
 // Re-export patient types
 pub use patient::PatientService;
+
+// Re-export UUID types from vpr-uuid crate
+pub use vpr_uuid::{TimestampId, TimestampIdGenerator, Uuid, UuidService};
