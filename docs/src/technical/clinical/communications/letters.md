@@ -63,6 +63,10 @@ This ensures letters are:
 
 ---
 
+## `composition.yaml` – OpenEHR composition
+
+The `composition.yaml` file contains the **OpenEHR composition** representing the letter's metadata and structure, as below:
+
 ```yaml
 rm_version: "1.0.4" # updatable via api
 uid: "20260111T143522.045Z-550e8400e29b41d4a716446655440000"  # updatable via api
@@ -91,23 +95,55 @@ content:
               narrative:
                 type: "external_text"
                 path: "./body.md"
+        - evaluation:
+            archetype_node_id: "openEHR-EHR-EVALUATION.problem_summary.v1"
+            name:
+              value: "Diagnoses at time of correspondence"
+
+            data:
+              diagnoses:
+                - name: "Hypertension"
+                - name: "Hyperlipidaemia"
+                - name: "Chronic obstructive pulmonary disease"
 ```
 
 NB: `# updatable via api` is placed to indicate fields that may be modified by the OpenEHR API.
 
-## `letter.md` – Canonical clinical letter
+---
+
+## `body.md` – Canonical clinical letter
 
 ### Purpose
 
-`letter.md` is the **canonical clinical representation** of the letter.
-
+`body.md` is the **canonical clinical representation** of the letter.
 It records:
 
-- the full letter content,
-- authorship,
-- intended recipients,
-- date of issue,
-- clinical intent.
+- the full letter content only
+
+An example of `body.md` might look like:
+
+```markdown
+Dear Dr Patel,
+
+Thank you for seeing Mrs Jane Jones (DOB 12/04/1968) in the respiratory clinic today.
+
+She reports an improvement in breathlessness since her last review. She confirms that she is currently taking amlodipine 10 mg once daily, rather than the previously documented dose of 5 mg.
+
+We reviewed her medication list together. Atorvastatin was started during her recent admission. The intended dose is 20 mg nocte.
+
+There are no new red flag symptoms. Examination today was unremarkable.
+
+Plan:
+- Continue amlodipine 10 mg once daily
+- Continue atorvastatin 20 mg nocte
+- Routine follow-up in six months
+
+Kind regards,
+
+Dr Jane Smith  
+Consultant Respiratory Physician  
+Example NHS Trust
+```
 
 ---
 
