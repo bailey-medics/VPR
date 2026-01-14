@@ -22,4 +22,5 @@
   - [Instructions](./llm/copilot-instructions.md)
   - [Specifications](./llm/spec.md)
   - [Roadmap](./llm/roadmap.md)
+- [Code](./code/vpr_core/index.html)
 - [Thanks to](./thanks-to.md)

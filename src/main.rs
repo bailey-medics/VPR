@@ -47,7 +47,7 @@ type Patient = pb::Patient;
 /// Currently holds a PatientService instance for data operations.
 #[derive(Clone)]
 struct AppState {
-    clinical_service: Arc<ClinicalService>,
+    cfg: Arc<CoreConfig>,
     demographics_service: Arc<DemographicsService>,
 }
 
@@ -192,7 +192,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Start REST server
     let rest_state = AppState {
-        clinical_service: Arc::new(ClinicalService::new(cfg.clone())),
+        cfg: cfg.clone(),
         demographics_service: Arc::new(DemographicsService::new(cfg.clone())),
     };
 
@@ -317,12 +317,13 @@ async fn create_patient(
         },
         certificate: None,
     };
-    match state.clinical_service.initialise(author, req.care_location) {
-        Ok(uuid) => {
+    let clinical_service = ClinicalService::new(state.cfg.clone());
+    match clinical_service.initialise(author, req.care_location) {
+        Ok(service) => {
             let resp = CreatePatientRes {
                 filename: "".to_string(),
                 patient: Some(Patient {
-                    id: uuid.simple().to_string(),
+                    id: service.clinical_id().simple().to_string(),
                     first_name: "".to_string(),
                     last_name: "".to_string(),
                     created_at: "".to_string(),
