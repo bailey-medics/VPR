@@ -42,64 +42,159 @@ use std::collections::HashSet;
 #[cfg(test)]
 use std::sync::{LazyLock, Mutex};
 
-/// Service for managing clinical record operations.
-#[derive(Clone)]
-pub struct ClinicalService {
-    cfg: Arc<CoreConfig>,
-    clinical_id: Option<Uuid>,
+/// Marker type: clinical record does not yet exist.
+///
+/// This is a zero-sized type used in the type-state pattern to indicate that
+/// a [`ClinicalService`] has not yet been initialised. Services in this state
+/// can only call [`ClinicalService::initialise()`] to create a new clinical record.
+///
+/// # Type Safety
+///
+/// The type system prevents you from calling operations that require an existing
+/// clinical record (like [`link_to_demographics`](ClinicalService::link_to_demographics))
+/// when the service is in the `Uninitialised` state.
+#[derive(Clone, Copy, Debug)]
+pub struct Uninitialised;
+
+/// Marker type: clinical record exists.
+///
+/// This type is used in the type-state pattern to indicate that a [`ClinicalService`]
+/// has been initialised and has a valid clinical record with a known UUID.
+///
+/// Services in this state can call operations that require an existing clinical record,
+/// such as [`link_to_demographics`](ClinicalService::link_to_demographics).
+///
+/// # Fields
+///
+/// The clinical UUID is stored privately and accessed via the
+/// [`clinical_id()`](ClinicalService::clinical_id) method.
+#[derive(Clone, Copy, Debug)]
+pub struct Initialised {
+    clinical_id: Uuid,
 }
 
-impl ClinicalService {
-    /// Creates a new `ClinicalService` instance.
+/// Service for managing clinical record operations.
+///
+/// This service uses the type-state pattern to enforce correct usage at compile time.
+/// The generic parameter `S` can be either [`Uninitialised`] or [`Initialised`],
+/// determining which operations are available.
+///
+/// # Type States
+///
+/// - `ClinicalService<Uninitialised>` - Created via [`new()`](ClinicalService::new).
+///   Can only call [`initialise()`](ClinicalService::initialise).
+///
+/// - `ClinicalService<Initialised>` - Created via [`with_id()`](ClinicalService::with_id)
+///   or returned from [`initialise()`](ClinicalService::initialise). Can call operations
+///   like [`link_to_demographics()`](ClinicalService::link_to_demographics).
+#[derive(Clone, Debug)]
+pub struct ClinicalService<S> {
+    cfg: Arc<CoreConfig>,
+    state: S,
+}
+
+impl ClinicalService<Uninitialised> {
+    /// Creates a new `ClinicalService` in the uninitialised state.
+    ///
+    /// This is the starting point for creating a new clinical record. The returned
+    /// service can only call [`initialise()`](Self::initialise) to create the record.
     ///
     /// # Arguments
     ///
-    /// * `cfg` - The core configuration for the service.
-    /// * `clinical_id` - Optional clinical UUID to associate with this service instance.
+    /// * `cfg` - The core configuration containing paths, templates, and system settings.
     ///
     /// # Returns
     ///
-    /// Returns a new `ClinicalService` with the provided configuration.
-    pub fn new(cfg: Arc<CoreConfig>, clinical_id: Option<Uuid>) -> Self {
-        Self { cfg, clinical_id }
+    /// A `ClinicalService<Uninitialised>` ready to initialise a new clinical record.
+    pub fn new(cfg: Arc<CoreConfig>) -> Self {
+        Self {
+            cfg,
+            state: Uninitialised,
+        }
     }
 }
 
-impl ClinicalService {
+impl ClinicalService<Initialised> {
+    /// Creates a `ClinicalService` in the initialised state with an existing clinical ID.
+    ///
+    /// Use this when you already have a clinical record and want to perform operations on it,
+    /// such as linking to demographics or updating the EHR status.
+    ///
+    /// # Arguments
+    ///
+    /// * `cfg` - The core configuration containing paths, templates, and system settings.
+    /// * `clinical_id` - The UUID of an existing clinical record.
+    ///
+    /// # Returns
+    ///
+    /// A `ClinicalService<Initialised>` ready to operate on the specified clinical record.
+    ///
+    /// # Note
+    ///
+    /// This constructor does not validate that the clinical record actually exists.
+    /// Operations on a non-existent record will fail at runtime.
+    pub fn with_id(cfg: Arc<CoreConfig>, clinical_id: Uuid) -> Self {
+        Self {
+            cfg,
+            state: Initialised { clinical_id },
+        }
+    }
+
+    /// Returns the clinical ID for this initialised service.
+    ///
+    /// # Returns
+    ///
+    /// The UUID of the clinical record associated with this service.
+    pub fn clinical_id(&self) -> Uuid {
+        self.state.clinical_id
+    }
+}
+
+impl ClinicalService<Uninitialised> {
     /// Initialises a new clinical record for a patient.
     ///
     /// This function creates a new clinical entry with a unique UUID, stores it in a sharded
     /// directory structure, copies the clinical template into the patient's directory, writes an
     /// initial `ehr_status.yaml`, and initialises a Git repository for version control.
     ///
+    /// **This method consumes `self`** and returns a new `ClinicalService<Initialised>` on success,
+    /// enforcing at compile time that you cannot call `initialise()` twice on the same service.
+    ///
     /// # Arguments
     ///
-    /// * `author` - The author information for the initial Git commit.
+    /// * `author` - The author information for the initial Git commit. Must have a non-empty name.
     /// * `care_location` - High-level organisational location for the commit (e.g. hospital name).
+    ///   Must be a non-empty string.
     ///
     /// # Returns
     ///
-    /// Returns the UUID of the newly created clinical record.
+    /// Returns `ClinicalService<Initialised>` containing the newly created clinical record.
+    /// Use [`clinical_id()`](ClinicalService::clinical_id) to get the UUID.
     ///
     /// # Errors
     ///
     /// Returns a `PatientError` if:
-    /// - required inputs or configuration are invalid (for example the clinical template cannot be
-    ///   located).
-    /// - a unique patient directory cannot be allocated.
-    /// - file or directory operations fail while creating the record or copying templates.
-    /// - writing `ehr_status.yaml` fails.
-    /// - Git repository initialisation or the initial commit fails.
-    /// - cleanup of a partially-created record directory fails.
-    pub fn initialise(&self, author: Author, care_location: String) -> PatientResult<Uuid> {
-        // Prevent initialisation if a clinical_id is already set
-        if let Some(existing_id) = self.clinical_id {
-            return Err(PatientError::InvalidInput(format!(
-                "Cannot initialise a new clinical record when clinical_id is already set to {}",
-                existing_id
-            )));
-        }
-
+    /// - The author's name is empty or whitespace-only ([`PatientError::MissingAuthorName`])
+    /// - The care location is empty or whitespace-only ([`PatientError::MissingCareLocation`])
+    /// - Required inputs or configuration are invalid ([`PatientError::InvalidInput`])
+    /// - The clinical template cannot be located or is invalid
+    /// - A unique patient directory cannot be allocated after 5 attempts
+    /// - File or directory operations fail while creating the record or copying templates ([`PatientError::FileWrite`])
+    /// - Writing `ehr_status.yaml` fails
+    /// - Git repository initialisation fails (e.g., [`PatientError::GitInit`])
+    /// - The initial commit fails (e.g., certificate/signature mismatch)
+    /// - Cleanup of a partially-created record directory fails ([`PatientError::CleanupAfterInitialiseFailed`])
+    ///
+    /// # Safety & Rollback
+    ///
+    /// If any operation fails during initialisation, this method attempts to clean up the
+    /// partially-created patient directory. If cleanup also fails, a
+    /// [`PatientError::CleanupAfterInitialiseFailed`] is returned with details of both errors.
+    pub fn initialise(
+        self,
+        author: Author,
+        care_location: String,
+    ) -> PatientResult<ClinicalService<Initialised>> {
         author.validate_commit_author()?;
 
         let commit_message = VprCommitMessage::new(
@@ -113,74 +208,93 @@ impl ClinicalService {
         let (clinical_uuid, patient_dir) =
             create_uuid_and_shard_dir(&clinical_dir, ShardableUuid::new)?;
 
-        // Wrap the potentially failing operations in a closure to enable cleanup
-        // of partially-created patient directories on any failure.
         let result: PatientResult<Uuid> = (|| {
-            // Initialise Git repository early so failures don't leave partially-created records.
             let repo = GitService::init(&patient_dir)?;
 
-            // Defensive guard: ensure the template directory is safe to copy.
-            // This is validated once at startup when `CoreConfig` is created,
-            // but validating here prevents unsafe copying if an invalid config slips through.
             let template_dir = self.cfg.clinical_template_dir().to_path_buf();
             validate_template(&TemplateDirKind::Clinical, &template_dir)?;
 
-            // Copy clinical template to patient directory
             copy_dir_recursive(&template_dir, &patient_dir).map_err(PatientError::FileWrite)?;
 
             let rm_version = self.cfg.rm_system_version();
 
-            // Create initial EHR status YAML file
             let filename = patient_dir.join(EhrStatus.filename());
             let ehr_id = EhrId::from_uuid(clinical_uuid.uuid());
 
             let yaml_content = ehr_status_render(rm_version, None, Some(&ehr_id), None)?;
+
             fs::write(&filename, yaml_content).map_err(PatientError::FileWrite)?;
 
-            // Initial commit
             repo.commit_all(&author, &commit_message)?;
 
             Ok(clinical_uuid.uuid())
         })();
 
-        // On error, attempt to clean up the partially-created patient directory.
-        match result {
-            Ok(v) => Ok(v),
-            Err(init_error) => match remove_patient_dir_all(&patient_dir) {
-                Ok(()) => Err(init_error),
-                Err(cleanup_error) => Err(PatientError::CleanupAfterInitialiseFailed {
-                    path: patient_dir,
-                    init_error: Box::new(init_error),
-                    cleanup_error,
-                }),
-            },
-        }
-    }
+        let clinical_id = match result {
+            Ok(id) => id,
+            Err(init_error) => {
+                match remove_patient_dir_all(&patient_dir) {
+                    Ok(()) => {}
+                    Err(cleanup_error) => {
+                        return Err(PatientError::CleanupAfterInitialiseFailed {
+                            path: patient_dir,
+                            init_error: Box::new(init_error),
+                            cleanup_error,
+                        });
+                    }
+                }
+                return Err(init_error);
+            }
+        };
 
+        Ok(ClinicalService {
+            cfg: self.cfg,
+            state: Initialised { clinical_id },
+        })
+    }
+}
+
+impl ClinicalService<Initialised> {
     /// Links the clinical record to the patient's demographics.
     ///
-    /// This function creates an EHR status YAML file linking the clinical record
-    /// to the patient's demographics via external references.
+    /// This function updates the clinical record's `ehr_status.yaml` file to include an
+    /// external reference to the patient's demographics record.
+    ///
+    /// The clinical UUID is obtained from the service's internal state (via [`clinical_id()`](Self::clinical_id)),
+    /// ensuring type safety and preventing mismatched UUIDs.
     ///
     /// # Arguments
     ///
-    /// * `author` - The author information for the Git commit.
+    /// * `author` - The author information for the Git commit recording this change.
+    ///   Must have a non-empty name.
     /// * `care_location` - High-level organisational location for the commit (e.g. hospital name).
-    /// * `demographics_uuid` - The UUID of the associated patient demographics.
-    /// * `namespace` - Optional namespace for the external reference; defaults to the
-    ///   value configured in `CoreConfig`.
+    ///   Must be a non-empty string.
+    /// * `demographics_uuid` - The UUID of the associated patient demographics record.
+    ///   Must be a canonical 32-character lowercase hex string.
+    /// * `namespace` - Optional namespace for the external reference URI. If `None`, uses the
+    ///   value configured in [`CoreConfig`]. The namespace must be URI-safe (no special characters
+    ///   like `<`, `>`, `/`, `\`).
     ///
     /// # Returns
     ///
-    /// Returns `Ok(())` on success.
+    /// Returns `Ok(())` on success. The `ehr_status.yaml` file is updated and committed to Git.
     ///
     /// # Errors
     ///
     /// Returns a `PatientError` if:
-    /// - `clinical_id` is not set on the service instance,
-    /// - the demographics UUID cannot be parsed,
-    /// - the namespace is invalid/unsafe for embedding into a `ehr://{namespace}/mpi` URI,
-    /// - writing `ehr_status.yaml` fails.
+    /// - The author's name is empty or whitespace-only ([`PatientError::MissingAuthorName`])
+    /// - The care location is empty or whitespace-only ([`PatientError::MissingCareLocation`])
+    /// - The demographics UUID cannot be parsed ([`PatientError::Uuid`])
+    /// - The namespace is invalid/unsafe for embedding into a `ehr://{namespace}/mpi` URI ([`PatientError::InvalidInput`])
+    /// - The `ehr_status.yaml` file does not exist ([`PatientError::InvalidInput`])
+    /// - Reading or writing `ehr_status.yaml` fails ([`PatientError::FileRead`] or [`PatientError::FileWrite`])
+    /// - The existing `ehr_status.yaml` cannot be parsed ([`PatientError::Openehr`])
+    /// - Git commit fails (various Git-related error variants)
+    ///
+    /// # Safety & Rollback
+    ///
+    /// If the file write or Git commit fails, this method attempts to restore the previous
+    /// content of `ehr_status.yaml`.
     pub fn link_to_demographics(
         &self,
         author: &Author,
@@ -188,39 +302,28 @@ impl ClinicalService {
         demographics_uuid: &str,
         namespace: Option<String>,
     ) -> PatientResult<()> {
-        // Ensure clinical_id is set
-        let clinical_uuid = self.clinical_id.ok_or_else(|| {
-            PatientError::InvalidInput(
-                "Cannot link demographics: clinical_id is not set on this service instance"
-                    .to_string(),
-            )
-        })?;
-
         author.validate_commit_author()?;
+
         let msg = VprCommitMessage::new(
             VprCommitDomain::Record,
             VprCommitAction::Update,
             "EHR status linked to demographics",
             care_location,
         )?;
-        // Convert Uuid to canonical string format and parse back to ShardableUuid
-        let clinical_uuid = ShardableUuid::parse(&clinical_uuid.simple().to_string())?;
+
+        let clinical_uuid = ShardableUuid::parse(&self.clinical_id().simple().to_string())?;
         let demographics_uuid = ShardableUuid::parse(demographics_uuid)?;
 
-        // Use the caller-provided namespace if present; otherwise fall back to the configured
-        // default. Trim and validate before embedding into a `ehr://{namespace}/mpi` URI.
         let namespace = namespace
             .as_deref()
             .unwrap_or(self.cfg.vpr_namespace())
             .trim();
-        validate_namespace_uri_safe(namespace)?;
 
-        // let rm_version = self.cfg.rm_system_version();
+        validate_namespace_uri_safe(namespace)?;
 
         let patient_dir = self.clinical_patient_dir(&clinical_uuid);
         let filename = patient_dir.join(EhrStatus.filename());
 
-        // ehr_status.yaml must exist; it is created during initialise()
         if !filename.exists() {
             return Err(PatientError::InvalidInput(format!(
                 "{} does not exist for clinical record {}",
@@ -235,6 +338,7 @@ impl ClinicalService {
         }]);
 
         let previous_data = fs::read_to_string(&filename).map_err(PatientError::FileRead)?;
+
         let rm_version = extract_rm_version(&previous_data)?;
 
         let yaml_content =
@@ -251,7 +355,7 @@ impl ClinicalService {
     }
 }
 
-impl ClinicalService {
+impl<S> ClinicalService<S> {
     /// Returns the path to the clinical records directory.
     ///
     /// This constructs the base directory for clinical records by joining
@@ -259,7 +363,7 @@ impl ClinicalService {
     ///
     /// # Returns
     ///
-    /// Returns a `PathBuf` pointing to the clinical records directory.
+    /// A `PathBuf` pointing to the clinical records directory (e.g., `{patient_data_dir}/clinical`).
     fn clinical_dir(&self) -> PathBuf {
         let data_dir = self.cfg.patient_data_dir().to_path_buf();
         data_dir.join(CLINICAL_DIR_NAME)
@@ -273,11 +377,12 @@ impl ClinicalService {
     ///
     /// # Arguments
     ///
-    /// * `clinical_uuid` - The UUID service for the clinical record.
+    /// * `clinical_uuid` - The UUID identifying the clinical record.
     ///
     /// # Returns
     ///
-    /// Returns a `PathBuf` pointing to the patient's clinical record directory.
+    /// A `PathBuf` pointing to the patient's clinical record directory
+    /// (e.g., `{clinical_dir}/{shard1}/{shard2}/{uuid}`).
     fn clinical_patient_dir(&self, clinical_uuid: &ShardableUuid) -> PathBuf {
         let clinical_dir = self.clinical_dir();
         clinical_uuid.sharded_dir(&clinical_dir)
@@ -292,22 +397,24 @@ impl ClinicalService {
     /// # Arguments
     ///
     /// * `author` - The author information for the Git commit.
-    /// * `msg` - The commit message.
+    /// * `msg` - The commit message structure containing domain, action, and location.
     /// * `file_path_relative` - The relative path to the file within the patient directory.
-    /// * `patient_dir` - The patient's repository directory.
+    /// * `patient_dir` - The patient's repository directory (absolute path).
     /// * `content` - The new content to write to the file.
-    /// * `old_content` - The previous file content for rollback (None if file is new).
+    /// * `old_content` - The previous file content for rollback. `None` if this is a new file.
     ///
     /// # Returns
     ///
-    /// Returns `Ok(())` on success.
+    /// Returns `Ok(())` if both the file write and Git commit succeed.
     ///
     /// # Errors
     ///
     /// Returns a `PatientError` if:
-    /// - the file write fails,
-    /// - opening the Git repository fails,
-    /// - the Git commit fails.
+    /// - The file write fails ([`PatientError::FileWrite`])
+    /// - Opening the Git repository fails (various Git-related error variants)
+    /// - The Git commit fails (various Git-related error variants)
+    ///
+    /// On error, attempts to rollback the file to its previous state.
     fn write_and_commit_file(
         &self,
         author: &Author,
@@ -319,18 +426,15 @@ impl ClinicalService {
     ) -> PatientResult<()> {
         let full_path = patient_dir.join(file_path_relative);
 
-        // Wrap the potentially failing operations in a closure to enable rollback on failure.
         let result: PatientResult<()> = (|| {
             fs::write(&full_path, content).map_err(PatientError::FileWrite)?;
 
             let repo = GitService::open(patient_dir)?;
-            // Pass relative path to commit_paths to avoid path canonicalization mismatches
             repo.commit_paths(author, msg, &[file_path_relative.to_path_buf()])?;
 
             Ok(())
         })();
 
-        // On error, attempt to rollback the file to its previous state.
         match result {
             Ok(()) => Ok(()),
             Err(write_error) => {
@@ -360,6 +464,28 @@ fn force_cleanup_error_for_current_thread() {
     guard.insert(std::thread::current().id());
 }
 
+/// Removes a patient directory and all its contents.
+///
+/// This is a wrapper around [`std::fs::remove_dir_all`] with test instrumentation.
+/// In test mode, it can be forced to fail for specific threads to test error handling.
+///
+/// # Arguments
+///
+/// * `patient_dir` - The path to the patient directory to remove.
+///
+/// # Returns
+///
+/// Returns `Ok(())` if the directory was successfully removed.
+///
+/// # Errors
+///
+/// Returns an [`io::Error`] if the directory cannot be removed.
+///
+/// # Test Instrumentation
+///
+/// When compiled with `#[cfg(test)]`, this function checks a thread-local set to
+/// see if it should force a failure for the current thread. This allows testing
+/// of cleanup failure scenarios.
 fn remove_patient_dir_all(patient_dir: &Path) -> io::Result<()> {
     #[cfg(test)]
     {
@@ -585,7 +711,7 @@ mod tests {
             .expect("CoreConfig::new should succeed"),
         );
 
-        let service = ClinicalService::new(cfg, None);
+        let service = ClinicalService::new(cfg);
 
         let author = Author {
             name: " ".to_string(),
@@ -627,7 +753,7 @@ mod tests {
             .expect("CoreConfig::new should succeed"),
         );
 
-        let service = ClinicalService::new(cfg, None);
+        let service = ClinicalService::new(cfg);
 
         let author = Author {
             name: "Test Author".to_string(),
@@ -668,7 +794,7 @@ mod tests {
             .expect("CoreConfig::new should succeed"),
         );
 
-        let service = ClinicalService::new(cfg, None);
+        let service = ClinicalService::new(cfg);
         let author = Author {
             name: "Test Author".to_string(),
             role: "Clinician".to_string(),
@@ -720,7 +846,7 @@ mod tests {
             .expect("CoreConfig::new should succeed"),
         );
 
-        let service = ClinicalService::new(cfg, None);
+        let service = ClinicalService::new(cfg);
         let author = Author {
             name: "Test Author".to_string(),
             role: "Clinician".to_string(),
@@ -768,7 +894,7 @@ mod tests {
             .expect("CoreConfig::new should succeed"),
         );
 
-        let service = ClinicalService::new(cfg, None);
+        let service = ClinicalService::new(cfg);
         let author = Author {
             name: "Test Author".to_string(),
             role: "Clinician".to_string(),
@@ -823,7 +949,7 @@ mod tests {
             .expect("CoreConfig::new should succeed"),
         );
 
-        let service = ClinicalService::new(cfg, None);
+        let service = ClinicalService::new(cfg);
         let author = Author {
             name: "Test Author".to_string(),
             role: "Clinician".to_string(),
@@ -887,7 +1013,7 @@ mod tests {
             .expect("CoreConfig::new should succeed"),
         );
 
-        let service = ClinicalService::new(cfg, None);
+        let service = ClinicalService::new(cfg);
         let author = Author {
             name: "Test Author".to_string(),
             role: "Clinician".to_string(),
@@ -944,7 +1070,7 @@ mod tests {
             .expect("CoreConfig::new should succeed"),
         );
 
-        let service = ClinicalService::new(cfg, None);
+        let service = ClinicalService::new(cfg);
         let author = Author {
             name: "Test Author".to_string(),
             role: "Clinician".to_string(),
@@ -993,7 +1119,7 @@ mod tests {
             .expect("CoreConfig::new should succeed"),
         );
 
-        let service = ClinicalService::new(cfg, None);
+        let service = ClinicalService::new(cfg);
         let author = Author {
             name: "Test Author".to_string(),
             role: "Clinician".to_string(),
@@ -1044,7 +1170,7 @@ mod tests {
             .expect("CoreConfig::new should succeed"),
         );
 
-        let service = ClinicalService::new(cfg, None);
+        let service = ClinicalService::new(cfg);
         let author = Author {
             name: "Test Author".to_string(),
             role: "Clinician".to_string(),
@@ -1099,7 +1225,7 @@ mod tests {
             )
             .expect("CoreConfig::new should succeed"),
         );
-        let service = ClinicalService::new(cfg, None);
+        let service = ClinicalService::new(cfg);
 
         let author = Author {
             name: "Test Author".to_string(),
@@ -1145,7 +1271,7 @@ mod tests {
             )
             .expect("CoreConfig::new should succeed"),
         );
-        let service = ClinicalService::new(cfg, None);
+        let service = ClinicalService::new(cfg);
 
         let author = Author {
             name: "Test Author".to_string(),
@@ -1194,7 +1320,7 @@ mod tests {
         let cert_pem = cert.pem();
 
         let cfg = test_cfg(temp_dir.path());
-        let service = ClinicalService::new(cfg, None);
+        let service = ClinicalService::new(cfg);
         let author = Author {
             name: "Test Author".to_string(),
             role: "Clinician".to_string(),
@@ -1237,7 +1363,7 @@ mod tests {
             )
             .expect("CoreConfig::new should succeed"),
         );
-        let service = ClinicalService::new(cfg, None);
+        let service = ClinicalService::new(cfg);
 
         let author = Author {
             name: "Test Author".to_string(),
@@ -1287,7 +1413,7 @@ mod tests {
             )
             .expect("CoreConfig::new should succeed"),
         );
-        let service = ClinicalService::new(cfg, None);
+        let service = ClinicalService::new(cfg);
 
         let author = Author {
             name: "Test Author".to_string(),
@@ -1331,14 +1457,14 @@ mod tests {
         };
 
         let cfg = test_cfg(temp_dir.path());
-        let service = ClinicalService::new(cfg, None);
+        let service = ClinicalService::new(cfg);
 
         // Call initialise
         let result = service.initialise(author, "Test Hospital".to_string());
         assert!(result.is_ok(), "initialise should succeed");
 
         let clinical_uuid = result.unwrap();
-        let clinical_uuid_str = clinical_uuid.simple().to_string();
+        let clinical_uuid_str = clinical_uuid.clinical_id().simple().to_string();
         assert_eq!(clinical_uuid_str.len(), 32, "UUID should be 32 characters");
 
         // Verify directory structure exists
@@ -1400,18 +1526,18 @@ mod tests {
 
         // Initialise clinical service
         let cfg = test_cfg(temp_dir.path());
-        let service = ClinicalService::new(cfg, None);
+        let service = ClinicalService::new(cfg.clone());
 
         // First, initialise a clinical record
         let care_location = "Test Hospital".to_string();
-        let result = service.initialise(author.clone(), care_location.clone());
-        assert!(result.is_ok(), "initialise should succeed");
-        let clinical_uuid = result.unwrap();
+        let service = service
+            .initialise(author.clone(), care_location.clone())
+            .expect("initialise should succeed");
+        let clinical_uuid = service.clinical_id();
         let clinical_uuid_str = clinical_uuid.simple().to_string();
 
         // Now link to demographics
         let demographics_uuid = "12345678123412341234123456789abc";
-        let service = ClinicalService::new(cfg.clone(), Some(clinical_uuid));
         let result = service.link_to_demographics(&author, care_location, demographics_uuid, None);
         assert!(result.is_ok(), "link_to_demographics should succeed");
 
@@ -1429,34 +1555,21 @@ mod tests {
     fn test_link_to_demographics_rejects_invalid_clinical_uuid() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let cfg = test_cfg(temp_dir.path());
-        let service = ClinicalService::new(cfg, None);
+        // This test is no longer applicable with the type-state pattern
+        // because you cannot call link_to_demographics on an Uninitialised service
+        // The type system prevents this at compile time
+        let _service = ClinicalService::new(cfg);
 
-        let author = Author {
-            name: "Test Author".to_string(),
-            role: "Clinician".to_string(),
-            email: "test@example.com".to_string(),
-            registrations: vec![],
-            signature: None,
-            certificate: None,
-        };
-        let care_location = "Test Hospital".to_string();
-
-        let err = service
-            .link_to_demographics(
-                &author,
-                care_location,
-                "12345678123412341234123456789abc",
-                None,
-            )
-            .expect_err("expected validation failure");
-        assert!(matches!(err, PatientError::Uuid(_)));
+        // This would not compile:
+        // service.link_to_demographics(&author, care_location, "...", None);
+        // So we just verify the service was created successfully
     }
 
     #[test]
     fn test_link_to_demographics_rejects_invalid_demographics_uuid() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let cfg = test_cfg(temp_dir.path());
-        let service = ClinicalService::new(cfg, None);
+        let service = ClinicalService::new(cfg);
 
         // Create a valid clinical record first
         let author = Author {
@@ -1468,13 +1581,11 @@ mod tests {
             certificate: None,
         };
 
-        let clinical_uuid = service
+        let service = service
             .initialise(author.clone(), "Test Hospital".to_string())
             .expect("initialise should succeed");
-        let clinical_uuid_str = clinical_uuid.simple().to_string();
 
         // Try to link with invalid demographics UUID
-        let service = ClinicalService::new(cfg.clone(), Some(clinical_uuid));
         let err = service
             .link_to_demographics(
                 &author,
@@ -1490,7 +1601,7 @@ mod tests {
     fn test_link_to_demographics_rejects_invalid_namespace() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let cfg = test_cfg(temp_dir.path());
-        let service = ClinicalService::new(cfg, None);
+        let service = ClinicalService::new(cfg);
 
         // Create a valid clinical record
         let author = Author {
@@ -1502,16 +1613,14 @@ mod tests {
             certificate: None,
         };
 
-        let clinical_uuid = service
+        let service = service
             .initialise(author.clone(), "Test Hospital".to_string())
             .expect("initialise should succeed");
-        let clinical_uuid_str = clinical_uuid.simple().to_string();
 
         // Try to link with unsafe namespace containing invalid characters
         let demographics_uuid = ShardableUuid::new();
         let demographics_uuid_str = demographics_uuid.to_string();
 
-        let service = ClinicalService::new(cfg.clone(), Some(clinical_uuid));
         let err = service
             .link_to_demographics(
                 &author,
@@ -1527,7 +1636,6 @@ mod tests {
     fn test_link_to_demographics_fails_when_ehr_status_missing() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let cfg = test_cfg(temp_dir.path());
-        let service = ClinicalService::new(cfg, None);
 
         // Manually create a clinical directory without ehr_status.yaml
         let clinical_dir = temp_dir.path().join(CLINICAL_DIR_NAME);
@@ -1548,11 +1656,10 @@ mod tests {
         };
 
         let demographics_uuid = ShardableUuid::new();
-        let clinical_uuid_str = clinical_uuid.to_string();
         let demographics_uuid_str = demographics_uuid.to_string();
 
         // Should fail because ehr_status.yaml doesn't exist
-        let service = ClinicalService::new(cfg.clone(), Some(clinical_uuid));
+        let service = ClinicalService::with_id(cfg, clinical_uuid.uuid());
         let err = service
             .link_to_demographics(
                 &author,
@@ -1572,7 +1679,6 @@ mod tests {
     fn test_link_to_demographics_rejects_corrupted_ehr_status() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let cfg = test_cfg(temp_dir.path());
-        let service = ClinicalService::new(cfg, None);
 
         // Create a clinical directory with corrupted ehr_status.yaml
         let clinical_dir = temp_dir.path().join(CLINICAL_DIR_NAME);
@@ -1598,10 +1704,9 @@ mod tests {
         };
 
         let demographics_uuid = ShardableUuid::new();
-        let clinical_uuid_str = clinical_uuid.to_string();
         let demographics_uuid_str = demographics_uuid.to_string();
 
-        let service = ClinicalService::new(cfg.clone(), Some(clinical_uuid));
+        let service = ClinicalService::with_id(cfg, clinical_uuid.uuid());
         let err = service
             .link_to_demographics(
                 &author,
@@ -1657,7 +1762,7 @@ mod tests {
         let result = service.initialise(author, "Test Hospital".to_string());
         assert!(result.is_ok(), "initialise should succeed");
         let clinical_uuid = result.unwrap();
-        let clinical_uuid_str = clinical_uuid.simple().to_string();
+        let clinical_uuid_str = clinical_uuid.clinical_id().simple().to_string();
 
         // Verify the signature
         let verify_result =
@@ -1714,7 +1819,7 @@ mod tests {
         let clinical_uuid = service
             .initialise(author, "Test Hospital".to_string())
             .expect("initialise should succeed");
-        let clinical_uuid_str = clinical_uuid.simple().to_string();
+        let clinical_uuid_str = clinical_uuid.clinical_id().simple().to_string();
 
         // Offline verification: no external key material is provided.
         let ok = GitService::verify_commit_signature(&clinical_dir, &clinical_uuid_str, "")
@@ -1754,7 +1859,7 @@ mod tests {
         let cert_pem = cert.pem();
 
         let cfg = test_cfg(temp_dir.path());
-        let service = ClinicalService::new(cfg, None);
+        let service = ClinicalService::new(cfg);
         let author = Author {
             name: "Test Author".to_string(),
             role: "Clinician".to_string(),
@@ -1783,7 +1888,7 @@ mod tests {
             .expect("Failed to encode private key");
 
         let cfg = test_cfg(temp_dir.path());
-        let service = ClinicalService::new(cfg, None);
+        let service = ClinicalService::new(cfg);
         let author = Author {
             name: "Test Author".to_string(),
             role: "Clinician".to_string(),
@@ -1796,7 +1901,7 @@ mod tests {
         let clinical_uuid = service
             .initialise(author, "Test Hospital".to_string())
             .expect("initialise should succeed");
-        let clinical_uuid_str = clinical_uuid.simple().to_string();
+        let clinical_uuid_str = clinical_uuid.clinical_id().simple().to_string();
 
         let clinical_dir = temp_dir.path().join(CLINICAL_DIR_NAME);
         let patient_dir = ShardableUuid::parse(&clinical_uuid_str)
@@ -1836,7 +1941,7 @@ mod tests {
         let clinical_uuid = service
             .initialise(author, "Test Hospital".to_string())
             .expect("initialise should succeed");
-        let clinical_uuid_str = clinical_uuid.simple().to_string();
+        let clinical_uuid_str = clinical_uuid.clinical_id().simple().to_string();
 
         let patient_dir = ShardableUuid::parse(&clinical_uuid_str)
             .expect("clinical_uuid should be canonical")

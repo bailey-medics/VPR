@@ -48,7 +48,7 @@
 //! )?;
 //!
 //! // Pass to services
-//! let clinical_service = ClinicalService::new(Arc::new(config.clone()), None);
+//! let clinical_service = ClinicalService::new(Arc::new(config.clone()));
 //! let demographics_service = DemographicsService::new(Arc::new(config));
 //! ```
 

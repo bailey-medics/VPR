@@ -73,11 +73,12 @@ impl PatientService {
         demographics_service.update(&demographics_uuid, given_names, &last_name, &birth_date)?;
 
         // Initialise clinical
-        let clinical_service = ClinicalService::new(self.cfg.clone(), None);
-        let clinical_uuid = clinical_service.initialise(author.clone(), care_location.clone())?;
+        let clinical_service = ClinicalService::new(self.cfg.clone());
+        let clinical_service =
+            clinical_service.initialise(author.clone(), care_location.clone())?;
+        let clinical_uuid = clinical_service.clinical_id();
 
         // Link clinical to demographics
-        let clinical_service = ClinicalService::new(self.cfg.clone(), Some(clinical_uuid));
         clinical_service.link_to_demographics(
             &author,
             care_location,

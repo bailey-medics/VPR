@@ -143,13 +143,13 @@ impl Vpr for VprService {
             },
             certificate: None,
         };
-        let clinical_service = ClinicalService::new(self.cfg.clone(), None);
+        let clinical_service = ClinicalService::new(self.cfg.clone());
         match clinical_service.initialise(author, req.care_location) {
-            Ok(uuid) => {
+            Ok(service) => {
                 let resp = pb::CreatePatientRes {
                     filename: "".to_string(), // No filename for initialise
                     patient: Some(pb::Patient {
-                        id: uuid.simple().to_string(),
+                        id: service.clinical_id().simple().to_string(),
                         first_name: "".to_string(),
                         last_name: "".to_string(),
                         created_at: "".to_string(), // Could set to now, but empty for now

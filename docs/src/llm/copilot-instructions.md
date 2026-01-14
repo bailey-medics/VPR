@@ -66,7 +66,7 @@ Runtime configuration and environment variables
   - Use the helpers in `crates/core/src/config.rs` to resolve/validate template and parse the RM version.
 - `crates/core` (vpr-core) must **not** read environment variables during operations.
   - Do not call `std::env::var` in core service methods or helpers.
-  - Prefer constructors like `ClinicalService::new(Arc<CoreConfig>, Option<Uuid>)` and `DemographicsService::new(Arc<CoreConfig>)`.
+  - Prefer constructors like `ClinicalService::new(Arc<CoreConfig>)` for uninitialised state, or `ClinicalService::with_id(Arc<CoreConfig>, Uuid)` for initialised state. Same for `DemographicsService::new(Arc<CoreConfig>)`.
   - This avoids rare-but-real process-wide env races and keeps behaviour consistent within a request.
 
 Defensive programming (clinical safety)
@@ -84,6 +84,7 @@ Defensive programming (clinical safety)
       - Use the form: `Returns <ErrorType> if:` then `- ...` bullets.
       - Group by category when helpful (validation/config, filesystem I/O, serialisation, Git, crypto).
   - For each module, start the file with `//!` module-level Rustdoc that outlines what the module does and what it is intended to do.
+  - **Documentation examples**: In Rust, documentation examples are executable doctests and should be used deliberately, not everywhere by default. Examples are encouraged when they clarify lifecycle rules, state transitions, ordering constraints, or non-obvious correct usage, as they act as part of the correctness and safety contract of the code. Avoid adding examples to trivial helpers or internal plumbing where the signature is self-explanatory. Prefer a small number of minimal, focused examples that encode important invariants rather than repetitive or decorative usage snippets.
 - Imports and naming:
   - Prefer adding clear `use` imports (for example, `use crate::uuid::ShardableUuid;`) rather than repeating long paths like `crate::...` throughout the file.
   - Prefer calling imported items directly (e.g. `copy_dir_recursive(...)`) instead of qualifying call sites with `crate::copy_dir_recursive(...)`.

@@ -4,6 +4,8 @@
 //! It allows users to initialise patient demographics and clinical records,
 //! update demographics, link clinical records to demographics, and list patients.
 
+#![allow(rustdoc::invalid_html_tags)]
+
 use clap::{Parser, Subcommand};
 use vpr_certificates::Certificate;
 use vpr_core::{
@@ -13,7 +15,7 @@ use vpr_core::{
     repositories::clinical::ClinicalService,
     repositories::demographics::DemographicsService,
     repositories::shared::{resolve_clinical_template_dir, validate_template, TemplateDirKind},
-    Author, AuthorRegistration, CoreConfig, PatientService,
+    Author, AuthorRegistration, CoreConfig, PatientService, ShardableUuid,
 };
 
 use base64::{engine::general_purpose, Engine as _};
@@ -345,9 +347,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 signature,
                 certificate: None,
             };
-            let clinical_service = ClinicalService::new(cfg.clone(), None);
+            let clinical_service = ClinicalService::new(cfg.clone());
             match clinical_service.initialise(author, care_location) {
-                Ok(uuid) => println!("Initialised clinical with UUID: {}", uuid.simple()),
+                Ok(service) => println!(
+                    "Initialised clinical with UUID: {}",
+                    service.clinical_id().simple()
+                ),
                 Err(e) => eprintln!("Error initialising clinical: {}", e),
             }
         }
@@ -362,7 +367,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             signature,
             namespace,
         }) => {
-            let clinical_service = ClinicalService::new(cfg.clone(), None);
             let registrations: Vec<AuthorRegistration> = registration
                 .chunks(2)
                 .map(|chunk| AuthorRegistration {
@@ -378,11 +382,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 signature,
                 certificate: None,
             };
-            let clinical_uuid_parsed = ShardableUuid::parse(&clinical_uuid)
-                .map_err(|e| eprintln!("Error parsing clinical UUID: {}", e))
-                .ok();
-            let clinical_service =
-                ClinicalService::new(cfg.clone(), clinical_uuid_parsed.map(|u| u.uuid()));
+            let clinical_uuid_parsed = match ShardableUuid::parse(&clinical_uuid) {
+                Ok(uuid) => uuid.uuid(),
+                Err(e) => {
+                    eprintln!("Error parsing clinical UUID: {}", e);
+                    return Ok(());
+                }
+            };
+            let clinical_service = ClinicalService::with_id(cfg.clone(), clinical_uuid_parsed);
             match clinical_service.link_to_demographics(
                 &author,
                 care_location,
