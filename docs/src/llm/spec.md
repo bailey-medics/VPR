@@ -49,7 +49,7 @@
 
 - Fail fast on invalid config/inputs; avoid panics on input-driven paths; no silent fallbacks.
 - Respect architecture boundaries: `crates/core` must not read env; transports handle auth and request wiring.
-- **Strong static typing**: Prefer type safety over runtime checks. Use distinct types to encode invariants (e.g., `UuidService` for canonical UUIDs, `Author` for validated commit authors). Avoid stringly-typed data and primitive obsession; let the type system catch errors at compile time.
+- **Strong static typing**: Prefer type safety over runtime checks. Use distinct types to encode invariants (e.g., `ShardableUuid` for canonical UUIDs, `Author` for validated commit authors). Avoid stringly-typed data and primitive obsession; let the type system catch errors at compile time.
 - Add tests where rules live; wiring tests ensure errors propagate and side effects do not occur on failure.
 - Use British English in prose and Rustdoc; prefer module-level `//!` docs and function docs with `# Arguments`, `# Returns`, `# Errors` when applicable.
 

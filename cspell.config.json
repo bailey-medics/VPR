@@ -106,6 +106,7 @@
     "rustup",
     "Segoe",
     "serde",
+    "ShardableUuid",
     "shopt",
     "Smartcard",
     "Smartcards",
@@ -124,15 +125,23 @@
     "writable",
     "YYYYMMDDTHHMMSS"
   ],
-  "ignoreWords": ["Exampletown"],
+  "ignoreWords": [
+    "Exampletown"
+  ],
   "languageSettings": [
     {
       "languageId": "rust",
-      "includeRegExpList": ["string", "comment", "doc"]
+      "includeRegExpList": [
+        "string",
+        "comment",
+        "doc"
+      ]
     },
     {
       "languageId": "markdown",
-      "includeRegExpList": [".*"]
+      "includeRegExpList": [
+        ".*"
+      ]
     }
   ]
 }

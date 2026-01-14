@@ -7,7 +7,7 @@
 //! hyphens).
 //!
 //! This module provides:
-//! - A small wrapper type ([`UuidService`]) that *guarantees* the canonical format once
+//! - A small wrapper type ([`ShardableUuid`]) that *guarantees* the canonical format once
 //!   constructed.
 //! - Shared sharding logic to derive patient directory locations from an identifier.
 //!
@@ -19,7 +19,7 @@
 //! Notes:
 //! - This is the same value you would get from `Uuid::new_v4().simple().to_string()`.
 //! - Canonical form is *required* for externally supplied identifiers (for example, from CLI/API
-//!   inputs). Use [`UuidService::parse`] to validate an input string.
+//!   inputs). Use [`ShardableUuid::parse`] to validate an input string.
 //! - Non-canonical values (uppercase, hyphenated, wrong length, non-hex) are rejected.
 //!
 //! ## Sharded directory layout
@@ -41,7 +41,7 @@
 mod service;
 
 // Re-export public types
-pub use service::{TimestampId, TimestampIdGenerator, Uuid, UuidService};
+pub use service::{ShardableUuid, TimestampId, TimestampIdGenerator, Uuid};
 
 /// Error type for UUID operations.
 #[derive(Debug, thiserror::Error)]
