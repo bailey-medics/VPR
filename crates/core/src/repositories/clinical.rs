@@ -21,7 +21,7 @@ use crate::git::{GitService, VprCommitAction, VprCommitDomain, VprCommitMessage}
 use crate::repositories::shared::{
     copy_dir_recursive, create_uuid_and_shard_dir, validate_template, TemplateDirKind,
 };
-use crate::UuidService;
+use crate::ShardableUuid;
 use openehr::{
     ehr_status_render, extract_rm_version, validation::validate_namespace_uri_safe, EhrId,
     ExternalReference, OpenEhrFileType::EhrStatus,
@@ -100,7 +100,7 @@ impl ClinicalService {
 
         let clinical_dir = self.clinical_dir();
         let (clinical_uuid, patient_dir) =
-            create_uuid_and_shard_dir(&clinical_dir, UuidService::new)?;
+            create_uuid_and_shard_dir(&clinical_dir, ShardableUuid::new)?;
 
         // Wrap the potentially failing operations in a closure to enable cleanup
         // of partially-created patient directories on any failure.
@@ -185,8 +185,8 @@ impl ClinicalService {
             "EHR status linked to demographics",
             care_location,
         )?;
-        let clinical_uuid = UuidService::parse(clinical_uuid)?;
-        let demographics_uuid = UuidService::parse(demographics_uuid)?;
+        let clinical_uuid = ShardableUuid::parse(clinical_uuid)?;
+        let demographics_uuid = ShardableUuid::parse(demographics_uuid)?;
 
         // Use the caller-provided namespace if present; otherwise fall back to the configured
         // default. Trim and validate before embedding into a `ehr://{namespace}/mpi` URI.
@@ -259,7 +259,7 @@ impl ClinicalService {
     /// # Returns
     ///
     /// Returns a `PathBuf` pointing to the patient's clinical record directory.
-    fn clinical_patient_dir(&self, clinical_uuid: &UuidService) -> PathBuf {
+    fn clinical_patient_dir(&self, clinical_uuid: &ShardableUuid) -> PathBuf {
         let clinical_dir = self.clinical_dir();
         clinical_uuid.sharded_dir(&clinical_dir)
     }
@@ -439,7 +439,7 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let clinical_dir = temp_dir.path().join(CLINICAL_DIR_NAME);
 
-        let uuids = vec![UuidService::parse("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        let uuids = vec![ShardableUuid::parse("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
             .expect("uuid should be canonical")];
         let mut iter = uuids.into_iter();
 
@@ -471,8 +471,8 @@ mod tests {
         fs::create_dir_all(&first_dir).expect("Failed to pre-create first candidate dir");
 
         let uuids = vec![
-            UuidService::parse(first).expect("uuid should be canonical"),
-            UuidService::parse(second).expect("uuid should be canonical"),
+            ShardableUuid::parse(first).expect("uuid should be canonical"),
+            ShardableUuid::parse(second).expect("uuid should be canonical"),
         ];
         let mut iter = uuids.into_iter();
 
@@ -510,7 +510,7 @@ mod tests {
 
         let uuids = ids
             .into_iter()
-            .map(|s| UuidService::parse(s).expect("uuid should be canonical"))
+            .map(|s| ShardableUuid::parse(s).expect("uuid should be canonical"))
             .collect::<Vec<_>>();
         let mut iter = uuids.into_iter();
 
@@ -536,7 +536,7 @@ mod tests {
         let blocking_path = clinical_dir.join("aa");
         fs::write(&blocking_path, b"not a directory").expect("Failed to create blocking file");
 
-        let uuids = vec![UuidService::parse("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        let uuids = vec![ShardableUuid::parse("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
             .expect("uuid should be canonical")];
         let mut iter = uuids.into_iter();
 
@@ -1403,7 +1403,7 @@ mod tests {
 
         // Verify ehr_status.yaml was updated with linking information
         let clinical_dir = temp_dir.path().join(CLINICAL_DIR_NAME);
-        let patient_dir = UuidService::parse(&clinical_uuid_str)
+        let patient_dir = ShardableUuid::parse(&clinical_uuid_str)
             .expect("clinical_uuid should be canonical")
             .sharded_dir(&clinical_dir);
         let ehr_status_file = patient_dir.join(EhrStatus.filename());
@@ -1495,7 +1495,7 @@ mod tests {
         let clinical_uuid_str = clinical_uuid.simple().to_string();
 
         // Try to link with unsafe namespace containing invalid characters
-        let demographics_uuid = UuidService::new();
+        let demographics_uuid = ShardableUuid::new();
         let demographics_uuid_str = demographics_uuid.to_string();
 
         let err = service
@@ -1518,7 +1518,7 @@ mod tests {
 
         // Manually create a clinical directory without ehr_status.yaml
         let clinical_dir = temp_dir.path().join(CLINICAL_DIR_NAME);
-        let clinical_uuid = UuidService::new();
+        let clinical_uuid = ShardableUuid::new();
         let patient_dir = clinical_uuid.sharded_dir(&clinical_dir);
         fs::create_dir_all(&patient_dir).expect("Failed to create patient dir");
 
@@ -1534,7 +1534,7 @@ mod tests {
             certificate: None,
         };
 
-        let demographics_uuid = UuidService::new();
+        let demographics_uuid = ShardableUuid::new();
         let clinical_uuid_str = clinical_uuid.to_string();
         let demographics_uuid_str = demographics_uuid.to_string();
 
@@ -1563,7 +1563,7 @@ mod tests {
 
         // Create a clinical directory with corrupted ehr_status.yaml
         let clinical_dir = temp_dir.path().join(CLINICAL_DIR_NAME);
-        let clinical_uuid = UuidService::new();
+        let clinical_uuid = ShardableUuid::new();
         let patient_dir = clinical_uuid.sharded_dir(&clinical_dir);
         fs::create_dir_all(&patient_dir).expect("Failed to create patient dir");
 
@@ -1584,7 +1584,7 @@ mod tests {
             certificate: None,
         };
 
-        let demographics_uuid = UuidService::new();
+        let demographics_uuid = ShardableUuid::new();
         let clinical_uuid_str = clinical_uuid.to_string();
         let demographics_uuid_str = demographics_uuid.to_string();
 
@@ -1786,7 +1786,7 @@ mod tests {
         let clinical_uuid_str = clinical_uuid.simple().to_string();
 
         let clinical_dir = temp_dir.path().join(CLINICAL_DIR_NAME);
-        let patient_dir = UuidService::parse(&clinical_uuid_str)
+        let patient_dir = ShardableUuid::parse(&clinical_uuid_str)
             .expect("clinical_uuid should be canonical")
             .sharded_dir(&clinical_dir);
 
@@ -1825,7 +1825,7 @@ mod tests {
             .expect("initialise should succeed");
         let clinical_uuid_str = clinical_uuid.simple().to_string();
 
-        let patient_dir = UuidService::parse(&clinical_uuid_str)
+        let patient_dir = ShardableUuid::parse(&clinical_uuid_str)
             .expect("clinical_uuid should be canonical")
             .sharded_dir(&clinical_dir);
 

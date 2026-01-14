@@ -20,7 +20,7 @@ pub use ::uuid::Uuid;
 /// # Why no hyphens?
 ///
 /// The hyphen-free format is specifically chosen to support the **sharding scheme** for
-/// patient directories. The [`sharded_dir`](UuidService::sharded_dir) method uses simple
+/// patient directories. The [`sharded_dir`](ShardableUuid::sharded_dir) method uses simple
 /// string slicing to extract shard prefixes:
 ///
 /// ```text
@@ -45,30 +45,30 @@ pub use ::uuid::Uuid;
 /// - Deriving a sharded storage path for a patient.
 /// - Generating new patient identifiers.
 ///
-/// Once you have a `UuidService`, you can safely assume the internal UUID is valid
+/// Once you have a `ShardableUuid`, you can safely assume the internal UUID is valid
 /// and in canonical form.
 ///
 /// # Construction
-/// - [`UuidService::new`] generates a new canonical UUID (for new patient records).
-/// - [`UuidService::parse`] validates an externally supplied identifier.
+/// - [`ShardableUuid::new`] generates a new canonical UUID (for new patient records).
+/// - [`ShardableUuid::parse`] validates an externally supplied identifier.
 ///
 /// # Errors
-/// [`UuidService::parse`] returns [`UuidError::InvalidInput`] if the input is not already
+/// [`ShardableUuid::parse`] returns [`UuidError::InvalidInput`] if the input is not already
 /// canonical.
 ///
 /// # Display format
-/// When displayed or converted to string, `UuidService` always produces the canonical
+/// When displayed or converted to string, `ShardableUuid` always produces the canonical
 /// 32-character lowercase hex format without hyphens.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct UuidService(Uuid);
+pub struct ShardableUuid(Uuid);
 
-impl Default for UuidService {
+impl Default for ShardableUuid {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl UuidService {
+impl ShardableUuid {
     /// Generates a new UUID in VPR's canonical form.
     ///
     /// This is suitable for allocating a fresh identifier during patient creation.
@@ -76,7 +76,7 @@ impl UuidService {
     ///
     /// # Returns
     ///
-    /// Returns a newly generated canonical UUID wrapped in `UuidService`.
+    /// Returns a newly generated canonical UUID wrapped in `ShardableUuid`.
     pub fn new() -> Self {
         Self(Uuid::new_v4())
     }
@@ -93,7 +93,7 @@ impl UuidService {
     ///
     /// # Returns
     ///
-    /// Returns a validated [`UuidService`] on success.
+    /// Returns a validated [`ShardableUuid`] on success.
     ///
     /// # Errors
     ///
@@ -121,7 +121,7 @@ impl UuidService {
     ///
     /// # Note
     ///
-    /// The returned UUID is guaranteed to be valid since `UuidService` only
+    /// The returned UUID is guaranteed to be valid since `ShardableUuid` only
     /// contains validated UUIDs.
     pub fn uuid(&self) -> Uuid {
         self.0
@@ -133,7 +133,7 @@ impl UuidService {
     /// - Exactly 32 bytes long
     /// - Contains only lowercase hex characters (`0-9` and `a-f`)
     ///
-    /// This method is fast and can be used for pre-validation before calling [`UuidService::parse`].
+    /// This method is fast and can be used for pre-validation before calling [`ShardableUuid::parse`].
     ///
     /// # Arguments
     ///
@@ -174,7 +174,7 @@ impl UuidService {
     }
 }
 
-impl fmt::Display for UuidService {
+impl fmt::Display for ShardableUuid {
     /// Formats the UUID in canonical form (32 lowercase hex characters, no hyphens).
     ///
     /// This ensures consistent string representation across the application.
@@ -184,26 +184,26 @@ impl fmt::Display for UuidService {
     }
 }
 
-impl FromStr for UuidService {
+impl FromStr for ShardableUuid {
     type Err = UuidError;
 
-    /// Parses a string into a `UuidService`, requiring canonical form.
+    /// Parses a string into a `ShardableUuid`, requiring canonical form.
     ///
-    /// This is equivalent to calling [`UuidService::parse`].
+    /// This is equivalent to calling [`ShardableUuid::parse`].
     ///
     /// # Errors
     ///
     /// Returns [`UuidError::InvalidInput`] if the string is not in canonical UUID form.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        UuidService::parse(s)
+        ShardableUuid::parse(s)
     }
 }
 
 /// A time-prefixed timestamp identifier for ordering events and records.
 ///
 /// `TimestampId` combines a UTC timestamp with a UUID to create a globally unique,
-/// time-ordered identifier. This is the primary mechanism for ordering patient records,
-/// clinical events, and audit logs in the VPR system.
+/// time-ordered identifier. This is the primary mechanism for ordering patient records
+/// in the VPR system.
 ///
 /// # Format
 ///
@@ -240,6 +240,7 @@ impl FromStr for UuidService {
 /// # Value Object Pattern
 ///
 /// `TimestampId` follows the value object pattern from Domain-Driven Design:
+///
 /// - It represents a conceptual whole (a point in time with unique identity)
 /// - It has no identity separate from its attributes
 /// - It is compared by value, not reference
@@ -275,7 +276,7 @@ impl FromStr for UuidService {
 /// # See Also
 ///
 /// - [`TimestampIdGenerator`] - For generating new IDs with monotonicity
-/// - [`UuidService`] - For the UUID component
+/// - [`Uuid`] - For the UUID component
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct TimestampId {
     /// The UTC timestamp component.
@@ -287,7 +288,7 @@ pub struct TimestampId {
     /// The unique identifier component.
     ///
     /// This provides global uniqueness even when multiple events have the same timestamp.
-    uuid: UuidService,
+    uuid: Uuid,
 }
 
 impl TimestampId {
@@ -305,7 +306,7 @@ impl TimestampId {
     /// # Returns
     ///
     /// A new `TimestampId` with the specified components.
-    pub fn new(timestamp: DateTime<Utc>, uuid: UuidService) -> Self {
+    pub fn new(timestamp: DateTime<Utc>, uuid: Uuid) -> Self {
         Self { timestamp, uuid }
     }
 
@@ -325,12 +326,11 @@ impl TimestampId {
     /// Returns a reference to the UUID component.
     ///
     /// The UUID provides global uniqueness even when multiple events share the same timestamp.
-    /// It's stored in VPR's canonical format (32 lowercase hex characters without hyphens).
     ///
     /// # Returns
     ///
-    /// A reference to the [`UuidService`] component.
-    pub fn uuid(&self) -> &UuidService {
+    /// A reference to the [`Uuid`] component.
+    pub fn uuid(&self) -> &Uuid {
         &self.uuid
     }
 }
@@ -367,29 +367,33 @@ impl FromStr for TimestampId {
     /// - The UUID is malformed
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         // Split at first hyphen to separate timestamp from UUID
-        let (ts_str, uuid_str) = s.split_once('-').ok_or_else(|| {
+        let (timestamp_str, uuid_str) = s.split_once('-').ok_or_else(|| {
             UuidError::InvalidInput(format!("Invalid timestamp ID format: '{}'", s))
         })?;
 
         // Validate that timestamp ends with 'Z' (UTC indicator)
-        if !ts_str.ends_with('Z') {
+        if !timestamp_str.ends_with('Z') {
             return Err(UuidError::InvalidInput(format!(
                 "Timestamp must end with 'Z': '{}'",
-                ts_str
+                timestamp_str
             )));
         }
 
         // Remove the 'Z' suffix before parsing
-        let ts_no_z = &ts_str[..ts_str.len() - 1];
+        let timestamp_str_no_z = &timestamp_str[..timestamp_str.len() - 1];
 
         // Parse the timestamp using chrono's format string
-        let naive =
-            chrono::NaiveDateTime::parse_from_str(ts_no_z, "%Y%m%dT%H%M%S%.3f").map_err(|e| {
-                UuidError::InvalidInput(format!("Invalid timestamp format '{}': {}", ts_str, e))
-            })?;
+        let timestamp_naive =
+            chrono::NaiveDateTime::parse_from_str(timestamp_str_no_z, "%Y%m%dT%H%M%S%.3f")
+                .map_err(|e| {
+                    UuidError::InvalidInput(format!(
+                        "Invalid timestamp format '{}': {}",
+                        timestamp_str, e
+                    ))
+                })?;
 
         // Convert to UTC DateTime
-        let timestamp = DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc);
+        let timestamp = DateTime::<Utc>::from_naive_utc_and_offset(timestamp_naive, Utc);
 
         // Parse the UUID component
         let parsed_uuid = Uuid::parse_str(uuid_str)
@@ -397,7 +401,7 @@ impl FromStr for TimestampId {
 
         Ok(Self {
             timestamp,
-            uuid: UuidService(parsed_uuid),
+            uuid: parsed_uuid,
         })
     }
 }
@@ -414,7 +418,7 @@ impl fmt::Display for TimestampId {
             f,
             "{}-{}",
             self.timestamp.format("%Y%m%dT%H%M%S%.3fZ"),
-            self.uuid.0.hyphenated()
+            self.uuid.hyphenated()
         )
     }
 }
@@ -514,14 +518,14 @@ impl fmt::Display for TimestampId {
 /// # When Not to Use
 ///
 /// Don't use this generator for:
-/// - Random identifiers (use `UuidService::new()` directly)
+/// - Random identifiers (use `Uuid::new_v4()` directly)
 /// - High-frequency events requiring sub-millisecond precision
 /// - Scenarios where logical clocks (Lamport/Vector clocks) are more appropriate
 ///
 /// # See Also
 ///
 /// - [`TimestampId`] - The value object produced by this generator
-/// - [`UuidService`] - For the UUID component
+/// - [`Uuid`] - For the UUID component
 pub struct TimestampIdGenerator;
 
 impl TimestampIdGenerator {
@@ -590,12 +594,14 @@ impl TimestampIdGenerator {
 
         let now = Utc::now();
 
+        // Ensure monotonicity: if current time hasn't advanced past the previous timestamp,
+        // increment by 1ms to guarantee strict ordering even during clock skew or rapid calls.
         let timestamp = match &previous {
             Some(prev) if now <= prev.timestamp => prev.timestamp + Duration::milliseconds(1),
             _ => now,
         };
 
-        Ok(TimestampId::new(timestamp, UuidService::new()))
+        Ok(TimestampId::new(timestamp, Uuid::new_v4()))
     }
 }
 
@@ -605,18 +611,18 @@ mod tests {
 
     #[test]
     fn test_new_generates_valid_uuid() {
-        let uuid_service = UuidService::new();
+        let uuid_service = ShardableUuid::new();
         let canonical = uuid_service.to_string();
 
         // Verify the generated UUID is in canonical form
         assert_eq!(canonical.len(), 32);
-        assert!(UuidService::is_canonical(&canonical));
+        assert!(ShardableUuid::is_canonical(&canonical));
     }
 
     #[test]
     fn test_parse_valid_canonical_uuid() {
         let canonical = "550e8400e29b41d4a716446655440000";
-        let result = UuidService::parse(canonical);
+        let result = ShardableUuid::parse(canonical);
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap().to_string(), canonical);
@@ -625,7 +631,7 @@ mod tests {
     #[test]
     fn test_parse_rejects_hyphenated_uuid() {
         let hyphenated = "550e8400-e29b-41d4-a716-446655440000";
-        let result = UuidService::parse(hyphenated);
+        let result = ShardableUuid::parse(hyphenated);
 
         assert!(result.is_err());
         match result {
@@ -639,7 +645,7 @@ mod tests {
     #[test]
     fn test_parse_rejects_uppercase_uuid() {
         let uppercase = "550E8400E29B41D4A716446655440000";
-        let result = UuidService::parse(uppercase);
+        let result = ShardableUuid::parse(uppercase);
 
         assert!(result.is_err());
     }
@@ -647,7 +653,7 @@ mod tests {
     #[test]
     fn test_parse_rejects_mixed_case_uuid() {
         let mixed = "550e8400E29b41d4A716446655440000";
-        let result = UuidService::parse(mixed);
+        let result = ShardableUuid::parse(mixed);
 
         assert!(result.is_err());
     }
@@ -655,7 +661,7 @@ mod tests {
     #[test]
     fn test_parse_rejects_too_short() {
         let short = "550e8400e29b41d4a71644665544000";
-        let result = UuidService::parse(short);
+        let result = ShardableUuid::parse(short);
 
         assert!(result.is_err());
     }
@@ -663,7 +669,7 @@ mod tests {
     #[test]
     fn test_parse_rejects_too_long() {
         let long = "550e8400e29b41d4a7164466554400000";
-        let result = UuidService::parse(long);
+        let result = ShardableUuid::parse(long);
 
         assert!(result.is_err());
     }
@@ -671,20 +677,20 @@ mod tests {
     #[test]
     fn test_parse_rejects_invalid_characters() {
         let invalid = "550e8400e29b41d4a716446655440zzz";
-        let result = UuidService::parse(invalid);
+        let result = ShardableUuid::parse(invalid);
 
         assert!(result.is_err());
     }
 
     #[test]
     fn test_is_canonical_valid() {
-        assert!(UuidService::is_canonical(
+        assert!(ShardableUuid::is_canonical(
             "550e8400e29b41d4a716446655440000"
         ));
-        assert!(UuidService::is_canonical(
+        assert!(ShardableUuid::is_canonical(
             "00000000000000000000000000000000"
         ));
-        assert!(UuidService::is_canonical(
+        assert!(ShardableUuid::is_canonical(
             "ffffffffffffffffffffffffffffffff"
         ));
     }
@@ -692,37 +698,37 @@ mod tests {
     #[test]
     fn test_is_canonical_invalid() {
         // Uppercase
-        assert!(!UuidService::is_canonical(
+        assert!(!ShardableUuid::is_canonical(
             "550E8400E29B41D4A716446655440000"
         ));
 
         // Hyphenated
-        assert!(!UuidService::is_canonical(
+        assert!(!ShardableUuid::is_canonical(
             "550e8400-e29b-41d4-a716-446655440000"
         ));
 
         // Too short
-        assert!(!UuidService::is_canonical(
+        assert!(!ShardableUuid::is_canonical(
             "550e8400e29b41d4a71644665544000"
         ));
 
         // Too long
-        assert!(!UuidService::is_canonical(
+        assert!(!ShardableUuid::is_canonical(
             "550e8400e29b41d4a7164466554400000"
         ));
 
         // Invalid characters
-        assert!(!UuidService::is_canonical(
+        assert!(!ShardableUuid::is_canonical(
             "550e8400e29b41d4a716446655440zzz"
         ));
 
         // Empty string
-        assert!(!UuidService::is_canonical(""));
+        assert!(!ShardableUuid::is_canonical(""));
     }
 
     #[test]
     fn test_sharded_dir_structure() {
-        let uuid = UuidService::parse("550e8400e29b41d4a716446655440000").unwrap();
+        let uuid = ShardableUuid::parse("550e8400e29b41d4a716446655440000").unwrap();
         let parent = Path::new("/patient_data/clinical");
         let sharded = uuid.sharded_dir(parent);
 
@@ -734,8 +740,8 @@ mod tests {
 
     #[test]
     fn test_sharded_dir_different_uuids() {
-        let uuid1 = UuidService::parse("00112233445566778899aabbccddeeff").unwrap();
-        let uuid2 = UuidService::parse("aabbccddeeff00112233445566778899").unwrap();
+        let uuid1 = ShardableUuid::parse("00112233445566778899aabbccddeeff").unwrap();
+        let uuid2 = ShardableUuid::parse("aabbccddeeff00112233445566778899").unwrap();
 
         let parent = Path::new("/data");
 
@@ -755,17 +761,17 @@ mod tests {
 
     #[test]
     fn test_display_format() {
-        let uuid = UuidService::parse("550e8400e29b41d4a716446655440000").unwrap();
+        let uuid = ShardableUuid::parse("550e8400e29b41d4a716446655440000").unwrap();
         let displayed = format!("{}", uuid);
 
         assert_eq!(displayed, "550e8400e29b41d4a716446655440000");
-        assert!(UuidService::is_canonical(&displayed));
+        assert!(ShardableUuid::is_canonical(&displayed));
     }
 
     #[test]
     fn test_from_str_valid() {
         let canonical = "550e8400e29b41d4a716446655440000";
-        let result: Result<UuidService, _> = canonical.parse();
+        let result: Result<ShardableUuid, _> = canonical.parse();
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap().to_string(), canonical);
@@ -774,14 +780,14 @@ mod tests {
     #[test]
     fn test_from_str_invalid() {
         let hyphenated = "550e8400-e29b-41d4-a716-446655440000";
-        let result: Result<UuidService, _> = hyphenated.parse();
+        let result: Result<ShardableUuid, _> = hyphenated.parse();
 
         assert!(result.is_err());
     }
 
     #[test]
     fn test_uuid_method_returns_valid_uuid() {
-        let uuid_service = UuidService::parse("550e8400e29b41d4a716446655440000").unwrap();
+        let uuid_service = ShardableUuid::parse("550e8400e29b41d4a716446655440000").unwrap();
         let inner_uuid = uuid_service.uuid();
 
         // Verify the inner UUID matches the canonical form
@@ -793,16 +799,16 @@ mod tests {
 
     #[test]
     fn test_round_trip_new_to_string_to_parse() {
-        let original = UuidService::new();
+        let original = ShardableUuid::new();
         let as_string = original.to_string();
-        let parsed = UuidService::parse(&as_string).unwrap();
+        let parsed = ShardableUuid::parse(&as_string).unwrap();
 
         assert_eq!(original, parsed);
     }
 
     #[test]
     fn test_clone_and_equality() {
-        let uuid1 = UuidService::parse("550e8400e29b41d4a716446655440000").unwrap();
+        let uuid1 = ShardableUuid::parse("550e8400e29b41d4a716446655440000").unwrap();
         let uuid2 = uuid1.clone();
 
         assert_eq!(uuid1, uuid2);
@@ -813,8 +819,8 @@ mod tests {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
-        let uuid1 = UuidService::parse("550e8400e29b41d4a716446655440000").unwrap();
-        let uuid2 = UuidService::parse("550e8400e29b41d4a716446655440000").unwrap();
+        let uuid1 = ShardableUuid::parse("550e8400e29b41d4a716446655440000").unwrap();
+        let uuid2 = ShardableUuid::parse("550e8400e29b41d4a716446655440000").unwrap();
 
         let mut hasher1 = DefaultHasher::new();
         let mut hasher2 = DefaultHasher::new();
@@ -827,7 +833,7 @@ mod tests {
 
     #[test]
     fn test_debug_format() {
-        let uuid = UuidService::parse("550e8400e29b41d4a716446655440000").unwrap();
+        let uuid = ShardableUuid::parse("550e8400e29b41d4a716446655440000").unwrap();
         let debug = format!("{:?}", uuid);
 
         // Debug format should contain the UUID value
@@ -842,8 +848,9 @@ mod tests {
 
         // Should have a valid UUID component
         let uuid_str = uid.uuid().to_string();
-        assert_eq!(uuid_str.len(), 32);
-        assert!(UuidService::is_canonical(&uuid_str));
+        assert_eq!(uuid_str.len(), 36); // Hyphenated format: 8-4-4-4-12
+                                        // Verify it's a valid UUID by parsing it
+        assert!(Uuid::parse_str(&uuid_str).is_ok());
     }
 
     #[test]
@@ -895,7 +902,10 @@ mod tests {
 
         assert!(result.is_ok());
         let uid = result.unwrap();
-        assert_eq!(uid.uuid().to_string(), "550e8400e29b41d4a716446655440000");
+        assert_eq!(
+            uid.uuid().hyphenated().to_string(),
+            "550e8400-e29b-41d4-a716-446655440000"
+        );
     }
 
     #[test]
@@ -981,7 +991,8 @@ mod tests {
 
         assert!(result.is_ok());
         let uid = result.unwrap();
-        assert!(UuidService::is_canonical(&uid.uuid().to_string()));
+        // Verify it's a valid hyphenated UUID
+        assert!(Uuid::parse_str(&uid.uuid().to_string()).is_ok());
     }
 
     #[test]

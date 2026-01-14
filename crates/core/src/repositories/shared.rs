@@ -13,7 +13,7 @@
 
 use crate::constants::CLINICAL_TEMPLATE_DIR;
 use crate::error::{PatientError, PatientResult};
-use crate::UuidService;
+use crate::ShardableUuid;
 use std::{
     fs,
     io::{self, ErrorKind},
@@ -103,11 +103,11 @@ impl TemplateDirKind {
 /// # Arguments
 ///
 /// * `base_dir` - The base records directory.
-/// * `uuid_source` - A mutable closure that generates new `UuidService` instances.
+/// * `uuid_source` - A mutable closure that generates new `ShardableUuid` instances.
 ///
 /// # Returns
 ///
-/// Returns a tuple of the allocated `UuidService` and the `PathBuf` to the created directory.
+/// Returns a tuple of the allocated `ShardableUuid` and the `PathBuf` to the created directory.
 ///
 /// # Errors
 ///
@@ -116,8 +116,8 @@ impl TemplateDirKind {
 /// - parent directory creation fails.
 pub(crate) fn create_uuid_and_shard_dir(
     base_dir: &Path,
-    mut uuid_source: impl FnMut() -> UuidService,
-) -> PatientResult<(UuidService, PathBuf)> {
+    mut uuid_source: impl FnMut() -> ShardableUuid,
+) -> PatientResult<(ShardableUuid, PathBuf)> {
     // Allocate a new UUID, but guard against pathological UUID collisions (or pre-existing
     // directories from external interference) by limiting retries.
     for _attempt in 0..5 {

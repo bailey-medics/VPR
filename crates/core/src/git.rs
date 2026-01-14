@@ -42,7 +42,7 @@
 
 use crate::author::Author;
 use crate::error::{PatientError, PatientResult};
-use crate::UuidService;
+use crate::ShardableUuid;
 use base64::{engine::general_purpose, Engine as _};
 use p256::ecdsa::signature::{Signer, Verifier};
 use p256::ecdsa::{Signature, SigningKey, VerifyingKey};
@@ -869,7 +869,7 @@ impl GitService {
         uuid: &str,
         public_key_pem: &str,
     ) -> PatientResult<bool> {
-        let uuid = UuidService::parse(uuid)?;
+        let uuid = ShardableUuid::parse(uuid)?;
         let patient_dir = uuid.sharded_dir(base_dir);
         let repo = Self::open(&patient_dir)?;
 
