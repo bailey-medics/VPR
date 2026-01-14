@@ -143,7 +143,7 @@ impl Vpr for VprService {
             },
             certificate: None,
         };
-        let clinical_service = ClinicalService::new(self.cfg.clone());
+        let clinical_service = ClinicalService::new(self.cfg.clone(), None);
         match clinical_service.initialise(author, req.care_location) {
             Ok(uuid) => {
                 let resp = pb::CreatePatientRes {

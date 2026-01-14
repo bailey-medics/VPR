@@ -46,6 +46,7 @@ use std::sync::{LazyLock, Mutex};
 #[derive(Clone)]
 pub struct ClinicalService {
     cfg: Arc<CoreConfig>,
+    clinical_id: Option<Uuid>,
 }
 
 impl ClinicalService {
@@ -54,12 +55,13 @@ impl ClinicalService {
     /// # Arguments
     ///
     /// * `cfg` - The core configuration for the service.
+    /// * `clinical_id` - Optional clinical UUID to associate with this service instance.
     ///
     /// # Returns
     ///
     /// Returns a new `ClinicalService` with the provided configuration.
-    pub fn new(cfg: Arc<CoreConfig>) -> Self {
-        Self { cfg }
+    pub fn new(cfg: Arc<CoreConfig>, clinical_id: Option<Uuid>) -> Self {
+        Self { cfg, clinical_id }
     }
 }
 
@@ -90,7 +92,16 @@ impl ClinicalService {
     /// - Git repository initialisation or the initial commit fails.
     /// - cleanup of a partially-created record directory fails.
     pub fn initialise(&self, author: Author, care_location: String) -> PatientResult<Uuid> {
+        // Prevent initialisation if a clinical_id is already set
+        if let Some(existing_id) = self.clinical_id {
+            return Err(PatientError::InvalidInput(format!(
+                "Cannot initialise a new clinical record when clinical_id is already set to {}",
+                existing_id
+            )));
+        }
+
         author.validate_commit_author()?;
+
         let commit_message = VprCommitMessage::new(
             VprCommitDomain::Record,
             VprCommitAction::Init,
@@ -155,7 +166,6 @@ impl ClinicalService {
     ///
     /// * `author` - The author information for the Git commit.
     /// * `care_location` - High-level organisational location for the commit (e.g. hospital name).
-    /// * `clinical_uuid` - The UUID of the clinical record.
     /// * `demographics_uuid` - The UUID of the associated patient demographics.
     /// * `namespace` - Optional namespace for the external reference; defaults to the
     ///   value configured in `CoreConfig`.
@@ -167,17 +177,25 @@ impl ClinicalService {
     /// # Errors
     ///
     /// Returns a `PatientError` if:
-    /// - either UUID cannot be parsed,
+    /// - `clinical_id` is not set on the service instance,
+    /// - the demographics UUID cannot be parsed,
     /// - the namespace is invalid/unsafe for embedding into a `ehr://{namespace}/mpi` URI,
     /// - writing `ehr_status.yaml` fails.
     pub fn link_to_demographics(
         &self,
         author: &Author,
         care_location: String,
-        clinical_uuid: &str,
         demographics_uuid: &str,
         namespace: Option<String>,
     ) -> PatientResult<()> {
+        // Ensure clinical_id is set
+        let clinical_uuid = self.clinical_id.ok_or_else(|| {
+            PatientError::InvalidInput(
+                "Cannot link demographics: clinical_id is not set on this service instance"
+                    .to_string(),
+            )
+        })?;
+
         author.validate_commit_author()?;
         let msg = VprCommitMessage::new(
             VprCommitDomain::Record,
@@ -185,7 +203,8 @@ impl ClinicalService {
             "EHR status linked to demographics",
             care_location,
         )?;
-        let clinical_uuid = ShardableUuid::parse(clinical_uuid)?;
+        // Convert Uuid to canonical string format and parse back to ShardableUuid
+        let clinical_uuid = ShardableUuid::parse(&clinical_uuid.simple().to_string())?;
         let demographics_uuid = ShardableUuid::parse(demographics_uuid)?;
 
         // Use the caller-provided namespace if present; otherwise fall back to the configured
@@ -566,7 +585,7 @@ mod tests {
             .expect("CoreConfig::new should succeed"),
         );
 
-        let service = ClinicalService::new(cfg);
+        let service = ClinicalService::new(cfg, None);
 
         let author = Author {
             name: " ".to_string(),
@@ -608,7 +627,7 @@ mod tests {
             .expect("CoreConfig::new should succeed"),
         );
 
-        let service = ClinicalService::new(cfg);
+        let service = ClinicalService::new(cfg, None);
 
         let author = Author {
             name: "Test Author".to_string(),
@@ -649,7 +668,7 @@ mod tests {
             .expect("CoreConfig::new should succeed"),
         );
 
-        let service = ClinicalService::new(cfg);
+        let service = ClinicalService::new(cfg, None);
         let author = Author {
             name: "Test Author".to_string(),
             role: "Clinician".to_string(),
@@ -701,7 +720,7 @@ mod tests {
             .expect("CoreConfig::new should succeed"),
         );
 
-        let service = ClinicalService::new(cfg);
+        let service = ClinicalService::new(cfg, None);
         let author = Author {
             name: "Test Author".to_string(),
             role: "Clinician".to_string(),
@@ -749,7 +768,7 @@ mod tests {
             .expect("CoreConfig::new should succeed"),
         );
 
-        let service = ClinicalService::new(cfg);
+        let service = ClinicalService::new(cfg, None);
         let author = Author {
             name: "Test Author".to_string(),
             role: "Clinician".to_string(),
@@ -804,7 +823,7 @@ mod tests {
             .expect("CoreConfig::new should succeed"),
         );
 
-        let service = ClinicalService::new(cfg);
+        let service = ClinicalService::new(cfg, None);
         let author = Author {
             name: "Test Author".to_string(),
             role: "Clinician".to_string(),
@@ -868,7 +887,7 @@ mod tests {
             .expect("CoreConfig::new should succeed"),
         );
 
-        let service = ClinicalService::new(cfg);
+        let service = ClinicalService::new(cfg, None);
         let author = Author {
             name: "Test Author".to_string(),
             role: "Clinician".to_string(),
@@ -925,7 +944,7 @@ mod tests {
             .expect("CoreConfig::new should succeed"),
         );
 
-        let service = ClinicalService::new(cfg);
+        let service = ClinicalService::new(cfg, None);
         let author = Author {
             name: "Test Author".to_string(),
             role: "Clinician".to_string(),
@@ -974,7 +993,7 @@ mod tests {
             .expect("CoreConfig::new should succeed"),
         );
 
-        let service = ClinicalService::new(cfg);
+        let service = ClinicalService::new(cfg, None);
         let author = Author {
             name: "Test Author".to_string(),
             role: "Clinician".to_string(),
@@ -1025,7 +1044,7 @@ mod tests {
             .expect("CoreConfig::new should succeed"),
         );
 
-        let service = ClinicalService::new(cfg);
+        let service = ClinicalService::new(cfg, None);
         let author = Author {
             name: "Test Author".to_string(),
             role: "Clinician".to_string(),
@@ -1080,7 +1099,7 @@ mod tests {
             )
             .expect("CoreConfig::new should succeed"),
         );
-        let service = ClinicalService::new(cfg);
+        let service = ClinicalService::new(cfg, None);
 
         let author = Author {
             name: "Test Author".to_string(),
@@ -1126,7 +1145,7 @@ mod tests {
             )
             .expect("CoreConfig::new should succeed"),
         );
-        let service = ClinicalService::new(cfg);
+        let service = ClinicalService::new(cfg, None);
 
         let author = Author {
             name: "Test Author".to_string(),
@@ -1175,7 +1194,7 @@ mod tests {
         let cert_pem = cert.pem();
 
         let cfg = test_cfg(temp_dir.path());
-        let service = ClinicalService::new(cfg);
+        let service = ClinicalService::new(cfg, None);
         let author = Author {
             name: "Test Author".to_string(),
             role: "Clinician".to_string(),
@@ -1218,7 +1237,7 @@ mod tests {
             )
             .expect("CoreConfig::new should succeed"),
         );
-        let service = ClinicalService::new(cfg);
+        let service = ClinicalService::new(cfg, None);
 
         let author = Author {
             name: "Test Author".to_string(),
@@ -1268,7 +1287,7 @@ mod tests {
             )
             .expect("CoreConfig::new should succeed"),
         );
-        let service = ClinicalService::new(cfg);
+        let service = ClinicalService::new(cfg, None);
 
         let author = Author {
             name: "Test Author".to_string(),
@@ -1312,7 +1331,7 @@ mod tests {
         };
 
         let cfg = test_cfg(temp_dir.path());
-        let service = ClinicalService::new(cfg);
+        let service = ClinicalService::new(cfg, None);
 
         // Call initialise
         let result = service.initialise(author, "Test Hospital".to_string());
@@ -1381,7 +1400,7 @@ mod tests {
 
         // Initialise clinical service
         let cfg = test_cfg(temp_dir.path());
-        let service = ClinicalService::new(cfg);
+        let service = ClinicalService::new(cfg, None);
 
         // First, initialise a clinical record
         let care_location = "Test Hospital".to_string();
@@ -1392,13 +1411,8 @@ mod tests {
 
         // Now link to demographics
         let demographics_uuid = "12345678123412341234123456789abc";
-        let result = service.link_to_demographics(
-            &author,
-            care_location,
-            &clinical_uuid_str,
-            demographics_uuid,
-            None,
-        );
+        let service = ClinicalService::new(cfg.clone(), Some(clinical_uuid));
+        let result = service.link_to_demographics(&author, care_location, demographics_uuid, None);
         assert!(result.is_ok(), "link_to_demographics should succeed");
 
         // Verify ehr_status.yaml was updated with linking information
@@ -1415,7 +1429,7 @@ mod tests {
     fn test_link_to_demographics_rejects_invalid_clinical_uuid() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let cfg = test_cfg(temp_dir.path());
-        let service = ClinicalService::new(cfg);
+        let service = ClinicalService::new(cfg, None);
 
         let author = Author {
             name: "Test Author".to_string(),
@@ -1431,7 +1445,6 @@ mod tests {
             .link_to_demographics(
                 &author,
                 care_location,
-                "not-a-canonical-uuid",
                 "12345678123412341234123456789abc",
                 None,
             )
@@ -1443,7 +1456,7 @@ mod tests {
     fn test_link_to_demographics_rejects_invalid_demographics_uuid() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let cfg = test_cfg(temp_dir.path());
-        let service = ClinicalService::new(cfg);
+        let service = ClinicalService::new(cfg, None);
 
         // Create a valid clinical record first
         let author = Author {
@@ -1461,11 +1474,11 @@ mod tests {
         let clinical_uuid_str = clinical_uuid.simple().to_string();
 
         // Try to link with invalid demographics UUID
+        let service = ClinicalService::new(cfg.clone(), Some(clinical_uuid));
         let err = service
             .link_to_demographics(
                 &author,
                 "Test Hospital".to_string(),
-                &clinical_uuid_str,
                 "invalid-demographics-uuid",
                 None,
             )
@@ -1477,7 +1490,7 @@ mod tests {
     fn test_link_to_demographics_rejects_invalid_namespace() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let cfg = test_cfg(temp_dir.path());
-        let service = ClinicalService::new(cfg);
+        let service = ClinicalService::new(cfg, None);
 
         // Create a valid clinical record
         let author = Author {
@@ -1498,11 +1511,11 @@ mod tests {
         let demographics_uuid = ShardableUuid::new();
         let demographics_uuid_str = demographics_uuid.to_string();
 
+        let service = ClinicalService::new(cfg.clone(), Some(clinical_uuid));
         let err = service
             .link_to_demographics(
                 &author,
                 "Test Hospital".to_string(),
-                &clinical_uuid_str,
                 &demographics_uuid_str,
                 Some("unsafe<namespace>with/special\\chars".to_string()),
             )
@@ -1514,7 +1527,7 @@ mod tests {
     fn test_link_to_demographics_fails_when_ehr_status_missing() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let cfg = test_cfg(temp_dir.path());
-        let service = ClinicalService::new(cfg);
+        let service = ClinicalService::new(cfg, None);
 
         // Manually create a clinical directory without ehr_status.yaml
         let clinical_dir = temp_dir.path().join(CLINICAL_DIR_NAME);
@@ -1539,11 +1552,11 @@ mod tests {
         let demographics_uuid_str = demographics_uuid.to_string();
 
         // Should fail because ehr_status.yaml doesn't exist
+        let service = ClinicalService::new(cfg.clone(), Some(clinical_uuid));
         let err = service
             .link_to_demographics(
                 &author,
                 "Test Hospital".to_string(),
-                &clinical_uuid_str,
                 &demographics_uuid_str,
                 None,
             )
@@ -1559,7 +1572,7 @@ mod tests {
     fn test_link_to_demographics_rejects_corrupted_ehr_status() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let cfg = test_cfg(temp_dir.path());
-        let service = ClinicalService::new(cfg);
+        let service = ClinicalService::new(cfg, None);
 
         // Create a clinical directory with corrupted ehr_status.yaml
         let clinical_dir = temp_dir.path().join(CLINICAL_DIR_NAME);
@@ -1588,11 +1601,11 @@ mod tests {
         let clinical_uuid_str = clinical_uuid.to_string();
         let demographics_uuid_str = demographics_uuid.to_string();
 
+        let service = ClinicalService::new(cfg.clone(), Some(clinical_uuid));
         let err = service
             .link_to_demographics(
                 &author,
                 "Test Hospital".to_string(),
-                &clinical_uuid_str,
                 &demographics_uuid_str,
                 None,
             )
@@ -1741,7 +1754,7 @@ mod tests {
         let cert_pem = cert.pem();
 
         let cfg = test_cfg(temp_dir.path());
-        let service = ClinicalService::new(cfg);
+        let service = ClinicalService::new(cfg, None);
         let author = Author {
             name: "Test Author".to_string(),
             role: "Clinician".to_string(),
@@ -1770,7 +1783,7 @@ mod tests {
             .expect("Failed to encode private key");
 
         let cfg = test_cfg(temp_dir.path());
-        let service = ClinicalService::new(cfg);
+        let service = ClinicalService::new(cfg, None);
         let author = Author {
             name: "Test Author".to_string(),
             role: "Clinician".to_string(),

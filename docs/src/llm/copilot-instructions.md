@@ -66,7 +66,7 @@ Runtime configuration and environment variables
   - Use the helpers in `crates/core/src/config.rs` to resolve/validate template and parse the RM version.
 - `crates/core` (vpr-core) must **not** read environment variables during operations.
   - Do not call `std::env::var` in core service methods or helpers.
-  - Prefer constructors like `ClinicalService::new(Arc<CoreConfig>)` and `DemographicsService::new(Arc<CoreConfig>)`.
+  - Prefer constructors like `ClinicalService::new(Arc<CoreConfig>, Option<Uuid>)` and `DemographicsService::new(Arc<CoreConfig>)`.
   - This avoids rare-but-real process-wide env races and keeps behaviour consistent within a request.
 
 Defensive programming (clinical safety)

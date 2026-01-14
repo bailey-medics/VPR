@@ -111,7 +111,7 @@ async fn main() -> anyhow::Result<()> {
     )?);
 
     let state = AppState {
-        clinical_service: Arc::new(ClinicalService::new(cfg.clone())),
+        clinical_service: Arc::new(ClinicalService::new(cfg.clone(), None)),
         demographics_service: Arc::new(DemographicsService::new(cfg)),
     };
 

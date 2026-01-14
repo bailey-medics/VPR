@@ -192,7 +192,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Start REST server
     let rest_state = AppState {
-        clinical_service: Arc::new(ClinicalService::new(cfg.clone())),
+        clinical_service: Arc::new(ClinicalService::new(cfg.clone(), None)),
         demographics_service: Arc::new(DemographicsService::new(cfg.clone())),
     };
 

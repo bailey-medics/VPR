@@ -345,7 +345,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 signature,
                 certificate: None,
             };
-            let clinical_service = ClinicalService::new(cfg.clone());
+            let clinical_service = ClinicalService::new(cfg.clone(), None);
             match clinical_service.initialise(author, care_location) {
                 Ok(uuid) => println!("Initialised clinical with UUID: {}", uuid.simple()),
                 Err(e) => eprintln!("Error initialising clinical: {}", e),
@@ -362,7 +362,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             signature,
             namespace,
         }) => {
-            let clinical_service = ClinicalService::new(cfg.clone());
+            let clinical_service = ClinicalService::new(cfg.clone(), None);
             let registrations: Vec<AuthorRegistration> = registration
                 .chunks(2)
                 .map(|chunk| AuthorRegistration {
@@ -378,10 +378,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 signature,
                 certificate: None,
             };
+            let clinical_uuid_parsed = ShardableUuid::parse(&clinical_uuid)
+                .map_err(|e| eprintln!("Error parsing clinical UUID: {}", e))
+                .ok();
+            let clinical_service =
+                ClinicalService::new(cfg.clone(), clinical_uuid_parsed.map(|u| u.uuid()));
             match clinical_service.link_to_demographics(
                 &author,
                 care_location,
-                &clinical_uuid,
                 &demographics_uuid,
                 namespace,
             ) {
