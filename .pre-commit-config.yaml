@@ -1,31 +1,20 @@
 repos:
   # cspell (spelling for identifiers, filenames, comments)
   - repo: https://github.com/streetsidesoftware/cspell-cli
-    rev: v8.13.0   # use a stable tag
+    rev: v8.13.0 # use a stable tag
     hooks:
       - id: cspell
         args: ["--no-progress", "--config", "cspell.config.json"]
 
-  # cargo fmt (formatting check)
+  # cargo fmt (auto-format)
   - repo: local
     hooks:
-      - id: cargo-fmt-check
-        name: cargo fmt (check)
-        entry: bash -c 'source ~/.cargo/env && cargo fmt --all -- --check'
-        language: system
-        types: [rust]
-        pass_filenames: false
-
-  # cargo fmt (auto-fix)
-  - repo: local
-    hooks:
-      - id: cargo-fmt-fix
-        name: cargo fmt (fix)
+      - id: cargo-fmt
+        name: cargo fmt
         entry: bash -c 'source ~/.cargo/env && cargo fmt --all'
         language: system
         types: [rust]
         pass_filenames: false
-        stages: [manual]
 
   # cargo clippy (linting)
   - repo: local
