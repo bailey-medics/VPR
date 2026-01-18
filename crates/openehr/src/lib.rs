@@ -208,7 +208,7 @@ impl Letter {
     pub fn composition_parse(
         rm_version: RmVersion,
         yaml_text: &str,
-    ) -> Result<rm_1_1_0::letter::Letter, OpenEhrError> {
+    ) -> Result<rm_1_1_0::letter::Composition, OpenEhrError> {
         match rm_version {
             RmVersion::rm_1_1_0 => rm_1_1_0::letter::composition_parse(yaml_text),
         }

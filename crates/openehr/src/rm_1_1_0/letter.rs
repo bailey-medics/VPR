@@ -15,7 +15,7 @@
 use super::MODULE_RM_VERSION;
 use crate::data_types::DvText;
 use crate::OpenEhrError;
-use chrono::{DateTime, SecondsFormat, Utc};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use vpr_uuid::TimestampId;
 
@@ -26,7 +26,7 @@ use vpr_uuid::TimestampId;
 /// - Optional RM fields are represented as `Option<T>`.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct Letter {
+pub struct Composition {
     pub rm_version: String,
     pub uid: String,
     pub archetype_node_id: String,
@@ -37,21 +37,31 @@ pub struct Letter {
     pub content: Vec<ContentItem>,
 }
 
-impl Letter {
-    /// Convert this Letter to its YAML string representation.
+impl Composition {
+    /// Convert this Composition to its YAML string representation.
     ///
     /// # Returns
     ///
-    /// Returns a YAML string representation of this Letter.
+    /// Returns a YAML string representation of this Composition.
     ///
     /// # Errors
     ///
     /// Returns [`OpenEhrError`] if serialisation fails.
     pub fn to_string(&self) -> Result<String, OpenEhrError> {
-        serde_yaml::to_string(self)
-            .map_err(|e| OpenEhrError::Translation(format!("Failed to serialize Letter: {}", e)))
+        serde_yaml::to_string(self).map_err(|e| {
+            OpenEhrError::Translation(format!("Failed to serialize Composition: {}", e))
+        })
     }
 }
+
+/// Default archetype node ID for COMPOSITION (letter).
+pub const ARCHETYPE_NODE_ID: &str = "openEHR-EHR-COMPOSITION.correspondence.v1";
+
+/// Default name for COMPOSITION (letter).
+pub const NAME: &str = "Clinical letter";
+
+/// Default category for COMPOSITION (letter).
+pub const CATEGORY: &str = "event";
 
 /// Composer information for the letter.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -65,7 +75,7 @@ pub struct Composer {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Context {
-    pub start_time: String,
+    pub start_time: DateTime<Utc>,
 }
 
 /// Content item wrapper (can be a section).
@@ -84,6 +94,12 @@ pub struct Section {
     pub items: Vec<SectionItem>,
 }
 
+/// Default archetype node ID for SECTION (correspondence).
+pub const SECTION_ARCHETYPE_NODE_ID: &str = "openEHR-EHR-SECTION.correspondence.v1";
+
+/// Default name for SECTION (correspondence).
+pub const SECTION_NAME: &str = "Correspondence";
+
 /// Section item wrapper (can be an evaluation).
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -99,6 +115,12 @@ pub struct Evaluation {
     pub name: DvText,
     pub data: EvaluationData,
 }
+
+/// Default archetype node ID for Evaluation (clinical correspondence).
+pub const EVALUATION_ARCHETYPE_NODE_ID: &str = "openEHR-EHR-EVALUATION.clinical_correspondence.v1";
+
+/// Default name for Evaluation (clinical correspondence).
+pub const EVALUATION_NAME: &str = "Clinical correspondence";
 
 /// Evaluation data wrapper.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -116,10 +138,16 @@ pub struct Narrative {
     pub path: String,
 }
 
+/// Default type for external text narrative.
+pub const NARRATIVE_TYPE: &str = "external_text";
+
+/// Default path for narrative body.
+pub const NARRATIVE_PATH: &str = "./body.md";
+
 /// Parse an RM 1.x `COMPOSITION` (letter) from YAML text.
 ///
 /// This uses `serde_path_to_error` to surface a best-effort "path" (e.g. `composer.name`)
-/// to the failing field when the YAML does not match the `Letter` wire schema.
+/// to the failing field when the YAML does not match the `Composition` wire schema.
 ///
 /// # Arguments
 ///
@@ -127,7 +155,7 @@ pub struct Narrative {
 ///
 /// # Returns
 ///
-/// Returns a valid [`Letter`] on success.
+/// Returns a valid [`Composition`] on success.
 ///
 /// # Errors
 ///
@@ -135,7 +163,7 @@ pub struct Narrative {
 /// - the YAML does not represent a `COMPOSITION` (letter) mapping,
 /// - any field has an unexpected type,
 /// - any unknown keys are present (due to `#[serde(deny_unknown_fields)]`).
-pub fn composition_parse(yaml_text: &str) -> Result<Letter, OpenEhrError> {
+pub fn composition_parse(yaml_text: &str) -> Result<Composition, OpenEhrError> {
     let deserializer = serde_yaml::Deserializer::from_str(yaml_text);
 
     match serde_path_to_error::deserialize(deserializer) {
@@ -149,7 +177,7 @@ pub fn composition_parse(yaml_text: &str) -> Result<Letter, OpenEhrError> {
                 path.as_str()
             };
             Err(OpenEhrError::Translation(format!(
-                "Letter schema mismatch at {path}: {source}"
+                "Composition schema mismatch at {path}: {source}"
             )))
         }
     }
@@ -170,7 +198,7 @@ pub fn composition_parse(yaml_text: &str) -> Result<Letter, OpenEhrError> {
 ///
 /// # Returns
 ///
-/// Returns YAML text representing a valid [`Letter`] on success.
+/// Returns YAML text representing a valid [`Composition`] on success.
 ///
 /// # Errors
 ///
@@ -201,7 +229,7 @@ pub fn composition_render(
                 letter.composer.role = role.to_string();
             }
             if let Some(time) = start_time {
-                letter.context.start_time = time.to_rfc3339_opts(SecondsFormat::Secs, true);
+                letter.context.start_time = time;
             }
 
             letter.to_string()
@@ -210,21 +238,21 @@ pub fn composition_render(
             // Create a new letter - uses MODULE_RM_VERSION for this module
             let version = MODULE_RM_VERSION.as_str();
             let id = uid.map(|id| id.to_string()).ok_or_else(|| {
-                OpenEhrError::Translation("Cannot create Letter: uid is required".to_string())
+                OpenEhrError::Translation("Cannot create Composition: uid is required".to_string())
             })?;
             let name = composer_name.ok_or_else(|| {
                 OpenEhrError::Translation(
-                    "Cannot create Letter: composer_name is required".to_string(),
+                    "Cannot create Composition: composer_name is required".to_string(),
                 )
             })?;
             let role = composer_role.ok_or_else(|| {
                 OpenEhrError::Translation(
-                    "Cannot create Letter: composer_role is required".to_string(),
+                    "Cannot create Composition: composer_role is required".to_string(),
                 )
             })?;
             let time = start_time.ok_or_else(|| {
                 OpenEhrError::Translation(
-                    "Cannot create Letter: start_time is required".to_string(),
+                    "Cannot create Composition: start_time is required".to_string(),
                 )
             })?;
 
@@ -235,7 +263,7 @@ pub fn composition_render(
 
 /// Create a new RM 1.x `COMPOSITION` (letter) wire struct from provided values.
 ///
-/// This creates a new Letter with default structure and provided values.
+/// This creates a new Composition with default structure and provided values.
 ///
 /// # Arguments
 ///
@@ -247,48 +275,45 @@ pub fn composition_render(
 ///
 /// # Returns
 ///
-/// Returns a new [`Letter`] wire struct.
+/// Returns a new [`Composition`] wire struct.
 fn letter_init(
     rm_version: &str,
     uid: &str,
     composer_name: &str,
     composer_role: &str,
     start_time: DateTime<Utc>,
-) -> Letter {
-    Letter {
+) -> Composition {
+    Composition {
         rm_version: rm_version.to_string(),
         uid: uid.to_string(),
-        archetype_node_id: "openEHR-EHR-COMPOSITION.correspondence.v1".to_string(),
+        archetype_node_id: ARCHETYPE_NODE_ID.to_string(),
         name: DvText {
-            value: "Clinical letter".to_string(),
+            value: NAME.to_string(),
         },
         category: DvText {
-            value: "event".to_string(),
+            value: CATEGORY.to_string(),
         },
         composer: Composer {
             name: composer_name.to_string(),
             role: composer_role.to_string(),
         },
-        context: Context {
-            start_time: start_time.to_rfc3339_opts(SecondsFormat::Secs, true),
-        },
+        context: Context { start_time },
         content: vec![ContentItem {
             section: Section {
-                archetype_node_id: "openEHR-EHR-SECTION.correspondence.v1".to_string(),
+                archetype_node_id: SECTION_ARCHETYPE_NODE_ID.to_string(),
                 name: DvText {
-                    value: "Correspondence".to_string(),
+                    value: SECTION_NAME.to_string(),
                 },
                 items: vec![SectionItem {
                     evaluation: Evaluation {
-                        archetype_node_id: "openEHR-EHR-EVALUATION.clinical_correspondence.v1"
-                            .to_string(),
+                        archetype_node_id: EVALUATION_ARCHETYPE_NODE_ID.to_string(),
                         name: DvText {
-                            value: "Clinical correspondence".to_string(),
+                            value: EVALUATION_NAME.to_string(),
                         },
                         data: EvaluationData {
                             narrative: Narrative {
-                                type_: "external_text".to_string(),
-                                path: "./body.md".to_string(),
+                                type_: NARRATIVE_TYPE.to_string(),
+                                path: NARRATIVE_PATH.to_string(),
                             },
                         },
                     },
@@ -460,7 +485,7 @@ content:
         );
         assert_eq!(result.composer.name, "Dr John Doe");
         assert_eq!(result.composer.role, "Senior Consultant");
-        assert_eq!(result.context.start_time, "2026-01-13T15:30:00Z");
+        assert_eq!(result.context.start_time, start_time);
     }
 
     #[test]
@@ -506,7 +531,12 @@ content:
         );
         assert_eq!(result.composer.name, "Dr Updated Name");
         assert_eq!(result.composer.role, "Consultant Physician");
-        assert_eq!(result.context.start_time, "2026-01-12T10:14:00Z");
+        assert_eq!(
+            result.context.start_time,
+            DateTime::parse_from_rfc3339("2026-01-12T10:14:00Z")
+                .unwrap()
+                .with_timezone(&Utc)
+        );
     }
 
     #[test]
@@ -518,19 +548,16 @@ content:
 
         assert_eq!(letter.rm_version, "1.0.4");
         assert_eq!(letter.uid, "test-uid");
-        assert_eq!(
-            letter.archetype_node_id,
-            "openEHR-EHR-COMPOSITION.correspondence.v1"
-        );
-        assert_eq!(letter.name.value, "Clinical letter");
-        assert_eq!(letter.category.value, "event");
+        assert_eq!(letter.archetype_node_id, ARCHETYPE_NODE_ID);
+        assert_eq!(letter.name.value, NAME);
+        assert_eq!(letter.category.value, CATEGORY);
         assert_eq!(letter.composer.name, "Dr Test");
         assert_eq!(letter.composer.role, "Test Role");
-        assert_eq!(letter.context.start_time, "2026-01-12T00:00:00Z");
+        assert_eq!(letter.context.start_time, start_time);
         assert_eq!(letter.content.len(), 1);
         assert_eq!(
             letter.content[0].section.archetype_node_id,
-            "openEHR-EHR-SECTION.correspondence.v1"
+            SECTION_ARCHETYPE_NODE_ID
         );
     }
 
@@ -598,12 +625,9 @@ content:
         );
         assert_eq!(result.composer.name, "Dr New");
         assert_eq!(result.composer.role, "New Role");
-        assert_eq!(result.context.start_time, "2026-01-12T10:00:00Z");
-        assert_eq!(
-            result.archetype_node_id,
-            "openEHR-EHR-COMPOSITION.correspondence.v1"
-        );
-        assert_eq!(result.name.value, "Clinical letter");
-        assert_eq!(result.category.value, "event");
+        assert_eq!(result.context.start_time, start_time);
+        assert_eq!(result.archetype_node_id, ARCHETYPE_NODE_ID);
+        assert_eq!(result.name.value, NAME);
+        assert_eq!(result.category.value, CATEGORY);
     }
 }
