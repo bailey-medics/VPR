@@ -31,15 +31,7 @@ use std::path::{Path, PathBuf};
 
 use crate::TimestampId;
 
-/// Top-level clinical correspondence directory.
-///
-/// This is a fixed path invariant relative to the patient repository root.
-#[derive(Debug, Clone, Copy)]
-pub struct CorrespondenceDir;
-
-impl CorrespondenceDir {
-    pub const NAME: &'static str = "correspondence";
-}
+use super::common::CorrespondenceDir;
 
 /// Letter-based correspondence subdirectory.
 ///

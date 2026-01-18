@@ -106,7 +106,7 @@ impl DemographicsService {
         let repo = GitService::init(&patient_dir)?;
         let msg = VprCommitMessage::new(
             VprCommitDomain::Record,
-            VprCommitAction::Init,
+            VprCommitAction::Create,
             "Demographics record created",
             care_location,
         )?;

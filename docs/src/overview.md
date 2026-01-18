@@ -58,9 +58,38 @@ This structure recreates the layered design of openEHR – a clear distinction b
 
 ### Versioning and Audit Trail
 
-Every change to the VPR is committed using Git. Nothing is deleted or lost – a full cryptographic audit trail is preserved. If information is mistakenly entered into the wrong patient's record, it is removed from view, encrypted, and stored securely in a restricted central audit layer. A non-human-readable hash remains in the original record, maintaining traceability without exposing sensitive data.
+Every change to the VPR is committed using Git. **Nothing is deleted or lost** – a full cryptographic audit trail is preserved. This immutability is fundamental to patient safety, clinical governance, and legal compliance.
 
-This guarantees auditability, safety, and trust – even in the face of human error.
+#### The Four Commit Actions
+
+VPR uses a controlled vocabulary for all changes:
+
+- **Create**: Adding new content (new letter, observation, diagnosis, or record initialization)
+- **Update**: Modifying existing content (corrections, amendments, demographic updates)
+- **Superseded**: When newer clinical information replaces previous content (revised diagnoses, updated care plans)
+- **Redact**: The only action that removes data from view - used when data is entered into the wrong patient's repository (clinical, demographics, or coordination)
+
+#### How Redaction Works
+
+When data is mistakenly entered into the wrong patient's repository:
+
+1. The data is removed from the active view
+2. It is encrypted and stored securely in the Redaction Retention Repository
+3. A non-human-readable tombstone/pointer remains in the original Git history
+4. The commit records the redaction action with full audit metadata
+
+This process maintains complete traceability without exposing sensitive data, ensuring both patient privacy and audit compliance.
+
+#### What VPR Never Does
+
+VPR **never deletes data** from version control history. Even redacted data is moved to secure storage rather than destroyed. This guarantees:
+
+- **Patient Safety**: All changes are traceable to specific authors at specific times
+- **Legal Compliance**: Complete audit trail meets regulatory requirements
+- **Clinical Governance**: Full accountability for all modifications
+- **Research Value**: Historical data remains available for authorized use
+
+This immutability ensures auditability, safety, and trust – even in the face of human error.
 
 ### Export and Portability
 
@@ -86,4 +115,4 @@ The VPR extends the above principles further. The VPR provides a longitudinal, v
 NHS (2025). 'Personal health records'. Available at: [https://www.nhs.uk/nhs-app/nhs-app-help-and-support/health-records-in-the-nhs-app/personal-health-records/](https://www.nhs.uk/nhs-app/nhs-app-help-and-support/health-records-in-the-nhs-app/personal-health-records/) (Accessed: 5 Nov. 2025).
 
 <span id="weed-1964"></span>
-WEED, L.L. (1964). 'MEDICAL RECORDS, PATIENT CARE, AND MEDICAL EDUCATION', *It. J. Med. Sc.*, 462, pp. 271-82.
+WEED, L.L. (1964). 'MEDICAL RECORDS, PATIENT CARE, AND MEDICAL EDUCATION', _It. J. Med. Sc._, 462, pp. 271-82.

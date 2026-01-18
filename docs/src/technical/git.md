@@ -1,8 +1,79 @@
-
 # Git versioning and commit signatures
 
 VPR stores each patient record as files on disk, and uses a **Git repository per patient directory** to version changes.
 This enables history, diffs, and (optionally) cryptographic signing of commits.
+
+## Immutability and Audit Trail Philosophy
+
+### Core Principle: Nothing is Ever Deleted
+
+VPR maintains a **completely immutable audit trail**. Nothing is ever truly deleted from the version control history.
+This fundamental design choice ensures:
+
+- **Patient Safety**: Every change is traceable to a specific author at a specific time
+- **Legal Compliance**: Complete audit trail meets regulatory requirements
+- **Clinical Governance**: Full accountability for all modifications
+- **Research and Quality**: Historical data remains available for authorized retrospective analysis
+
+### Commit Actions and Their Meaning
+
+VPR uses a controlled vocabulary for commit actions, each with specific semantics:
+
+#### `Create`
+
+Used when adding new content to an existing record. Examples:
+
+- Creating a new clinical letter
+- Adding a new observation
+- Recording a new diagnosis
+- Initializing a new patient record
+
+This is the most common action for new data entry.
+
+#### `Update`
+
+Used when modifying existing content. Examples:
+
+- Correcting a typo in a letter
+- Updating patient demographics (address change, name change)
+- Linking demographics to clinical records
+- Amending administrative details
+
+The previous version remains in Git history and can be compared via diff.
+
+#### `Superseded`
+
+Used when newer clinical information makes previous content obsolete. Examples:
+
+- A revised diagnosis based on new test results
+- An updated care plan
+- Replacement of preliminary findings with final results
+
+This is distinct from `Update` as it represents a clinical decision that previous information
+should be replaced rather than corrected. The superseded content remains in history but is
+marked as no longer current for clinical decision-making.
+
+#### `Redact`
+
+Used when data was entered into the wrong patient's repository by mistake. This can occur
+in any of the three repositories: clinical, demographics, or coordination. This is the
+**only action that removes data from active view**. The process:
+
+1. Data is removed from the patient's active record
+2. Data is encrypted and moved to the Redaction Retention Repository
+3. A non-human-readable tombstone/pointer remains in the Git history
+4. The commit message records the redaction action for audit purposes
+
+Even redacted data is preserved in secure storage and remains accessible to authorized
+auditors, ensuring complete traceability while protecting patient privacy.
+
+### What This Means in Practice
+
+- **Every change is preserved**: Git commits form an unbroken chain from initialization to present
+- **Diffs show what changed**: You can compare any two points in time
+- **Authors are accountable**: Each commit is signed (optionally cryptographically) with author metadata
+- **No data loss**: Even mistakes are preserved in history, allowing forensic analysis if needed
+- **Audit compliance**: Regulators can verify that no data has been improperly deleted
 
 ## Where Git repos live
 

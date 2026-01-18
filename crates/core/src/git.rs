@@ -157,29 +157,65 @@ impl fmt::Display for VprCommitDomain {
 /// These define the specific operation being performed on patient data.
 /// Actions are designed to be machine-readable and support audit trails.
 ///
-/// Safety/intent: Do not include patient identifiers or raw clinical data in commit messages.
+/// # Immutability Philosophy
+///
+/// VPR maintains an **immutable audit trail** - nothing is ever truly deleted from the
+/// version control history. This ensures complete auditability and supports patient safety
+/// by preserving all changes made to a record.
+///
+/// # Commit Actions
+///
+/// - **`Create`**: Used when adding new content to an existing record (e.g., creating a new
+///   letter, adding a new observation, initializing a new patient record). This is the
+///   most common action for new data entry.
+///
+/// - **`Update`**: Used when modifying existing content (e.g., correcting a typo in a letter,
+///   updating demographics, linking records). The previous version remains in Git history.
+///
+/// - **`Superseded`**: Used when newer information makes previous content obsolete
+///   (e.g., a revised diagnosis, an updated care plan). The superseded content remains
+///   in history but is marked as no longer current. This is distinct from `Update` as it
+///   represents a clinical decision that previous information should be replaced rather
+///   than corrected.
+///
+/// - **`Redact`**: Used when data was entered into the wrong patient's repository
+///   by mistake (can occur in clinical, demographics, or coordination repositories).
+///   The data is removed from the current view, encrypted, and stored in the
+///   Redaction Retention Repository with a tombstone/pointer remaining in the original
+///   repository's Git history. This maintains audit trail integrity while protecting
+///   patient privacy. **This is the only action that removes data from active view**,
+///   but even redacted data is preserved in secure storage for audit purposes.
+///
+/// # What VPR Never Does
+///
+/// VPR **never deletes data** from the version control history. Even redacted data is
+/// moved to secure storage rather than destroyed. This immutability is fundamental to:
+///
+/// - Patient safety: all changes are traceable
+/// - Legal compliance: complete audit trail preservation
+/// - Clinical governance: accountability for all modifications
+/// - Research and quality improvement: historical data remains available for authorized use
+///
+/// # Safety/Intent
+///
+/// Do not include patient identifiers or raw clinical data in commit messages.
+/// Use structured trailers for metadata only.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum VprCommitAction {
-    Init,
-    Add,
+    Create,
     Update,
-    Remove,
-    Correct,
-    Verify,
-    Close,
+    Superseded,
+    Redact,
 }
 
 impl VprCommitAction {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
-            Self::Init => "init",
-            Self::Add => "add",
+            Self::Create => "create",
             Self::Update => "update",
-            Self::Remove => "remove",
-            Self::Correct => "correct",
-            Self::Verify => "verify",
-            Self::Close => "close",
+            Self::Superseded => "superseded",
+            Self::Redact => "redact",
         }
     }
 }
@@ -969,15 +1005,15 @@ mod tests {
 
     #[test]
     fn action_serialises_lowercase() {
-        let s = serde_json::to_string(&VprCommitAction::Init).unwrap();
-        assert_eq!(s, "\"init\"");
+        let s = serde_json::to_string(&VprCommitAction::Create).unwrap();
+        assert_eq!(s, "\"create\"");
     }
 
     #[test]
     fn can_get_domain() {
         let msg = VprCommitMessage::new(
             VprCommitDomain::Record,
-            VprCommitAction::Init,
+            VprCommitAction::Create,
             "test",
             "location",
         )
@@ -989,19 +1025,19 @@ mod tests {
     fn can_get_action() {
         let msg = VprCommitMessage::new(
             VprCommitDomain::Record,
-            VprCommitAction::Init,
+            VprCommitAction::Create,
             "test",
             "location",
         )
         .unwrap();
-        assert_eq!(msg.action(), VprCommitAction::Init);
+        assert_eq!(msg.action(), VprCommitAction::Create);
     }
 
     #[test]
     fn can_get_summary() {
         let msg = VprCommitMessage::new(
             VprCommitDomain::Record,
-            VprCommitAction::Init,
+            VprCommitAction::Create,
             "test summary",
             "location",
         )
@@ -1013,7 +1049,7 @@ mod tests {
     fn can_get_trailers() {
         let msg = VprCommitMessage::new(
             VprCommitDomain::Record,
-            VprCommitAction::Init,
+            VprCommitAction::Create,
             "test",
             "location",
         )
@@ -1072,14 +1108,14 @@ mod tests {
     fn render_without_trailers_is_single_line() {
         let msg = VprCommitMessage::new(
             VprCommitDomain::Record,
-            VprCommitAction::Init,
+            VprCommitAction::Create,
             "Patient record created",
             "St Elsewhere Hospital",
         )
         .unwrap();
         assert_eq!(
             msg.render().unwrap(),
-            "record:init: Patient record created\n\nCare-Location: St Elsewhere Hospital"
+            "record:create: Patient record created\n\nCare-Location: St Elsewhere Hospital"
         );
     }
 
@@ -1087,7 +1123,7 @@ mod tests {
     fn render_with_trailers_matches_git_trailer_format() {
         let msg = VprCommitMessage::new(
             VprCommitDomain::Record,
-            VprCommitAction::Init,
+            VprCommitAction::Create,
             "Patient record created",
             "St Elsewhere Hospital",
         )
@@ -1099,7 +1135,7 @@ mod tests {
 
         assert_eq!(
             msg.render().unwrap(),
-            "record:init: Patient record created\n\nCare-Location: St Elsewhere Hospital\nAuthority: GMC\nChange-Reason: Correction"
+            "record:create: Patient record created\n\nCare-Location: St Elsewhere Hospital\nAuthority: GMC\nChange-Reason: Correction"
         );
     }
 
@@ -1116,7 +1152,7 @@ mod tests {
 
         let msg = VprCommitMessage::new(
             VprCommitDomain::Record,
-            VprCommitAction::Init,
+            VprCommitAction::Create,
             "Patient record created",
             "St Elsewhere Hospital",
         )
@@ -1126,7 +1162,7 @@ mod tests {
 
         assert_eq!(
             msg.render_with_author(&author).unwrap(),
-            "record:init: Patient record created\n\nAuthor-Name: Test Author\nAuthor-Role: Clinician\nCare-Location: St Elsewhere Hospital\nChange-Reason: Init"
+            "record:create: Patient record created\n\nAuthor-Name: Test Author\nAuthor-Role: Clinician\nCare-Location: St Elsewhere Hospital\nChange-Reason: Init"
         );
     }
 
@@ -1134,7 +1170,7 @@ mod tests {
     fn rejects_multiline_summary() {
         let err = VprCommitMessage::new(
             VprCommitDomain::Record,
-            VprCommitAction::Init,
+            VprCommitAction::Create,
             "line1\nline2",
             "St Elsewhere Hospital",
         )
@@ -1147,7 +1183,7 @@ mod tests {
     fn rejects_missing_care_location() {
         let err = VprCommitMessage::new(
             VprCommitDomain::Record,
-            VprCommitAction::Init,
+            VprCommitAction::Create,
             "Patient record created",
             "   ",
         )
@@ -1160,7 +1196,7 @@ mod tests {
     fn rejects_multiline_care_location() {
         let err = VprCommitMessage::new(
             VprCommitDomain::Record,
-            VprCommitAction::Init,
+            VprCommitAction::Create,
             "Patient record created",
             "St Elsewhere\nHospital",
         )

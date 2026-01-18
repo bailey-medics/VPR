@@ -18,6 +18,7 @@ use crate::config::CoreConfig;
 use crate::constants::CLINICAL_DIR_NAME;
 use crate::error::{PatientError, PatientResult};
 use crate::git::{GitService, VprCommitAction, VprCommitDomain, VprCommitMessage};
+use crate::paths::clinical::letter::LetterPaths;
 use crate::repositories::shared::{
     copy_dir_recursive, create_uuid_and_shard_dir, validate_template, TemplateDirKind,
 };
@@ -72,6 +73,27 @@ pub struct Uninitialised;
 #[derive(Clone, Copy, Debug)]
 pub struct Initialised {
     clinical_id: Uuid,
+}
+
+/// Result of creating a new letter.
+///
+/// Contains the generated paths and input data for verification and testing.
+#[derive(Debug, Clone)]
+pub struct LetterResult {
+    /// Full path to the letter's body.md file
+    pub body_md_path: PathBuf,
+    /// Author name
+    pub author_name: String,
+    /// Author role
+    pub author_role: String,
+    /// Author email
+    pub author_email: String,
+    /// The care location provided
+    pub care_location: String,
+    /// The letter content provided
+    pub letter_content: String,
+    /// The generated timestamp ID
+    pub timestamp_id: String,
 }
 
 /// Service for managing clinical record operations.
@@ -200,7 +222,7 @@ impl ClinicalService<Uninitialised> {
 
         let commit_message = VprCommitMessage::new(
             VprCommitDomain::Record,
-            VprCommitAction::Init,
+            VprCommitAction::Create,
             "Initialised the clinical record",
             care_location,
         )?;
@@ -361,13 +383,39 @@ impl ClinicalService<Initialised> {
         care_location: String,
         letter_content: String,
     ) -> PatientResult<String> {
-        let timestamp_id = TimestampIdGenerator::generate(None)?;
+        author.validate_commit_author()?;
 
-        let result = format!(
-            "Author: {} ({}), Email: {}, Location: {}, Content: {}, TimestampID: {}",
-            author.name, author.role, author.email, care_location, letter_content, timestamp_id
-        );
-        Ok(result)
+        let msg = VprCommitMessage::new(
+            VprCommitDomain::Record,
+            VprCommitAction::Create,
+            "Created new letter",
+            care_location,
+        )?;
+
+        let timestamp_id = TimestampIdGenerator::generate(None)?;
+        let letter_paths = LetterPaths::new(&timestamp_id);
+
+        let clinical_uuid = ShardableUuid::parse(&self.clinical_id().simple().to_string())?;
+        let patient_dir = self.clinical_patient_dir(&clinical_uuid);
+
+        let body_md_relative = letter_paths.body_md();
+
+        // Create the parent directory if it doesn't exist
+        let body_md_full_path = patient_dir.join(&body_md_relative);
+        if let Some(parent) = body_md_full_path.parent() {
+            fs::create_dir_all(parent).map_err(PatientError::FileWrite)?;
+        }
+
+        self.write_and_commit_file(
+            author,
+            &msg,
+            &body_md_relative,
+            &patient_dir,
+            &letter_content,
+            None,
+        )?;
+
+        Ok(timestamp_id.to_string())
     }
 }
 
@@ -2006,13 +2054,13 @@ mod tests {
         );
 
         assert!(result.is_ok(), "new_letter should return Ok");
-        let output = result.unwrap();
-        println!("{}", output);
-        assert!(output.contains("Test Author"));
-        assert!(output.contains("Clinician"));
-        assert!(output.contains("test@example.com"));
-        assert!(output.contains("Test Hospital"));
-        assert!(output.contains("Letter content"));
-        assert!(output.contains("TimestampID:"));
+        let timestamp_id = result.unwrap();
+        println!("Timestamp ID: {}", timestamp_id);
+
+        assert!(!timestamp_id.is_empty());
+        assert!(
+            timestamp_id.contains("Z-"),
+            "timestamp_id should contain 'Z-' separator"
+        );
     }
 }
