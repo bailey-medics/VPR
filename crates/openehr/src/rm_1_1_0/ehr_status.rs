@@ -210,7 +210,7 @@ pub(crate) fn ehr_status_render(
     ehr_id: Option<&EhrId>,
     external_refs: Option<Vec<ExternalReference>>,
 ) -> Result<String, OpenEhrError> {
-    let previous_yaml = previous_data.map(ehr_status_parse_full).transpose()?;
+    let previous_yaml = previous_data.map(ehr_status_parse).transpose()?;
 
     if previous_yaml.is_none() && ehr_id.is_none() {
         return Err(OpenEhrError::Translation(
@@ -269,7 +269,7 @@ pub(crate) fn ehr_status_render(
 /// - the YAML does not represent an `EHR_STATUS` mapping,
 /// - any field has an unexpected type,
 /// - any unknown keys are present (due to `#[serde(deny_unknown_fields)]`).
-fn ehr_status_parse_full(yaml_text: &str) -> Result<EhrStatus, OpenEhrError> {
+pub fn ehr_status_parse(yaml_text: &str) -> Result<EhrStatus, OpenEhrError> {
     let deserializer = serde_yaml::Deserializer::from_str(yaml_text);
 
     match serde_path_to_error::deserialize(deserializer) {
@@ -363,9 +363,9 @@ is_queryable: true
 is_modifiable: true
 "#;
 
-        let component = ehr_status_parse_full(input).expect("parse yaml");
+        let component = ehr_status_parse(input).expect("parse yaml");
         let output = serde_yaml::to_string(&component).expect("write yaml");
-        let reparsed = ehr_status_parse_full(&output).expect("reparse yaml");
+        let reparsed = ehr_status_parse(&output).expect("reparse yaml");
         assert_eq!(component, reparsed);
     }
 
@@ -393,7 +393,7 @@ is_modifiable: true
 unexpected_top_level_key: true
 "#;
 
-        let err = ehr_status_parse_full(input).expect_err("should reject unknown key");
+        let err = ehr_status_parse(input).expect_err("should reject unknown key");
         match err {
             OpenEhrError::Translation(msg) => {
                 assert!(msg.contains("unexpected_top_level_key"));
@@ -418,7 +418,7 @@ is_queryable: "true"
 is_modifiable: true
 "#;
 
-        let err = ehr_status_parse_full(wrong_type).expect_err("should reject wrong type");
+        let err = ehr_status_parse(wrong_type).expect_err("should reject wrong type");
         match err {
             OpenEhrError::Translation(msg) => {
                 assert!(msg.contains("is_queryable"));
@@ -443,7 +443,7 @@ is_queryable: true
 is_modifiable: true
 "#;
 
-        let result = ehr_status_parse_full(minimal).expect("should parse minimal YAML");
+        let result = ehr_status_parse(minimal).expect("should parse minimal YAML");
         assert_eq!(result.ehr_id.value, "1166765a406a4552ac9b8e141931a3dc");
         assert!(result.subject.external_ref.0.is_empty());
     }
@@ -474,7 +474,7 @@ is_queryable: true
 is_modifiable: true
 "#;
 
-        let result = ehr_status_parse_full(multiple_refs).expect("should parse multiple refs");
+        let result = ehr_status_parse(multiple_refs).expect("should parse multiple refs");
         assert_eq!(result.subject.external_ref.0.len(), 2);
     }
 
@@ -493,7 +493,7 @@ is_queryable: true
 is_modifiable: true
 "#;
 
-        let wire = ehr_status_parse_full(invalid_uuid).expect("should parse YAML structure");
+        let wire = ehr_status_parse(invalid_uuid).expect("should parse YAML structure");
         let err = uuid::Uuid::parse_str(&wire.ehr_id.value)
             .map_err(|_| OpenEhrError::Translation("ehr_id must be a valid UUID".to_string()))
             .expect_err("should reject invalid UUID in domain conversion");
@@ -540,7 +540,7 @@ is_modifiable: true
         )
         .expect("ehr_status_render should work");
 
-        let result = ehr_status_parse_full(&result_yaml).expect("should parse returned YAML");
+        let result = ehr_status_parse(&result_yaml).expect("should parse returned YAML");
 
         // Check that the ehr_id was modified
         assert_eq!(result.ehr_id.value, "2166765a406a4552ac9b8e141931a3dc");
@@ -584,7 +584,7 @@ is_modifiable: true
         let result_yaml = ehr_status_render(Some(yaml), Some(&new_ehr_id), None)
             .expect("ehr_status_render should work with None external_refs");
 
-        let result = ehr_status_parse_full(&result_yaml).expect("should parse returned YAML");
+        let result = ehr_status_parse(&result_yaml).expect("should parse returned YAML");
 
         // Check that the ehr_id was modified
         assert_eq!(result.ehr_id.value, "3166765a406a4552ac9b8e141931a3dc");
@@ -655,8 +655,7 @@ is_modifiable: true
         assert!(yaml_string.contains("is_modifiable: true"));
 
         // Verify it can be parsed back
-        let reparsed =
-            ehr_status_parse_full(&yaml_string).expect("should parse the generated YAML");
+        let reparsed = ehr_status_parse(&yaml_string).expect("should parse the generated YAML");
         assert_eq!(reparsed, ehr_status);
     }
 
@@ -697,7 +696,7 @@ is_modifiable: true
         let result_yaml = ehr_status_render(None, Some(&ehr_id), Some(vec![external_ref.clone()]))
             .expect("ehr_status_render should create new EHR_STATUS");
 
-        let result = ehr_status_parse_full(&result_yaml).expect("should parse the result");
+        let result = ehr_status_parse(&result_yaml).expect("should parse the result");
 
         assert_eq!(result.ehr_id.value, "1166765a406a4552ac9b8e141931a3dc");
         assert_eq!(result.archetype_node_id, DEFAULT_ARCHETYPE_NODE_ID);

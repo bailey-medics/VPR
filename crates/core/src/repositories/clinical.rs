@@ -26,8 +26,8 @@ use crate::versioned_files::{
 };
 use crate::ShardableUuid;
 use openehr::{
-    ehr_status_render, extract_rm_version, validation::validate_namespace_uri_safe, EhrId,
-    ExternalReference, OpenEhrFileType::EhrStatus,
+    extract_rm_version, validation::validate_namespace_uri_safe, EhrId, EhrStatus,
+    ExternalReference, Letter,
 };
 use std::{
     fs, io,
@@ -243,10 +243,10 @@ impl ClinicalService<Uninitialised> {
 
             let rm_version = self.cfg.rm_system_version();
 
-            let filename = patient_dir.join(EhrStatus.filename());
+            let filename = patient_dir.join("ehr_status.yaml");
             let ehr_id = EhrId::from_uuid(clinical_uuid.uuid());
 
-            let yaml_content = ehr_status_render(rm_version, None, Some(&ehr_id), None)?;
+            let yaml_content = EhrStatus::render(rm_version, None, Some(&ehr_id), None)?;
 
             fs::write(&filename, yaml_content).map_err(PatientError::FileWrite)?;
 
@@ -347,13 +347,12 @@ impl ClinicalService<Initialised> {
         validate_namespace_uri_safe(namespace)?;
 
         let patient_dir = self.clinical_patient_dir(&clinical_uuid);
-        let filename = patient_dir.join(EhrStatus.filename());
+        let filename = patient_dir.join("ehr_status.yaml");
 
         if !filename.exists() {
             return Err(PatientError::InvalidInput(format!(
                 "{} does not exist for clinical record {}",
-                EhrStatus.filename(),
-                clinical_uuid
+                "ehr_status.yaml", clinical_uuid
             )));
         }
 
@@ -367,20 +366,44 @@ impl ClinicalService<Initialised> {
         let rm_version = extract_rm_version(&previous_data)?;
 
         let yaml_content =
-            ehr_status_render(rm_version, Some(&previous_data), None, external_reference)?;
+            EhrStatus::render(rm_version, Some(&previous_data), None, external_reference)?;
 
         let repo = VersionedFileService::open(&patient_dir)?;
         repo.write_and_commit_files(
             author,
             &msg,
             &[FileToWrite {
-                relative_path: Path::new(EhrStatus.filename()),
+                relative_path: Path::new("ehr_status.yaml"),
                 content: &yaml_content,
                 old_content: Some(&previous_data),
             }],
         )
     }
 
+    /// Creates a new clinical letter.
+    ///
+    /// This function creates a new letter with the specified content, generates a unique
+    /// timestamp-based ID, and commits both the composition.yaml and body.md files to Git.
+    ///
+    /// # Arguments
+    ///
+    /// * `author` - The author information for the Git commit. Must have a non-empty name.
+    /// * `care_location` - High-level organisational location for the commit (e.g. hospital name).
+    ///   Must be a non-empty string.
+    /// * `letter_content` - The Markdown content for the letter body (body.md).
+    ///
+    /// # Returns
+    ///
+    /// Returns the generated timestamp ID for the letter on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `PatientError` if:
+    /// - The author's name is empty or whitespace-only
+    /// - The care location is empty or whitespace-only
+    /// - The clinical UUID cannot be parsed
+    /// - Creating the composition.yaml content fails
+    /// - Writing files or committing to Git fails
     pub fn new_letter(
         &self,
         author: &Author,
@@ -402,18 +425,42 @@ impl ClinicalService<Initialised> {
         let clinical_uuid = ShardableUuid::parse(&self.clinical_id().simple().to_string())?;
         let patient_dir = self.clinical_patient_dir(&clinical_uuid);
 
-        let body_md_relative = letter_paths.body_md();
+        let body_md_relative_path = letter_paths.body_md();
+        let composition_yaml_relative_path = letter_paths.composition_yaml();
 
-        let repo = VersionedFileService::open(&patient_dir)?;
-        repo.write_and_commit_files(
-            author,
-            &msg,
-            &[FileToWrite {
-                relative_path: &body_md_relative,
+        // Generate composition.yaml content using Letter::composition_render
+        let rm_version = self.cfg.rm_system_version();
+        let start_time = timestamp_id
+            .timestamp()
+            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        let composition_content = Letter::composition_render(
+            rm_version,                      // RM version
+            None,                            // No previous composition data
+            Some(rm_version.as_str()),       // RM version string for YAML
+            Some(&timestamp_id.to_string()), // UID (timestamp ID)
+            Some(&author.name),              // Composer name
+            Some("Clinical Practitioner"),   // Composer role
+            Some(&start_time),               // Start time
+        )
+        .map_err(|e| {
+            PatientError::InvalidInput(format!("Failed to create letter composition: {}", e))
+        })?;
+
+        let files_to_write = [
+            FileToWrite {
+                relative_path: &composition_yaml_relative_path,
+                content: &composition_content,
+                old_content: None,
+            },
+            FileToWrite {
+                relative_path: &body_md_relative_path,
                 content: &letter_content,
                 old_content: None,
-            }],
-        )?;
+            },
+        ];
+
+        let repo = VersionedFileService::open(&patient_dir)?;
+        repo.write_and_commit_files(author, &msg, &files_to_write)?;
 
         Ok(timestamp_id.to_string())
     }
@@ -1258,7 +1305,7 @@ mod tests {
             .expect("Failed to create .ehr directory");
 
         // Force EHR status file write to fail by ensuring the target path already exists as a dir.
-        fs::create_dir_all(clinical_template_dir.path().join(EhrStatus.filename()))
+        fs::create_dir_all(clinical_template_dir.path().join("ehr_status.yaml"))
             .expect("Failed to create ehr_status.yaml directory");
 
         let rm_system_version = rm_system_version_from_env_value(None)
@@ -1547,7 +1594,7 @@ mod tests {
         let patient_dir = ShardableUuid::parse(&clinical_uuid_str)
             .expect("clinical_uuid should be canonical")
             .sharded_dir(&clinical_dir);
-        let ehr_status_file = patient_dir.join(EhrStatus.filename());
+        let ehr_status_file = patient_dir.join("ehr_status.yaml");
 
         assert!(ehr_status_file.exists(), "ehr_status.yaml should exist");
     }
@@ -1691,7 +1738,7 @@ mod tests {
         VersionedFileService::init(&patient_dir).expect("Failed to init git");
 
         // Write corrupted YAML (missing required rm_version field)
-        let ehr_status_file = patient_dir.join(EhrStatus.filename());
+        let ehr_status_file = patient_dir.join("ehr_status.yaml");
         fs::write(&ehr_status_file, "archetype_node_id: some_id\nname: Test")
             .expect("Failed to write corrupted file");
 
