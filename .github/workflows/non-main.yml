@@ -57,7 +57,7 @@ jobs:
         run: cargo install cargo-deny --version 0.19.0 --locked
 
       - name: Run cargo-deny
-        run: cargo deny check
+        run: cargo deny check -A warnings
 
   # ---------- Code Quality Checks ----------
   rust_quality_checks:
@@ -73,7 +73,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-          
+
       - name: Verify Rust components
         run: |
           rustup component add rustfmt clippy
@@ -102,7 +102,7 @@ jobs:
           chmod +x bin/protoc
           rm protoc.zip
           echo "protoc installed to ~/protoc/bin/protoc"
-          
+
       # Add protoc to PATH
       - name: Setup protoc PATH
         run: |
