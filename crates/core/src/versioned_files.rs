@@ -483,7 +483,7 @@ impl VprCommitMessage {
     /// - `Author-Role`
     /// - `Author-Registration` (0..N; sorted)
     ///
-    /// This is the method used by `GitService` for creating commits.
+    /// This is the method used by `VersionedFileService` for creating commits.
     ///
     /// # Arguments
     ///
@@ -576,12 +576,30 @@ impl VprCommitMessage {
 ///
 /// This bundles the repository handle and its workdir to make workflows like “initialise repo
 /// then commit files” ergonomic at call sites.
-pub struct GitService {
+/// Represents a file to be written and committed.
+///
+/// Used with [`VersionedFileService::write_and_commit_files`] to write multiple files
+/// in a single atomic commit operation.
+#[derive(Debug, Clone)]
+pub struct FileToWrite<'a> {
+    /// The relative path to the file within the repository directory.
+    pub relative_path: &'a Path,
+    /// The new content to write to the file.
+    pub content: &'a str,
+    /// The previous file content for rollback. `None` if this is a new file.
+    pub old_content: Option<&'a str>,
+}
+
+/// Service for managing versioned files with Git version control.
+///
+/// `VersionedFileService` provides high-level operations for working with Git repositories,
+/// including atomic file write and commit operations with automatic rollback on failure.
+pub struct VersionedFileService {
     repo: git2::Repository,
     workdir: PathBuf,
 }
 
-impl GitService {
+impl VersionedFileService {
     /// Create a new repository at `workdir`.
     pub(crate) fn init(workdir: &Path) -> PatientResult<Self> {
         let repo = git2::Repository::init(workdir).map_err(PatientError::GitInit)?;
@@ -675,6 +693,114 @@ impl GitService {
     ) -> PatientResult<git2::Oid> {
         let rendered = message.render_with_author(author)?;
         self.commit_paths_rendered(author, &rendered, relative_paths)
+    }
+
+    /// Writes multiple files and commits them to Git with rollback on failure.
+    ///
+    /// This method creates any necessary parent directories, writes all files,
+    /// and commits them in a single Git commit. All operations are wrapped in a closure
+    /// to enable automatic rollback if any operation fails. On error:
+    /// - Files that previously existed are restored to their previous state
+    /// - New files are removed
+    /// - Any directories created during this operation are removed
+    ///
+    /// # Arguments
+    ///
+    /// * `author` - The author information for the Git commit.
+    /// * `msg` - The commit message structure containing domain, action, and location.
+    /// * `files` - Slice of [`FileToWrite`] structs describing files to write.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if directory creation, all file writes, and Git commit succeed.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `PatientError` if:
+    /// - Parent directory creation fails ([`PatientError::FileWrite`])
+    /// - Any file write fails ([`PatientError::FileWrite`])
+    /// - The Git commit fails (various Git-related error variants)
+    ///
+    /// On error, attempts to rollback all files and any newly created directories.
+    pub(crate) fn write_and_commit_files(
+        &self,
+        author: &Author,
+        msg: &VprCommitMessage,
+        files: &[FileToWrite],
+    ) -> PatientResult<()> {
+        let mut created_dirs: Vec<PathBuf> = Vec::new();
+        let mut written_files: Vec<(PathBuf, Option<String>)> = Vec::new();
+
+        let result: PatientResult<()> = (|| {
+            // Collect all unique parent directories needed
+            let mut dirs_needed = std::collections::HashSet::new();
+            for file in files {
+                let full_path = self.workdir.join(file.relative_path);
+                if let Some(parent) = full_path.parent() {
+                    let mut current = parent;
+                    while current != self.workdir && !current.exists() {
+                        dirs_needed.insert(current.to_path_buf());
+                        if let Some(parent_of_current) = current.parent() {
+                            current = parent_of_current;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Sort directories by depth (shallowest first) for creation
+            let mut dirs_to_create: Vec<PathBuf> = dirs_needed.into_iter().collect();
+            dirs_to_create.sort_by_key(|p| p.components().count());
+
+            // Create directories
+            for dir in &dirs_to_create {
+                std::fs::create_dir(dir).map_err(PatientError::FileWrite)?;
+                created_dirs.push(dir.clone());
+            }
+
+            // Write all files
+            for file in files {
+                let full_path = self.workdir.join(file.relative_path);
+                let old_content = file.old_content.map(|s| s.to_string());
+
+                std::fs::write(&full_path, file.content).map_err(PatientError::FileWrite)?;
+                written_files.push((full_path, old_content));
+            }
+
+            // Commit all files in a single commit
+            let paths: Vec<PathBuf> = files
+                .iter()
+                .map(|f| f.relative_path.to_path_buf())
+                .collect();
+            self.commit_paths(author, msg, &paths)?;
+
+            Ok(())
+        })();
+
+        match result {
+            Ok(()) => Ok(()),
+            Err(write_error) => {
+                // Rollback file changes (in reverse order)
+                for (full_path, old_content) in written_files.iter().rev() {
+                    match old_content {
+                        Some(contents) => {
+                            let _ = std::fs::write(full_path, contents);
+                        }
+                        None => {
+                            let _ = std::fs::remove_file(full_path);
+                        }
+                    }
+                }
+
+                // Rollback newly created directories (from deepest to shallowest)
+                for dir in created_dirs.iter().rev() {
+                    let _ = std::fs::remove_dir(dir);
+                }
+
+                Err(write_error)
+            }
+        }
     }
 
     fn commit_paths_rendered(
@@ -1065,7 +1191,7 @@ mod tests {
     #[test]
     fn into_repo_consumes_and_returns_underlying() {
         let temp_dir = TempDir::new().unwrap();
-        let service = GitService::init(temp_dir.path()).unwrap();
+        let service = VersionedFileService::init(temp_dir.path()).unwrap();
         let repo = service.into_repo();
         let workdir = repo.workdir().expect("repo should have workdir");
         let expected = temp_dir.path();
