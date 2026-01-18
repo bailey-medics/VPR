@@ -403,17 +403,25 @@ impl ClinicalService<Initialised> {
         let patient_dir = self.clinical_patient_dir(&clinical_uuid);
 
         let body_md_relative = letter_paths.body_md();
+        let composition_yaml_relative = letter_paths.composition_yaml();
 
-        let repo = VersionedFileService::open(&patient_dir)?;
-        repo.write_and_commit_files(
-            author,
-            &msg,
-            &[FileToWrite {
+        let composition_content = "yaml to go here shortly";
+
+        let files_to_write = [
+            FileToWrite {
+                relative_path: &composition_yaml_relative,
+                content: composition_content,
+                old_content: None,
+            },
+            FileToWrite {
                 relative_path: &body_md_relative,
                 content: &letter_content,
                 old_content: None,
-            }],
-        )?;
+            },
+        ];
+
+        let repo = VersionedFileService::open(&patient_dir)?;
+        repo.write_and_commit_files(author, &msg, &files_to_write)?;
 
         Ok(timestamp_id.to_string())
     }

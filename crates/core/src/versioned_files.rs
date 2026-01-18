@@ -1,41 +1,65 @@
-//! Git helpers for VPR core.
+//! Versioned file operations with Git-based version control for VPR.
 //!
 //! VPR stores patient data as files on disk and versions each patient directory using a
-//! local Git repository (`git2`/libgit2). This module centralises commit creation so that:
+//! local Git repository (`git2`/libgit2). This module provides high-level services for
+//! managing versioned files, ensuring:
 //!
-//! - commit creation is consistent across services (clinical now; demographics later),
-//! - commit signing is performed over the correct payload, and
-//! - branch/ref behaviour is correct when using `Repository::commit_signed`.
+//! - **Atomic Multi-file Operations**: Write multiple files and commit them in a single
+//!   transaction with automatic rollback on failure
+//! - **Consistent Commit Creation**: Structured commit messages with controlled vocabulary
+//!   across all services (clinical, demographics, coordination)
+//! - **Cryptographic Signing**: ECDSA P-256 signatures with X.509 certificate validation
+//! - **Immutable Audit Trail**: Nothing is ever deleted; all changes are preserved in
+//!   version control history for patient safety and legal compliance
 //!
-//! ## Architecture Overview
+//! ## Purpose and Scope
 //!
-//! The module provides three main components:
+//! This module is the core of VPR's version control system. It centralises Git operations
+//! to ensure consistency and safety when modifying patient records. The [`VersionedFileService`]
+//! provides high-level operations that handle directory creation, file writing, Git commits,
+//! and automatic rollback on errors.
 //!
-//! - **Commit Message Construction**: Structured commit messages with controlled vocabulary
-//! - **Repository Management**: High-level Git operations via `GitService`
+//! The module supports both signed (with X.509 certificates) and unsigned commits, with
+//! signature verification available for auditing purposes.
+//!
+//! ## Architecture
+//!
+//! The module provides four main components:
+//!
+//! - **File Operations**: [`FileToWrite`] struct for describing atomic file write operations
+//! - **Repository Management**: [`VersionedFileService`] for high-level Git operations
+//! - **Commit Messages**: [`VprCommitMessage`] with structured domains and actions
 //! - **Cryptographic Signing**: ECDSA P-256 signature creation and verification
 //!
-//! ## Branch policy
+//! ## Branch Policy
 //!
-//! VPR standardises on `refs/heads/main`.
+//! VPR standardises on `refs/heads/main` for all patient repositories.
 //!
 //! libgit2's `commit_signed` creates a commit object but **does not update refs** (no branch
 //! movement and no `HEAD` update). For signed commits, this module explicitly updates
-//! `refs/heads/main` and points `HEAD` to it.
+//! `refs/heads/main` and points `HEAD` to it to maintain proper branch state.
 //!
-//! ## Signature format
+//! ## Signature Format
 //!
 //! When `Author.signature` is present, VPR signs commits using ECDSA P-256.
 //!
-//! - Signed payload: the *unsigned commit buffer* produced by `Repository::commit_create_buffer`.
-//! - Signature bytes: raw 64 bytes (`r || s`, not DER).
-//! - Stored form: base64 of a deterministic container (JSON) passed to `commit_signed` and
-//!   written into the commit header field `gpgsig`.
+//! - Signed payload: the *unsigned commit buffer* produced by `Repository::commit_create_buffer`
+//! - Signature bytes: raw 64 bytes (`r || s`, not DER)
+//! - Stored form: base64 of a deterministic JSON container passed to `commit_signed` and
+//!   written into the commit header field `gpgsig`
 //!
 //! The container embeds:
 //! - `signature`: base64 of raw 64-byte `r||s`
 //! - `public_key`: base64 of SEC1-encoded public key bytes
 //! - `certificate` (optional): base64 of the certificate bytes (PEM or DER)
+//!
+//! ## Safety and Immutability
+//!
+//! VPR maintains an immutable audit trail where nothing is ever truly deleted. The
+//! [`VprCommitAction`] enum documents the four allowed operations (Create, Update,
+//! Superseded, Redact), all of which preserve historical data in version control.
+//! This design ensures patient safety, legal compliance, and complete accountability
+//! for all modifications to patient records.
 //!
 //! The verifier in clinical code (`ClinicalService::verify_commit_signature`) expects this
 //! exact scheme.
@@ -592,15 +616,54 @@ pub struct FileToWrite<'a> {
 
 /// Service for managing versioned files with Git version control.
 ///
-/// `VersionedFileService` provides high-level operations for working with Git repositories,
-/// including atomic file write and commit operations with automatic rollback on failure.
+/// `VersionedFileService` provides high-level operations for working with Git repositories
+/// in VPR's patient record system. It handles atomic file write and commit operations with
+/// automatic rollback on failure, ensuring data consistency and integrity.
+///
+/// The service supports both signed commits (using ECDSA P-256 with X.509 certificates)
+/// and unsigned commits. All commits use structured [`VprCommitMessage`] format for
+/// consistency and auditability.
+///
+/// # Core Capabilities
+///
+/// - **Atomic Operations**: Write multiple files and commit in a single transaction
+/// - **Automatic Rollback**: Restore previous state if any operation fails
+/// - **Directory Creation**: Automatically create parent directories as needed
+/// - **Signed Commits**: Optional cryptographic signing with X.509 certificates
+/// - **Signature Verification**: Verify commit signatures for audit purposes
+///
+/// # Usage Pattern
+///
+/// The typical workflow is:
+/// 1. Create or open a repository with [`init`](Self::init) or [`open`](Self::open)
+/// 2. Prepare file changes using [`FileToWrite`] structs
+/// 3. Write and commit files with [`write_and_commit_files`](Self::write_and_commit_files)
+/// 4. Optionally verify signatures with [`verify_commit_signature`](Self::verify_commit_signature)
 pub struct VersionedFileService {
     repo: git2::Repository,
     workdir: PathBuf,
 }
 
 impl VersionedFileService {
-    /// Create a new repository at `workdir`.
+    /// Create a new Git repository at the specified working directory.
+    ///
+    /// Initialises a new Git repository using libgit2. The repository will be created
+    /// with a standard `.git` directory structure. The working directory path is captured
+    /// and used for all subsequent file operations.
+    ///
+    /// # Arguments
+    ///
+    /// * `workdir` - Path where the Git repository should be initialised
+    ///
+    /// # Returns
+    ///
+    /// A `VersionedFileService` instance bound to the newly created repository.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PatientError` if:
+    /// - Repository initialisation fails (e.g., permissions, invalid path) - [`PatientError::GitInit`]
+    /// - The repository has no working directory (bare repo) - [`PatientError::GitInit`]
     pub(crate) fn init(workdir: &Path) -> PatientResult<Self> {
         let repo = git2::Repository::init(workdir).map_err(PatientError::GitInit)?;
         // Use the actual workdir from the repository to ensure path stripping works correctly.
@@ -616,10 +679,29 @@ impl VersionedFileService {
         })
     }
 
-    /// Open an existing repository at `workdir`.
+    /// Open an existing Git repository at the specified working directory.
     ///
-    /// Uses `NO_SEARCH` flag to prevent git2 from searching parent directories for a `.git`
-    /// folder. This ensures we open exactly the repository at the specified path.
+    /// Opens an existing repository using `NO_SEARCH` flag to prevent git2 from searching
+    /// parent directories for a `.git` folder. This ensures we open exactly the repository
+    /// at the specified path, which is important for patient record isolation.
+    ///
+    /// The actual working directory path is extracted from the opened repository to handle
+    /// potential symlink resolution or path canonicalisation by git2.
+    ///
+    /// # Arguments
+    ///
+    /// * `workdir` - Path to the existing Git repository's working directory
+    ///
+    /// # Returns
+    ///
+    /// A `VersionedFileService` instance bound to the opened repository.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PatientError` if:
+    /// - Repository does not exist at the specified path - [`PatientError::GitOpen`]
+    /// - Repository cannot be opened (e.g., permissions, corruption) - [`PatientError::GitOpen`]
+    /// - The repository has no working directory (bare repo) - [`PatientError::GitOpen`]
     pub(crate) fn open(workdir: &Path) -> PatientResult<Self> {
         let repo = git2::Repository::open_ext(
             workdir,
@@ -641,9 +723,15 @@ impl VersionedFileService {
         })
     }
 
-    /// Consume this wrapper and return the underlying `git2::Repository`.
+    /// Consume this service and return the underlying `git2::Repository`.
     ///
-    /// This is useful when existing code needs to perform lower-level Git operations.
+    /// This method transfers ownership of the Git repository handle to the caller,
+    /// allowing direct access to lower-level Git operations when needed. The service
+    /// is consumed and cannot be used after this call.
+    ///
+    /// # Returns
+    ///
+    /// The underlying `git2::Repository` instance.
     #[allow(dead_code)]
     pub(crate) fn into_repo(self) -> git2::Repository {
         self.repo
@@ -651,8 +739,13 @@ impl VersionedFileService {
 
     /// Ensure `HEAD` points at `refs/heads/main`.
     ///
-    /// For newly initialised repositories this creates an "unborn" `main` branch until the first
-    /// commit is written.
+    /// Sets the repository's HEAD reference to point to the main branch. For newly
+    /// initialised repositories this creates an "unborn" `main` branch that will be
+    /// born when the first commit is written.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PatientError::GitSetHead` if the HEAD reference cannot be updated.
     fn ensure_main_head(&self) -> PatientResult<()> {
         self.repo
             .set_head(MAIN_REF)
@@ -660,9 +753,28 @@ impl VersionedFileService {
         Ok(())
     }
 
-    /// Create a commit including *all* files under the repo workdir.
+    /// Create a commit including *all* files under the repository working directory.
     ///
-    /// Commit messages must use the structured `VprCommitMessage` format.
+    /// Recursively collects all files in the working directory (excluding `.git/`) and
+    /// commits them with the provided author information and message. This is useful for
+    /// initial repository setup or when all files should be included in the commit.
+    ///
+    /// # Arguments
+    ///
+    /// * `author` - Author information including name, email, and optional signature
+    /// * `message` - Structured commit message with domain, action, and location
+    ///
+    /// # Returns
+    ///
+    /// The Git object ID (OID) of the created commit.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PatientError` if:
+    /// - Commit message rendering fails (invalid author, missing fields) - [`PatientError::InvalidInput`], [`PatientError::MissingCareLocation`]
+    /// - Directory traversal fails - [`PatientError::FileRead`]
+    /// - Git index operations fail - [`PatientError::GitIndex`], [`PatientError::GitAdd`]
+    /// - Commit creation fails (signing errors, tree write errors) - various Git-related errors
     pub(crate) fn commit_all(
         &self,
         author: &Author,
@@ -803,6 +915,25 @@ impl VersionedFileService {
         }
     }
 
+    /// Create a commit with rendered message for the specified paths.
+    ///
+    /// This is an internal helper that performs the actual commit operation with a
+    /// pre-rendered commit message string. It handles path normalisation (absolute to
+    /// relative) and validates that paths don't escape the repository directory.
+    ///
+    /// # Arguments
+    ///
+    /// * `author` - Author information for commit signature
+    /// * `message` - Pre-rendered commit message string
+    /// * `relative_paths` - Paths to commit (will be normalised if absolute)
+    ///
+    /// # Errors
+    ///
+    /// Returns `PatientError` if:
+    /// - HEAD cannot be set to main branch
+    /// - Git index operations fail
+    /// - Path is outside repository or contains `..`
+    /// - Commit creation fails
     fn commit_paths_rendered(
         &self,
         author: &Author,
@@ -841,6 +972,32 @@ impl VersionedFileService {
         self.commit_from_index(author, message, &mut index)
     }
 
+    /// Create a commit from the current Git index state.
+    ///
+    /// This is the lowest-level commit creation helper. It validates author information,
+    /// writes the index as a tree, and creates either a signed or unsigned commit depending
+    /// on whether the author has a signature key.
+    ///
+    /// For signed commits, this method:
+    /// 1. Creates the unsigned commit buffer with correct parent list
+    /// 2. Signs the buffer using ECDSA P-256
+    /// 3. Validates certificate matches signing key (if certificate provided)
+    /// 4. Creates the signed commit and manually updates refs
+    ///
+    /// # Arguments
+    ///
+    /// * `author` - Validated author information
+    /// * `message` - Complete commit message text
+    /// * `index` - Git index containing staged changes
+    ///
+    /// # Errors
+    ///
+    /// Returns `PatientError` if:
+    /// - Author validation fails
+    /// - Tree write or lookup fails
+    /// - Signature creation fails
+    /// - Certificate/key mismatch detected
+    /// - Commit creation or ref update fails
     fn commit_from_index(
         &self,
         author: &Author,
@@ -929,8 +1086,18 @@ impl VersionedFileService {
 
     /// Resolve the parent commit(s) for a new commit.
     ///
-    /// - If `HEAD` exists, the parent list is `[HEAD]`.
-    /// - If the repository is empty (`UnbornBranch`/`NotFound`), the parent list is empty.
+    /// Determines the appropriate parent list based on repository state:
+    /// - If `HEAD` exists and points to a commit, returns that commit as the parent
+    /// - If the repository is empty (unborn branch or not found), returns empty parent list
+    /// - Other errors are propagated
+    ///
+    /// This handles the distinction between the first commit (no parents) and subsequent
+    /// commits (one parent) in a linear history.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PatientError::GitHead` if HEAD lookup fails for reasons other than
+    /// unborn branch or not found.
     fn resolve_head_parents(&self) -> PatientResult<Vec<git2::Commit<'_>>> {
         match self.repo.head() {
             Ok(head) => {
@@ -943,13 +1110,25 @@ impl VersionedFileService {
         }
     }
 
-    /// Load an ECDSA private key in PKCS#8 PEM form.
+    /// Load an ECDSA private key in PKCS#8 PEM format.
     ///
-    /// Current behaviour (intentionally preserved for now):
+    /// This method accepts private keys in three formats for compatibility:
+    /// 1. Direct PEM string (contains `-----BEGIN` marker)
+    /// 2. Filesystem path to a PEM file (must exist)
+    /// 3. Base64-encoded PEM string
     ///
-    /// - If the string contains a PEM header, treat it as PEM.
-    /// - Else if it is an existing filesystem path, read it.
-    /// - Else treat it as base64-encoded PEM.
+    /// The method tries each format in order until one succeeds.
+    ///
+    /// # Arguments
+    ///
+    /// * `private_key_pem` - Private key as PEM string, file path, or base64-encoded PEM
+    ///
+    /// # Errors
+    ///
+    /// Returns `PatientError::EcdsaPrivateKeyParse` if:
+    /// - File cannot be read (if path format)
+    /// - Base64 decode fails (if base64 format)
+    /// - Result is not valid UTF-8
     fn load_private_key_pem(private_key_pem: &str) -> PatientResult<String> {
         if private_key_pem.contains("-----BEGIN") {
             Ok(private_key_pem.to_string())
@@ -964,11 +1143,23 @@ impl VersionedFileService {
         }
     }
 
-    /// Collect all file paths under the repo workdir, relative to the workdir.
+    /// Recursively collect all file paths in the repository working directory.
     ///
-    /// This is used by `commit_all`.
+    /// Walks the directory tree starting from the repository's working directory,
+    /// collecting paths for all files (excluding directories and the `.git` directory).
+    /// All paths are returned relative to the working directory root.
     ///
-    /// `.git/` is skipped.
+    /// This is used by `commit_all` to stage all files in the repository.
+    ///
+    /// # Returns
+    ///
+    /// Vector of repository-relative paths for all regular files.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PatientError` if:
+    /// - Directory traversal fails (permissions, I/O errors)
+    /// - Path cannot be made relative to repository root
     fn collect_paths_recursive(&self) -> PatientResult<Vec<PathBuf>> {
         fn walk(dir: &Path, base: &Path, out: &mut Vec<PathBuf>) -> PatientResult<()> {
             for entry in fs::read_dir(dir).map_err(PatientError::FileRead)? {

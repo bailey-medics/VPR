@@ -190,6 +190,38 @@ enum Commands {
         key_out: Option<String>,
     },
 
+    /// Create a new letter:
+    ///
+    /// <clinical_uuid> <author_name> <author_email>
+    /// --role <author_role>
+    /// --care-location <care_location>
+    /// --content <letter_content>
+    /// [--registration <AUTHORITY> <NUMBER> ...]
+    /// [--signature <ecdsa_private_key_pem>]
+    NewLetter {
+        /// Clinical repository UUID
+        clinical_uuid: String,
+        /// Author name for Git commit
+        author_name: String,
+        /// Author email for Git commit
+        author_email: String,
+        /// Mandatory author role for commit metadata
+        #[arg(long)]
+        role: String,
+        /// Declared professional registrations (repeatable): --registration <AUTHORITY> <NUMBER>
+        #[arg(long, value_names = ["AUTHORITY", "NUMBER"], num_args = 2, action = clap::ArgAction::Append)]
+        registration: Vec<String>,
+        /// Mandatory organisational location for the commit (e.g. hospital name, GP surgery)
+        #[arg(long)]
+        care_location: String,
+        /// Letter content (markdown text)
+        #[arg(long)]
+        content: String,
+        /// ECDSA private key PEM for X.509 signing (optional, can be PEM string, base64-encoded PEM, or file path)
+        #[arg(long)]
+        signature: Option<String>,
+    },
+
     /// Delete ALL patient data under patient_data (DEV only).
     ///
     /// Deletes both:
@@ -557,6 +589,48 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Err(e) => eprintln!("Error creating certificate: {}", e),
         },
+        Some(Commands::NewLetter {
+            clinical_uuid,
+            author_name,
+            author_email,
+            role,
+            registration,
+            care_location,
+            content,
+            signature,
+        }) => {
+            let registrations: Vec<AuthorRegistration> = registration
+                .chunks(2)
+                .map(|chunk| AuthorRegistration {
+                    authority: chunk.first().cloned().unwrap_or_default(),
+                    number: chunk.get(1).cloned().unwrap_or_default(),
+                })
+                .collect();
+            let author = Author {
+                name: author_name,
+                role,
+                email: author_email,
+                registrations,
+                signature,
+                certificate: None,
+            };
+
+            let clinical_uuid_parsed = match ShardableUuid::parse(&clinical_uuid) {
+                Ok(uuid) => uuid.uuid(),
+                Err(e) => {
+                    eprintln!("Error parsing clinical UUID: {}", e);
+                    return Ok(());
+                }
+            };
+
+            let clinical_service = ClinicalService::with_id(cfg.clone(), clinical_uuid_parsed);
+            match clinical_service.new_letter(&author, care_location, content) {
+                Ok(timestamp_id) => {
+                    println!("Created new letter with timestamp ID: {}", timestamp_id)
+                }
+                Err(e) => eprintln!("Error creating letter: {}", e),
+            }
+        }
         Some(Commands::DeleteAllData) => {
             if !is_dev_env() {
                 return Err(Box::new(CliError(
