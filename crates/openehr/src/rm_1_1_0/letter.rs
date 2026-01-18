@@ -138,7 +138,7 @@ pub struct Narrative {
 /// - the YAML does not represent a `COMPOSITION` (letter) mapping,
 /// - any field has an unexpected type,
 /// - any unknown keys are present (due to `#[serde(deny_unknown_fields)]`).
-pub(crate) fn letter_parse_full(yaml_text: &str) -> Result<Letter, OpenEhrError> {
+pub fn letter_parse(yaml_text: &str) -> Result<Letter, OpenEhrError> {
     let deserializer = serde_yaml::Deserializer::from_str(yaml_text);
 
     match serde_path_to_error::deserialize(deserializer) {
@@ -183,7 +183,7 @@ pub(crate) fn letter_parse_full(yaml_text: &str) -> Result<Letter, OpenEhrError>
 /// - any field has an unexpected type,
 /// - any unknown keys are present,
 /// - `previous_data` is None and not enough information is provided to create a new letter.
-pub(crate) fn letter_render(
+pub fn letter_render(
     previous_data: Option<&str>,
     rm_version: Option<&str>,
     uid: Option<&str>,
@@ -191,7 +191,7 @@ pub(crate) fn letter_render(
     composer_role: Option<&str>,
     start_time: Option<&str>,
 ) -> Result<String, OpenEhrError> {
-    let previous_yaml = previous_data.map(letter_parse_full).transpose()?;
+    let previous_yaml = previous_data.map(letter_parse).transpose()?;
 
     match previous_yaml {
         Some(mut letter) => {
@@ -344,9 +344,9 @@ content:
                 path: "./body.md"
 "#;
 
-        let letter = letter_parse_full(input).expect("parse yaml");
+        let letter = letter_parse(input).expect("parse yaml");
         let output = serde_yaml::to_string(&letter).expect("write yaml");
-        let reparsed = letter_parse_full(&output).expect("reparse yaml");
+        let reparsed = letter_parse(&output).expect("reparse yaml");
         assert_eq!(letter, reparsed);
     }
 
@@ -381,7 +381,7 @@ content:
 unexpected_key: "should fail"
 "#;
 
-        let err = letter_parse_full(input).expect_err("should reject unknown key");
+        let err = letter_parse(input).expect_err("should reject unknown key");
         match err {
             OpenEhrError::Translation(msg) => {
                 assert!(msg.contains("unexpected_key"));
@@ -408,7 +408,7 @@ context:
 content: "this should be an array"
 "#;
 
-        let err = letter_parse_full(wrong_type).expect_err("should reject wrong type");
+        let err = letter_parse(wrong_type).expect_err("should reject wrong type");
         match err {
             OpenEhrError::Translation(msg) => {
                 assert!(msg.contains("content"));
@@ -458,7 +458,7 @@ content:
         )
         .expect("letter_render should work");
 
-        let result = letter_parse_full(&result_yaml).expect("should parse returned YAML");
+        let result = letter_parse(&result_yaml).expect("should parse returned YAML");
 
         assert_eq!(result.rm_version, "1.0.5");
         assert_eq!(result.uid, "new-uid-12345");
@@ -501,7 +501,7 @@ content:
             letter_render(Some(yaml), None, None, Some("Dr Updated Name"), None, None)
                 .expect("letter_render should work with partial update");
 
-        let result = letter_parse_full(&result_yaml).expect("should parse returned YAML");
+        let result = letter_parse(&result_yaml).expect("should parse returned YAML");
 
         // Only composer name should be updated
         assert_eq!(result.rm_version, "1.0.4");
@@ -562,7 +562,7 @@ content:
         assert!(yaml_string.contains("start_time:"));
 
         // Verify it can be parsed back
-        let reparsed = letter_parse_full(&yaml_string).expect("should parse the generated YAML");
+        let reparsed = letter_parse(&yaml_string).expect("should parse the generated YAML");
         assert_eq!(reparsed, letter);
     }
 
@@ -591,7 +591,7 @@ content:
         )
         .expect("letter_render should create new letter");
 
-        let result = letter_parse_full(&result_yaml).expect("should parse the result");
+        let result = letter_parse(&result_yaml).expect("should parse the result");
 
         assert_eq!(result.rm_version, "1.0.4");
         assert_eq!(result.uid, "new-uid");
