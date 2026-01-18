@@ -31,6 +31,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use vpr_uuid::TimestampIdGenerator;
 
 #[cfg(test)]
 use std::io::ErrorKind;
@@ -352,6 +353,21 @@ impl ClinicalService<Initialised> {
             &yaml_content,
             Some(&previous_data),
         )
+    }
+
+    pub fn new_letter(
+        &self,
+        author: &Author,
+        care_location: String,
+        letter_content: String,
+    ) -> PatientResult<String> {
+        let timestamp_id = TimestampIdGenerator::generate(None)?;
+
+        let result = format!(
+            "Author: {} ({}), Email: {}, Location: {}, Content: {}, TimestampID: {}",
+            author.name, author.role, author.email, care_location, letter_content, timestamp_id
+        );
+        Ok(result)
     }
 }
 
@@ -1962,5 +1978,41 @@ mod tests {
             !ok,
             "verification should be false when no signature is embedded"
         );
+    }
+
+    #[test]
+    fn test_new_letter() {
+        let patient_data_dir = TempDir::new().expect("Failed to create temp dir");
+        let cfg = test_cfg(patient_data_dir.path());
+
+        let author = Author {
+            name: "Test Author".to_string(),
+            role: "Clinician".to_string(),
+            email: "test@example.com".to_string(),
+            registrations: vec![],
+            signature: None,
+            certificate: None,
+        };
+
+        let service = ClinicalService::new(cfg.clone());
+        let service = service
+            .initialise(author.clone(), "Test Hospital".to_string())
+            .expect("initialise should succeed");
+
+        let result = service.new_letter(
+            &author,
+            "Test Hospital".to_string(),
+            "Letter content".to_string(),
+        );
+
+        assert!(result.is_ok(), "new_letter should return Ok");
+        let output = result.unwrap();
+        println!("{}", output);
+        assert!(output.contains("Test Author"));
+        assert!(output.contains("Clinician"));
+        assert!(output.contains("test@example.com"));
+        assert!(output.contains("Test Hospital"));
+        assert!(output.contains("Letter content"));
+        assert!(output.contains("TimestampID:"));
     }
 }
