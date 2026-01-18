@@ -9,7 +9,9 @@
 use crate::author::Author;
 use crate::config::CoreConfig;
 use crate::error::{PatientError, PatientResult};
-use crate::git::{GitService, VprCommitAction, VprCommitDomain, VprCommitMessage};
+use crate::versioned_files::{
+    VersionedFileService, VprCommitAction, VprCommitDomain, VprCommitMessage,
+};
 use crate::ShardableUuid;
 use api_shared::pb;
 use chrono;
@@ -103,10 +105,10 @@ impl DemographicsService {
         fs::write(&filename, json).map_err(PatientError::FileWrite)?;
 
         // Initialise Git repository for the patient
-        let repo = GitService::init(&patient_dir)?;
+        let repo = VersionedFileService::init(&patient_dir)?;
         let msg = VprCommitMessage::new(
             VprCommitDomain::Record,
-            VprCommitAction::Init,
+            VprCommitAction::Create,
             "Demographics record created",
             care_location,
         )?;

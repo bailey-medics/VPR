@@ -17,9 +17,12 @@ use crate::author::Author;
 use crate::config::CoreConfig;
 use crate::constants::CLINICAL_DIR_NAME;
 use crate::error::{PatientError, PatientResult};
-use crate::git::{GitService, VprCommitAction, VprCommitDomain, VprCommitMessage};
+use crate::paths::clinical::letter::LetterPaths;
 use crate::repositories::shared::{
     copy_dir_recursive, create_uuid_and_shard_dir, validate_template, TemplateDirKind,
+};
+use crate::versioned_files::{
+    FileToWrite, VersionedFileService, VprCommitAction, VprCommitDomain, VprCommitMessage,
 };
 use crate::ShardableUuid;
 use openehr::{
@@ -72,6 +75,27 @@ pub struct Uninitialised;
 #[derive(Clone, Copy, Debug)]
 pub struct Initialised {
     clinical_id: Uuid,
+}
+
+/// Result of creating a new letter.
+///
+/// Contains the generated paths and input data for verification and testing.
+#[derive(Debug, Clone)]
+pub struct LetterResult {
+    /// Full path to the letter's body.md file
+    pub body_md_path: PathBuf,
+    /// Author name
+    pub author_name: String,
+    /// Author role
+    pub author_role: String,
+    /// Author email
+    pub author_email: String,
+    /// The care location provided
+    pub care_location: String,
+    /// The letter content provided
+    pub letter_content: String,
+    /// The generated timestamp ID
+    pub timestamp_id: String,
 }
 
 /// Service for managing clinical record operations.
@@ -200,7 +224,7 @@ impl ClinicalService<Uninitialised> {
 
         let commit_message = VprCommitMessage::new(
             VprCommitDomain::Record,
-            VprCommitAction::Init,
+            VprCommitAction::Create,
             "Initialised the clinical record",
             care_location,
         )?;
@@ -210,7 +234,7 @@ impl ClinicalService<Uninitialised> {
             create_uuid_and_shard_dir(&clinical_dir, ShardableUuid::new)?;
 
         let result: PatientResult<Uuid> = (|| {
-            let repo = GitService::init(&patient_dir)?;
+            let repo = VersionedFileService::init(&patient_dir)?;
 
             let template_dir = self.cfg.clinical_template_dir().to_path_buf();
             validate_template(&TemplateDirKind::Clinical, &template_dir)?;
@@ -345,13 +369,15 @@ impl ClinicalService<Initialised> {
         let yaml_content =
             ehr_status_render(rm_version, Some(&previous_data), None, external_reference)?;
 
-        self.write_and_commit_file(
+        let repo = VersionedFileService::open(&patient_dir)?;
+        repo.write_and_commit_files(
             author,
             &msg,
-            Path::new(EhrStatus.filename()),
-            &patient_dir,
-            &yaml_content,
-            Some(&previous_data),
+            &[FileToWrite {
+                relative_path: Path::new(EhrStatus.filename()),
+                content: &yaml_content,
+                old_content: Some(&previous_data),
+            }],
         )
     }
 
@@ -361,13 +387,35 @@ impl ClinicalService<Initialised> {
         care_location: String,
         letter_content: String,
     ) -> PatientResult<String> {
-        let timestamp_id = TimestampIdGenerator::generate(None)?;
+        author.validate_commit_author()?;
 
-        let result = format!(
-            "Author: {} ({}), Email: {}, Location: {}, Content: {}, TimestampID: {}",
-            author.name, author.role, author.email, care_location, letter_content, timestamp_id
-        );
-        Ok(result)
+        let msg = VprCommitMessage::new(
+            VprCommitDomain::Record,
+            VprCommitAction::Create,
+            "Created new letter",
+            care_location,
+        )?;
+
+        let timestamp_id = TimestampIdGenerator::generate(None)?;
+        let letter_paths = LetterPaths::new(&timestamp_id);
+
+        let clinical_uuid = ShardableUuid::parse(&self.clinical_id().simple().to_string())?;
+        let patient_dir = self.clinical_patient_dir(&clinical_uuid);
+
+        let body_md_relative = letter_paths.body_md();
+
+        let repo = VersionedFileService::open(&patient_dir)?;
+        repo.write_and_commit_files(
+            author,
+            &msg,
+            &[FileToWrite {
+                relative_path: &body_md_relative,
+                content: &letter_content,
+                old_content: None,
+            }],
+        )?;
+
+        Ok(timestamp_id.to_string())
     }
 }
 
@@ -402,69 +450,6 @@ impl<S> ClinicalService<S> {
     fn clinical_patient_dir(&self, clinical_uuid: &ShardableUuid) -> PathBuf {
         let clinical_dir = self.clinical_dir();
         clinical_uuid.sharded_dir(&clinical_dir)
-    }
-
-    /// Writes content to a file and commits it to Git with rollback on failure.
-    ///
-    /// This internal helper wraps file write and Git commit operations in a closure,
-    /// enabling automatic rollback if either operation fails. If the file previously
-    /// existed, it is restored to its previous state on error; otherwise, it is removed.
-    ///
-    /// # Arguments
-    ///
-    /// * `author` - The author information for the Git commit.
-    /// * `msg` - The commit message structure containing domain, action, and location.
-    /// * `file_path_relative` - The relative path to the file within the patient directory.
-    /// * `patient_dir` - The patient's repository directory (absolute path).
-    /// * `content` - The new content to write to the file.
-    /// * `old_content` - The previous file content for rollback. `None` if this is a new file.
-    ///
-    /// # Returns
-    ///
-    /// Returns `Ok(())` if both the file write and Git commit succeed.
-    ///
-    /// # Errors
-    ///
-    /// Returns a `PatientError` if:
-    /// - The file write fails ([`PatientError::FileWrite`])
-    /// - Opening the Git repository fails (various Git-related error variants)
-    /// - The Git commit fails (various Git-related error variants)
-    ///
-    /// On error, attempts to rollback the file to its previous state.
-    fn write_and_commit_file(
-        &self,
-        author: &Author,
-        msg: &VprCommitMessage,
-        file_path_relative: &Path,
-        patient_dir: &Path,
-        content: &str,
-        old_content: Option<&str>,
-    ) -> PatientResult<()> {
-        let full_path = patient_dir.join(file_path_relative);
-
-        let result: PatientResult<()> = (|| {
-            fs::write(&full_path, content).map_err(PatientError::FileWrite)?;
-
-            let repo = GitService::open(patient_dir)?;
-            repo.commit_paths(author, msg, &[file_path_relative.to_path_buf()])?;
-
-            Ok(())
-        })();
-
-        match result {
-            Ok(()) => Ok(()),
-            Err(write_error) => {
-                match old_content {
-                    Some(contents) => {
-                        let _ = fs::write(&full_path, contents);
-                    }
-                    None => {
-                        let _ = fs::remove_file(&full_path);
-                    }
-                }
-                Err(write_error)
-            }
-        }
     }
 }
 
@@ -1521,7 +1506,7 @@ mod tests {
         let commit = head.peel_to_commit().expect("Failed to get commit");
         assert_eq!(
             commit.message().unwrap(),
-            "record:init: Initialised the clinical record\n\nAuthor-Name: Test Author\nAuthor-Role: Clinician\nCare-Location: Test Hospital"
+            "record:create: Initialised the clinical record\n\nAuthor-Name: Test Author\nAuthor-Role: Clinician\nCare-Location: Test Hospital"
         );
     }
 
@@ -1660,7 +1645,7 @@ mod tests {
         fs::create_dir_all(&patient_dir).expect("Failed to create patient dir");
 
         // Initialize Git repo but don't create ehr_status.yaml
-        GitService::init(&patient_dir).expect("Failed to init git");
+        VersionedFileService::init(&patient_dir).expect("Failed to init git");
 
         let author = Author {
             name: "Test Author".to_string(),
@@ -1703,7 +1688,7 @@ mod tests {
         fs::create_dir_all(&patient_dir).expect("Failed to create patient dir");
 
         // Initialize Git repo
-        GitService::init(&patient_dir).expect("Failed to init git");
+        VersionedFileService::init(&patient_dir).expect("Failed to init git");
 
         // Write corrupted YAML (missing required rm_version field)
         let ehr_status_file = patient_dir.join(EhrStatus.filename());
@@ -1781,8 +1766,11 @@ mod tests {
         let clinical_uuid_str = clinical_uuid.clinical_id().simple().to_string();
 
         // Verify the signature
-        let verify_result =
-            GitService::verify_commit_signature(&clinical_dir, &clinical_uuid_str, &public_key_pem);
+        let verify_result = VersionedFileService::verify_commit_signature(
+            &clinical_dir,
+            &clinical_uuid_str,
+            &public_key_pem,
+        );
         assert!(
             verify_result.is_ok(),
             "verify_commit_signature should succeed"
@@ -1795,8 +1783,11 @@ mod tests {
             .verifying_key()
             .to_public_key_pem(p256::pkcs8::LineEnding::LF)
             .expect("Failed to encode wrong public key");
-        let wrong_verify =
-            GitService::verify_commit_signature(&clinical_dir, &clinical_uuid_str, &wrong_pub_pem);
+        let wrong_verify = VersionedFileService::verify_commit_signature(
+            &clinical_dir,
+            &clinical_uuid_str,
+            &wrong_pub_pem,
+        );
         assert!(wrong_verify.is_ok(), "verify with wrong key should succeed");
         assert!(
             !wrong_verify.unwrap(),
@@ -1838,14 +1829,18 @@ mod tests {
         let clinical_uuid_str = clinical_uuid.clinical_id().simple().to_string();
 
         // Offline verification: no external key material is provided.
-        let ok = GitService::verify_commit_signature(&clinical_dir, &clinical_uuid_str, "")
-            .expect("verify_commit_signature should succeed");
+        let ok =
+            VersionedFileService::verify_commit_signature(&clinical_dir, &clinical_uuid_str, "")
+                .expect("verify_commit_signature should succeed");
         assert!(ok, "embedded public key verification should succeed");
 
         // Compatibility: verification still works with an explicit public key.
-        let ok =
-            GitService::verify_commit_signature(&clinical_dir, &clinical_uuid_str, &public_key_pem)
-                .expect("verify_commit_signature should succeed");
+        let ok = VersionedFileService::verify_commit_signature(
+            &clinical_dir,
+            &clinical_uuid_str,
+            &public_key_pem,
+        )
+        .expect("verify_commit_signature should succeed");
         assert!(ok, "verification with explicit public key should succeed");
     }
 
@@ -1972,8 +1967,9 @@ mod tests {
             "unsigned commits should not contain an embedded signature payload"
         );
 
-        let ok = GitService::verify_commit_signature(&clinical_dir, &clinical_uuid_str, "")
-            .expect("verify_commit_signature should succeed");
+        let ok =
+            VersionedFileService::verify_commit_signature(&clinical_dir, &clinical_uuid_str, "")
+                .expect("verify_commit_signature should succeed");
         assert!(
             !ok,
             "verification should be false when no signature is embedded"
@@ -2006,13 +2002,13 @@ mod tests {
         );
 
         assert!(result.is_ok(), "new_letter should return Ok");
-        let output = result.unwrap();
-        println!("{}", output);
-        assert!(output.contains("Test Author"));
-        assert!(output.contains("Clinician"));
-        assert!(output.contains("test@example.com"));
-        assert!(output.contains("Test Hospital"));
-        assert!(output.contains("Letter content"));
-        assert!(output.contains("TimestampID:"));
+        let timestamp_id = result.unwrap();
+        println!("Timestamp ID: {}", timestamp_id);
+
+        assert!(!timestamp_id.is_empty());
+        assert!(
+            timestamp_id.contains("Z-"),
+            "timestamp_id should contain 'Z-' separator"
+        );
     }
 }

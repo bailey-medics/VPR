@@ -157,29 +157,65 @@ impl fmt::Display for VprCommitDomain {
 /// These define the specific operation being performed on patient data.
 /// Actions are designed to be machine-readable and support audit trails.
 ///
-/// Safety/intent: Do not include patient identifiers or raw clinical data in commit messages.
+/// # Immutability Philosophy
+///
+/// VPR maintains an **immutable audit trail** - nothing is ever truly deleted from the
+/// version control history. This ensures complete auditability and supports patient safety
+/// by preserving all changes made to a record.
+///
+/// # Commit Actions
+///
+/// - **`Create`**: Used when adding new content to an existing record (e.g., creating a new
+///   letter, adding a new observation, initializing a new patient record). This is the
+///   most common action for new data entry.
+///
+/// - **`Update`**: Used when modifying existing content (e.g., correcting a typo in a letter,
+///   updating demographics, linking records). The previous version remains in Git history.
+///
+/// - **`Superseded`**: Used when newer information makes previous content obsolete
+///   (e.g., a revised diagnosis, an updated care plan). The superseded content remains
+///   in history but is marked as no longer current. This is distinct from `Update` as it
+///   represents a clinical decision that previous information should be replaced rather
+///   than corrected.
+///
+/// - **`Redact`**: Used when data was entered into the wrong patient's repository
+///   by mistake (can occur in clinical, demographics, or coordination repositories).
+///   The data is removed from the current view, encrypted, and stored in the
+///   Redaction Retention Repository with a tombstone/pointer remaining in the original
+///   repository's Git history. This maintains audit trail integrity while protecting
+///   patient privacy. **This is the only action that removes data from active view**,
+///   but even redacted data is preserved in secure storage for audit purposes.
+///
+/// # What VPR Never Does
+///
+/// VPR **never deletes data** from the version control history. Even redacted data is
+/// moved to secure storage rather than destroyed. This immutability is fundamental to:
+///
+/// - Patient safety: all changes are traceable
+/// - Legal compliance: complete audit trail preservation
+/// - Clinical governance: accountability for all modifications
+/// - Research and quality improvement: historical data remains available for authorized use
+///
+/// # Safety/Intent
+///
+/// Do not include patient identifiers or raw clinical data in commit messages.
+/// Use structured trailers for metadata only.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum VprCommitAction {
-    Init,
-    Add,
+    Create,
     Update,
-    Remove,
-    Correct,
-    Verify,
-    Close,
+    Superseded,
+    Redact,
 }
 
 impl VprCommitAction {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
-            Self::Init => "init",
-            Self::Add => "add",
+            Self::Create => "create",
             Self::Update => "update",
-            Self::Remove => "remove",
-            Self::Correct => "correct",
-            Self::Verify => "verify",
-            Self::Close => "close",
+            Self::Superseded => "superseded",
+            Self::Redact => "redact",
         }
     }
 }
@@ -447,7 +483,7 @@ impl VprCommitMessage {
     /// - `Author-Role`
     /// - `Author-Registration` (0..N; sorted)
     ///
-    /// This is the method used by `GitService` for creating commits.
+    /// This is the method used by `VersionedFileService` for creating commits.
     ///
     /// # Arguments
     ///
@@ -540,12 +576,30 @@ impl VprCommitMessage {
 ///
 /// This bundles the repository handle and its workdir to make workflows like “initialise repo
 /// then commit files” ergonomic at call sites.
-pub struct GitService {
+/// Represents a file to be written and committed.
+///
+/// Used with [`VersionedFileService::write_and_commit_files`] to write multiple files
+/// in a single atomic commit operation.
+#[derive(Debug, Clone)]
+pub struct FileToWrite<'a> {
+    /// The relative path to the file within the repository directory.
+    pub relative_path: &'a Path,
+    /// The new content to write to the file.
+    pub content: &'a str,
+    /// The previous file content for rollback. `None` if this is a new file.
+    pub old_content: Option<&'a str>,
+}
+
+/// Service for managing versioned files with Git version control.
+///
+/// `VersionedFileService` provides high-level operations for working with Git repositories,
+/// including atomic file write and commit operations with automatic rollback on failure.
+pub struct VersionedFileService {
     repo: git2::Repository,
     workdir: PathBuf,
 }
 
-impl GitService {
+impl VersionedFileService {
     /// Create a new repository at `workdir`.
     pub(crate) fn init(workdir: &Path) -> PatientResult<Self> {
         let repo = git2::Repository::init(workdir).map_err(PatientError::GitInit)?;
@@ -639,6 +693,114 @@ impl GitService {
     ) -> PatientResult<git2::Oid> {
         let rendered = message.render_with_author(author)?;
         self.commit_paths_rendered(author, &rendered, relative_paths)
+    }
+
+    /// Writes multiple files and commits them to Git with rollback on failure.
+    ///
+    /// This method creates any necessary parent directories, writes all files,
+    /// and commits them in a single Git commit. All operations are wrapped in a closure
+    /// to enable automatic rollback if any operation fails. On error:
+    /// - Files that previously existed are restored to their previous state
+    /// - New files are removed
+    /// - Any directories created during this operation are removed
+    ///
+    /// # Arguments
+    ///
+    /// * `author` - The author information for the Git commit.
+    /// * `msg` - The commit message structure containing domain, action, and location.
+    /// * `files` - Slice of [`FileToWrite`] structs describing files to write.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if directory creation, all file writes, and Git commit succeed.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `PatientError` if:
+    /// - Parent directory creation fails ([`PatientError::FileWrite`])
+    /// - Any file write fails ([`PatientError::FileWrite`])
+    /// - The Git commit fails (various Git-related error variants)
+    ///
+    /// On error, attempts to rollback all files and any newly created directories.
+    pub(crate) fn write_and_commit_files(
+        &self,
+        author: &Author,
+        msg: &VprCommitMessage,
+        files: &[FileToWrite],
+    ) -> PatientResult<()> {
+        let mut created_dirs: Vec<PathBuf> = Vec::new();
+        let mut written_files: Vec<(PathBuf, Option<String>)> = Vec::new();
+
+        let result: PatientResult<()> = (|| {
+            // Collect all unique parent directories needed
+            let mut dirs_needed = std::collections::HashSet::new();
+            for file in files {
+                let full_path = self.workdir.join(file.relative_path);
+                if let Some(parent) = full_path.parent() {
+                    let mut current = parent;
+                    while current != self.workdir && !current.exists() {
+                        dirs_needed.insert(current.to_path_buf());
+                        if let Some(parent_of_current) = current.parent() {
+                            current = parent_of_current;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Sort directories by depth (shallowest first) for creation
+            let mut dirs_to_create: Vec<PathBuf> = dirs_needed.into_iter().collect();
+            dirs_to_create.sort_by_key(|p| p.components().count());
+
+            // Create directories
+            for dir in &dirs_to_create {
+                std::fs::create_dir(dir).map_err(PatientError::FileWrite)?;
+                created_dirs.push(dir.clone());
+            }
+
+            // Write all files
+            for file in files {
+                let full_path = self.workdir.join(file.relative_path);
+                let old_content = file.old_content.map(|s| s.to_string());
+
+                std::fs::write(&full_path, file.content).map_err(PatientError::FileWrite)?;
+                written_files.push((full_path, old_content));
+            }
+
+            // Commit all files in a single commit
+            let paths: Vec<PathBuf> = files
+                .iter()
+                .map(|f| f.relative_path.to_path_buf())
+                .collect();
+            self.commit_paths(author, msg, &paths)?;
+
+            Ok(())
+        })();
+
+        match result {
+            Ok(()) => Ok(()),
+            Err(write_error) => {
+                // Rollback file changes (in reverse order)
+                for (full_path, old_content) in written_files.iter().rev() {
+                    match old_content {
+                        Some(contents) => {
+                            let _ = std::fs::write(full_path, contents);
+                        }
+                        None => {
+                            let _ = std::fs::remove_file(full_path);
+                        }
+                    }
+                }
+
+                // Rollback newly created directories (from deepest to shallowest)
+                for dir in created_dirs.iter().rev() {
+                    let _ = std::fs::remove_dir(dir);
+                }
+
+                Err(write_error)
+            }
+        }
     }
 
     fn commit_paths_rendered(
@@ -969,15 +1131,15 @@ mod tests {
 
     #[test]
     fn action_serialises_lowercase() {
-        let s = serde_json::to_string(&VprCommitAction::Init).unwrap();
-        assert_eq!(s, "\"init\"");
+        let s = serde_json::to_string(&VprCommitAction::Create).unwrap();
+        assert_eq!(s, "\"create\"");
     }
 
     #[test]
     fn can_get_domain() {
         let msg = VprCommitMessage::new(
             VprCommitDomain::Record,
-            VprCommitAction::Init,
+            VprCommitAction::Create,
             "test",
             "location",
         )
@@ -989,19 +1151,19 @@ mod tests {
     fn can_get_action() {
         let msg = VprCommitMessage::new(
             VprCommitDomain::Record,
-            VprCommitAction::Init,
+            VprCommitAction::Create,
             "test",
             "location",
         )
         .unwrap();
-        assert_eq!(msg.action(), VprCommitAction::Init);
+        assert_eq!(msg.action(), VprCommitAction::Create);
     }
 
     #[test]
     fn can_get_summary() {
         let msg = VprCommitMessage::new(
             VprCommitDomain::Record,
-            VprCommitAction::Init,
+            VprCommitAction::Create,
             "test summary",
             "location",
         )
@@ -1013,7 +1175,7 @@ mod tests {
     fn can_get_trailers() {
         let msg = VprCommitMessage::new(
             VprCommitDomain::Record,
-            VprCommitAction::Init,
+            VprCommitAction::Create,
             "test",
             "location",
         )
@@ -1029,7 +1191,7 @@ mod tests {
     #[test]
     fn into_repo_consumes_and_returns_underlying() {
         let temp_dir = TempDir::new().unwrap();
-        let service = GitService::init(temp_dir.path()).unwrap();
+        let service = VersionedFileService::init(temp_dir.path()).unwrap();
         let repo = service.into_repo();
         let workdir = repo.workdir().expect("repo should have workdir");
         let expected = temp_dir.path();
@@ -1072,14 +1234,14 @@ mod tests {
     fn render_without_trailers_is_single_line() {
         let msg = VprCommitMessage::new(
             VprCommitDomain::Record,
-            VprCommitAction::Init,
+            VprCommitAction::Create,
             "Patient record created",
             "St Elsewhere Hospital",
         )
         .unwrap();
         assert_eq!(
             msg.render().unwrap(),
-            "record:init: Patient record created\n\nCare-Location: St Elsewhere Hospital"
+            "record:create: Patient record created\n\nCare-Location: St Elsewhere Hospital"
         );
     }
 
@@ -1087,7 +1249,7 @@ mod tests {
     fn render_with_trailers_matches_git_trailer_format() {
         let msg = VprCommitMessage::new(
             VprCommitDomain::Record,
-            VprCommitAction::Init,
+            VprCommitAction::Create,
             "Patient record created",
             "St Elsewhere Hospital",
         )
@@ -1099,7 +1261,7 @@ mod tests {
 
         assert_eq!(
             msg.render().unwrap(),
-            "record:init: Patient record created\n\nCare-Location: St Elsewhere Hospital\nAuthority: GMC\nChange-Reason: Correction"
+            "record:create: Patient record created\n\nCare-Location: St Elsewhere Hospital\nAuthority: GMC\nChange-Reason: Correction"
         );
     }
 
@@ -1116,7 +1278,7 @@ mod tests {
 
         let msg = VprCommitMessage::new(
             VprCommitDomain::Record,
-            VprCommitAction::Init,
+            VprCommitAction::Create,
             "Patient record created",
             "St Elsewhere Hospital",
         )
@@ -1126,7 +1288,7 @@ mod tests {
 
         assert_eq!(
             msg.render_with_author(&author).unwrap(),
-            "record:init: Patient record created\n\nAuthor-Name: Test Author\nAuthor-Role: Clinician\nCare-Location: St Elsewhere Hospital\nChange-Reason: Init"
+            "record:create: Patient record created\n\nAuthor-Name: Test Author\nAuthor-Role: Clinician\nCare-Location: St Elsewhere Hospital\nChange-Reason: Init"
         );
     }
 
@@ -1134,7 +1296,7 @@ mod tests {
     fn rejects_multiline_summary() {
         let err = VprCommitMessage::new(
             VprCommitDomain::Record,
-            VprCommitAction::Init,
+            VprCommitAction::Create,
             "line1\nline2",
             "St Elsewhere Hospital",
         )
@@ -1147,7 +1309,7 @@ mod tests {
     fn rejects_missing_care_location() {
         let err = VprCommitMessage::new(
             VprCommitDomain::Record,
-            VprCommitAction::Init,
+            VprCommitAction::Create,
             "Patient record created",
             "   ",
         )
@@ -1160,7 +1322,7 @@ mod tests {
     fn rejects_multiline_care_location() {
         let err = VprCommitMessage::new(
             VprCommitDomain::Record,
-            VprCommitAction::Init,
+            VprCommitAction::Create,
             "Patient record created",
             "St Elsewhere\nHospital",
         )

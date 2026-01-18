@@ -11,10 +11,10 @@ use vpr_certificates::Certificate;
 use vpr_core::{
     config::rm_system_version_from_env_value,
     constants,
-    git::GitService,
     repositories::clinical::ClinicalService,
     repositories::demographics::DemographicsService,
     repositories::shared::{resolve_clinical_template_dir, validate_template, TemplateDirKind},
+    versioned_files::VersionedFileService,
     Author, AuthorRegistration, CoreConfig, PatientService, ShardableUuid,
 };
 
@@ -515,7 +515,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             let clinical_dir = cfg.patient_data_dir().join(constants::CLINICAL_DIR_NAME);
-            match GitService::verify_commit_signature(
+            match VersionedFileService::verify_commit_signature(
                 &clinical_dir,
                 &clinical_uuid,
                 &public_key_pem,
