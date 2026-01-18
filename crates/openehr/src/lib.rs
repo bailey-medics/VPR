@@ -16,12 +16,16 @@ use vpr_uuid::TimestampId;
 
 use serde::{Deserialize, Serialize};
 
+pub mod clinical_list;
 pub mod data_types;
 pub mod rm_1_1_0;
 pub mod validation;
 
 // Re-export commonly used validation functions
 pub use validation::validate_namespace_uri_safe;
+
+// Re-export public clinical list types
+pub use clinical_list::{ClinicalList, ClinicalListItem, CodedConcept};
 
 /// Supported openEHR RM versions.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -242,6 +246,7 @@ impl Letter {
         composer_name: Option<&str>,
         composer_role: Option<&str>,
         start_time: Option<DateTime<Utc>>,
+        clinical_lists: Option<&[ClinicalList]>,
     ) -> Result<String, OpenEhrError> {
         match rm_version {
             RmVersion::rm_1_1_0 => rm_1_1_0::letter::composition_render(
@@ -250,6 +255,7 @@ impl Letter {
                 composer_name,
                 composer_role,
                 start_time,
+                clinical_lists,
             ),
         }
     }

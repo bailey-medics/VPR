@@ -26,7 +26,8 @@ use crate::versioned_files::{
 };
 use crate::ShardableUuid;
 use openehr::{
-    extract_rm_version, validate_namespace_uri_safe, EhrId, EhrStatus, ExternalReference, Letter,
+    extract_rm_version, validate_namespace_uri_safe, ClinicalList, EhrId, EhrStatus,
+    ExternalReference, Letter,
 };
 use std::{
     fs, io,
@@ -408,6 +409,7 @@ impl ClinicalService<Initialised> {
         author: &Author,
         care_location: String,
         letter_content: String,
+        clinical_lists: Option<&[ClinicalList]>,
     ) -> PatientResult<String> {
         author.validate_commit_author()?;
 
@@ -431,12 +433,13 @@ impl ClinicalService<Initialised> {
         let rm_version = self.cfg.rm_system_version();
         let start_time = timestamp_id.timestamp();
         let composition_content = Letter::composition_render(
-            rm_version,                    // RM version for dispatch
-            None,                          // No previous composition data
-            Some(&timestamp_id),           // UID (timestamp ID)
-            Some(&author.name),            // Composer name
-            Some("Clinical Practitioner"), // Composer role
-            Some(start_time),              // Start time as DateTime<Utc>
+            rm_version,
+            None,
+            Some(&timestamp_id),
+            Some(&author.name),
+            Some("Clinical Practitioner"),
+            Some(start_time),
+            clinical_lists,
         )
         .map_err(|e| {
             PatientError::InvalidInput(format!("Failed to create letter composition: {}", e))
@@ -2042,6 +2045,7 @@ mod tests {
             &author,
             "Test Hospital".to_string(),
             "Letter content".to_string(),
+            None,
         );
 
         assert!(result.is_ok(), "new_letter should return Ok");

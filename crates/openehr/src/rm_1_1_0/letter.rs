@@ -54,13 +54,13 @@ impl Composition {
     }
 }
 
-/// Default archetype node ID for COMPOSITION (letter).
+/// Default archetype node ID for the letter Composition data.
 pub const ARCHETYPE_NODE_ID: &str = "openEHR-EHR-COMPOSITION.correspondence.v1";
 
-/// Default name for COMPOSITION (letter).
+/// Default name for the letter Composition data.
 pub const NAME: &str = "Clinical letter";
 
-/// Default category for COMPOSITION (letter).
+/// Default category for the letter Composition data.
 pub const CATEGORY: &str = "event";
 
 /// Composer information for the letter.
@@ -125,8 +125,15 @@ pub const EVALUATION_NAME: &str = "Clinical correspondence";
 /// Evaluation data wrapper.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct EvaluationData {
-    pub narrative: Narrative,
+#[serde(untagged)]
+pub enum EvaluationData {
+    Narrative {
+        narrative: Narrative,
+    },
+    Snapshot {
+        kind: DvText,
+        items: Vec<SnapshotItem>,
+    },
 }
 
 /// Narrative content that can reference an external file.
@@ -143,6 +150,74 @@ pub const NARRATIVE_TYPE: &str = "external_text";
 
 /// Default path for narrative body.
 pub const NARRATIVE_PATH: &str = "./body.md";
+
+// ============================================================================
+// Snapshot EVALUATION – internal RM structures
+// ============================================================================
+
+/// RM-specific snapshot EVALUATION (maps internally from public ClinicalList).
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Snapshot {
+    archetype_node_id: String,
+    name: DvText,
+    data: SnapshotData,
+}
+
+/// Default archetype node ID for snapshot EVALUATION.
+const SNAPSHOT_ARCHETYPE_NODE_ID: &str = "openEHR-EHR-EVALUATION.snapshot.v1";
+
+/// Snapshot data structure.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SnapshotData {
+    kind: DvText,
+    items: Vec<SnapshotItem>,
+}
+
+/// A single item within a snapshot.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SnapshotItem {
+    pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<Code>,
+}
+
+/// A coded concept with terminology and value.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Code {
+    pub terminology: String,
+    pub value: String,
+}
+
+impl From<&crate::clinical_list::ClinicalList> for Snapshot {
+    fn from(list: &crate::clinical_list::ClinicalList) -> Self {
+        Snapshot {
+            archetype_node_id: SNAPSHOT_ARCHETYPE_NODE_ID.to_string(),
+            name: DvText {
+                value: list.name.clone(),
+            },
+            data: SnapshotData {
+                kind: DvText {
+                    value: list.kind.clone(),
+                },
+                items: list
+                    .items
+                    .iter()
+                    .map(|item| SnapshotItem {
+                        text: item.text.clone(),
+                        code: item.code.as_ref().map(|c| Code {
+                            terminology: c.terminology.clone(),
+                            value: c.value.clone(),
+                        }),
+                    })
+                    .collect(),
+            },
+        }
+    }
+}
 
 /// Parse an RM 1.x `COMPOSITION` (letter) from YAML text.
 ///
@@ -195,6 +270,7 @@ pub fn composition_parse(yaml_text: &str) -> Result<Composition, OpenEhrError> {
 /// * `composer_name` - Optional composer name to update.
 /// * `composer_role` - Optional composer role to update.
 /// * `start_time` - Optional start time to update as a UTC datetime.
+/// * `clinical_lists` - Optional clinical lists to include as snapshot evaluations.
 ///
 /// # Returns
 ///
@@ -213,6 +289,7 @@ pub fn composition_render(
     composer_name: Option<&str>,
     composer_role: Option<&str>,
     start_time: Option<DateTime<Utc>>,
+    clinical_lists: Option<&[crate::clinical_list::ClinicalList]>,
 ) -> Result<String, OpenEhrError> {
     let previous_yaml = previous_data.map(composition_parse).transpose()?;
 
@@ -256,7 +333,7 @@ pub fn composition_render(
                 )
             })?;
 
-            letter_init(version, &id, name, role, time).to_string()
+            letter_init(version, &id, name, role, time, clinical_lists).to_string()
         }
     }
 }
@@ -272,6 +349,7 @@ pub fn composition_render(
 /// * `composer_name` - Composer's name.
 /// * `composer_role` - Composer's role.
 /// * `start_time` - Context start time as a UTC datetime.
+/// * `clinical_lists` - Optional clinical lists to include as snapshot evaluations.
 ///
 /// # Returns
 ///
@@ -282,7 +360,41 @@ fn letter_init(
     composer_name: &str,
     composer_role: &str,
     start_time: DateTime<Utc>,
+    clinical_lists: Option<&[crate::clinical_list::ClinicalList]>,
 ) -> Composition {
+    // Start with the narrative evaluation
+    let mut section_items = vec![SectionItem {
+        evaluation: Evaluation {
+            archetype_node_id: EVALUATION_ARCHETYPE_NODE_ID.to_string(),
+            name: DvText {
+                value: EVALUATION_NAME.to_string(),
+            },
+            data: EvaluationData::Narrative {
+                narrative: Narrative {
+                    type_: NARRATIVE_TYPE.to_string(),
+                    path: NARRATIVE_PATH.to_string(),
+                },
+            },
+        },
+    }];
+
+    // Add snapshot evaluations if provided
+    if let Some(lists) = clinical_lists {
+        for list in lists {
+            let snapshot: Snapshot = list.into();
+            section_items.push(SectionItem {
+                evaluation: Evaluation {
+                    archetype_node_id: snapshot.archetype_node_id,
+                    name: snapshot.name,
+                    data: EvaluationData::Snapshot {
+                        kind: snapshot.data.kind,
+                        items: snapshot.data.items,
+                    },
+                },
+            });
+        }
+    }
+
     Composition {
         rm_version: rm_version.to_string(),
         uid: uid.to_string(),
@@ -304,20 +416,7 @@ fn letter_init(
                 name: DvText {
                     value: SECTION_NAME.to_string(),
                 },
-                items: vec![SectionItem {
-                    evaluation: Evaluation {
-                        archetype_node_id: EVALUATION_ARCHETYPE_NODE_ID.to_string(),
-                        name: DvText {
-                            value: EVALUATION_NAME.to_string(),
-                        },
-                        data: EvaluationData {
-                            narrative: Narrative {
-                                type_: NARRATIVE_TYPE.to_string(),
-                                path: NARRATIVE_PATH.to_string(),
-                            },
-                        },
-                    },
-                }],
+                items: section_items,
             },
         }],
     }
@@ -473,6 +572,7 @@ content:
             Some("Dr John Doe"),
             Some("Senior Consultant"),
             Some(start_time),
+            None,
         )
         .expect("composition_render should work");
 
@@ -518,8 +618,9 @@ content:
                 path: "./body.md"
 "#;
 
-        let result_yaml = composition_render(Some(yaml), None, Some("Dr Updated Name"), None, None)
-            .expect("composition_render should work with partial update");
+        let result_yaml =
+            composition_render(Some(yaml), None, Some("Dr Updated Name"), None, None, None)
+                .expect("composition_render should work with partial update");
 
         let result = composition_parse(&result_yaml).expect("should parse returned YAML");
 
@@ -544,7 +645,14 @@ content:
         let start_time = DateTime::parse_from_rfc3339("2026-01-12T00:00:00Z")
             .expect("valid datetime")
             .with_timezone(&Utc);
-        let letter = letter_init("1.0.4", "test-uid", "Dr Test", "Test Role", start_time);
+        let letter = letter_init(
+            "1.0.4",
+            "test-uid",
+            "Dr Test",
+            "Test Role",
+            start_time,
+            None,
+        );
 
         assert_eq!(letter.rm_version, "1.0.4");
         assert_eq!(letter.uid, "test-uid");
@@ -566,7 +674,14 @@ content:
         let start_time = DateTime::parse_from_rfc3339("2026-01-12T00:00:00Z")
             .expect("valid datetime")
             .with_timezone(&Utc);
-        let letter = letter_init("1.0.4", "test-uid", "Dr Test", "Test Role", start_time);
+        let letter = letter_init(
+            "1.0.4",
+            "test-uid",
+            "Dr Test",
+            "Test Role",
+            start_time,
+            None,
+        );
 
         let yaml_string = letter.to_string().expect("to_string should work");
 
@@ -588,8 +703,15 @@ content:
         let start_time = DateTime::parse_from_rfc3339("2026-01-18T00:00:00Z")
             .expect("valid datetime")
             .with_timezone(&Utc);
-        let err = composition_render(None, None, Some("Dr Test"), Some("Role"), Some(start_time))
-            .expect_err("should reject when creating without uid");
+        let err = composition_render(
+            None,
+            None,
+            Some("Dr Test"),
+            Some("Role"),
+            Some(start_time),
+            None,
+        )
+        .expect_err("should reject when creating without uid");
 
         match err {
             OpenEhrError::Translation(msg) => {
@@ -613,6 +735,7 @@ content:
             Some("Dr New"),
             Some("New Role"),
             Some(start_time),
+            None,
         )
         .expect("composition_render should create new letter");
 
