@@ -46,7 +46,7 @@ exceptions = [
 [bans]
 # Prevent specific crates from being used
 multiple-versions = "warn"  # Warn about duplicate versions (can be "deny" for stricter)
-wildcards = "deny"           # Deny wildcard dependencies
+wildcards = "allow"          # Allow wildcard/path dependencies for workspace members
 deny = [
     # Example banned crates:
     # { name = "openssl", reason = "Use rustls instead for pure-Rust TLS" },

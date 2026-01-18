@@ -13,11 +13,11 @@
 //! - Clinical meaning lives in domain logic; this crate focuses on file formats and standards
 //!   alignment.
 
+use crate::data_types::DvText;
 use crate::{EhrId, ExternalReference, OpenEhrError, RmVersion};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use super::constants::{DEFAULT_ARCHETYPE_NODE_ID, DEFAULT_EXTERNAL_REF_TYPE, DEFAULT_NAME};
-use super::CURRENT_RM_VERSION;
+use super::MODULE_RM_VERSION;
 
 /// RM 1.x-aligned wire representation of `EHR_STATUS` for on-disk YAML.
 ///
@@ -42,6 +42,12 @@ pub struct EhrStatus {
 }
 
 impl EhrStatus {
+    /// Default archetype node ID for EHR_STATUS.
+    pub const DEFAULT_ARCHETYPE_NODE_ID: &'static str = "openEHR-EHR-STATUS.ehr_status.v1";
+
+    /// Default name for EHR_STATUS.
+    pub const DEFAULT_NAME: &'static str = "EHR Status";
+
     /// Convert this EhrStatus to its YAML string representation.
     ///
     /// # Returns
@@ -62,13 +68,6 @@ impl EhrStatus {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct HierObjectId {
-    pub value: String,
-}
-
-/// RM `DV_TEXT` (simplified to a `value` string wrapper).
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct DvText {
     pub value: String,
 }
 
@@ -158,6 +157,11 @@ pub struct PartyRef {
     pub type_: String,
 }
 
+impl PartyRef {
+    /// Default external reference type.
+    pub const DEFAULT_EXTERNAL_REF_TYPE: &'static str = "PERSON";
+}
+
 /// RM `HIER_OBJECT_ID` (simplified to a `value` string wrapper).per).
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -237,7 +241,7 @@ pub(crate) fn ehr_status_render(
                         value: ext_ref.id.simple().to_string(),
                     },
                     namespace: ext_ref.namespace,
-                    type_: DEFAULT_EXTERNAL_REF_TYPE.to_string(),
+                    type_: PartyRef::DEFAULT_EXTERNAL_REF_TYPE.to_string(),
                 })
                 .collect::<Vec<_>>();
             existing_refs.extend(new_refs);
@@ -309,13 +313,13 @@ fn ehr_status_init(ehr_id: &EhrId, external_refs: Option<Vec<ExternalReference>>
     let external_refs = external_refs.unwrap_or_default();
 
     EhrStatus {
-        rm_version: CURRENT_RM_VERSION,
+        rm_version: MODULE_RM_VERSION,
         ehr_id: HierObjectId {
             value: ehr_id.as_str().to_string(),
         },
-        archetype_node_id: DEFAULT_ARCHETYPE_NODE_ID.to_string(),
+        archetype_node_id: EhrStatus::DEFAULT_ARCHETYPE_NODE_ID.to_string(),
         name: DvText {
-            value: DEFAULT_NAME.to_string(),
+            value: EhrStatus::DEFAULT_NAME.to_string(),
         },
         subject: PartySelf {
             external_ref: ExternalRefs(
@@ -326,7 +330,7 @@ fn ehr_status_init(ehr_id: &EhrId, external_refs: Option<Vec<ExternalReference>>
                             value: subject_ref.id.simple().to_string(),
                         },
                         namespace: subject_ref.namespace,
-                        type_: DEFAULT_EXTERNAL_REF_TYPE.to_string(),
+                        type_: PartyRef::DEFAULT_EXTERNAL_REF_TYPE.to_string(),
                     })
                     .collect(),
             ),
@@ -611,8 +615,11 @@ is_modifiable: true
         assert_eq!(result.ehr_id.value, "1166765a406a4552ac9b8e141931a3dc");
 
         // Check default values
-        assert_eq!(result.archetype_node_id, DEFAULT_ARCHETYPE_NODE_ID);
-        assert_eq!(result.name.value, DEFAULT_NAME);
+        assert_eq!(
+            result.archetype_node_id,
+            EhrStatus::DEFAULT_ARCHETYPE_NODE_ID
+        );
+        assert_eq!(result.name.value, EhrStatus::DEFAULT_NAME);
         assert!(result.is_queryable);
         assert!(result.is_modifiable);
         assert!(result.other_details.is_none());
@@ -699,8 +706,11 @@ is_modifiable: true
         let result = ehr_status_parse(&result_yaml).expect("should parse the result");
 
         assert_eq!(result.ehr_id.value, "1166765a406a4552ac9b8e141931a3dc");
-        assert_eq!(result.archetype_node_id, DEFAULT_ARCHETYPE_NODE_ID);
-        assert_eq!(result.name.value, DEFAULT_NAME);
+        assert_eq!(
+            result.archetype_node_id,
+            EhrStatus::DEFAULT_ARCHETYPE_NODE_ID
+        );
+        assert_eq!(result.name.value, EhrStatus::DEFAULT_NAME);
         assert!(result.is_queryable);
         assert!(result.is_modifiable);
         assert!(result.other_details.is_none());

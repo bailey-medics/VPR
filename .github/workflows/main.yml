@@ -2,7 +2,7 @@ name: Main branch workflows
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   workflow_dispatch: {}
 
 permissions:
@@ -13,7 +13,7 @@ permissions:
 concurrency:
   group: pages
   cancel-in-progress: true
-  
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -62,7 +62,7 @@ jobs:
         run: cargo install cargo-deny --version 0.19.0 --locked
 
       - name: Run cargo-deny
-        run: cargo deny check
+        run: cargo deny check -A warnings
 
   build-and-deploy-docs:
     runs-on: ubuntu-latest

@@ -624,7 +624,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             let clinical_service = ClinicalService::with_id(cfg.clone(), clinical_uuid_parsed);
-            match clinical_service.new_letter(&author, care_location, content) {
+            match clinical_service.new_letter(&author, care_location, content, None) {
                 Ok(timestamp_id) => {
                     println!("Created new letter with timestamp ID: {}", timestamp_id)
                 }

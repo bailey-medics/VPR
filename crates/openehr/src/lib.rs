@@ -10,15 +10,22 @@
 //! - translation between domain primitives and wire structs,
 //! - version dispatch via small facade functions where needed.
 
+use chrono::{DateTime, Utc};
 use uuid::Uuid;
+use vpr_uuid::TimestampId;
 
 use serde::{Deserialize, Serialize};
 
+pub mod clinical_list;
+pub mod data_types;
 pub mod rm_1_1_0;
 pub mod validation;
 
 // Re-export commonly used validation functions
 pub use validation::validate_namespace_uri_safe;
+
+// Re-export public clinical list types
+pub use clinical_list::{ClinicalList, ClinicalListItem, CodedConcept};
 
 /// Supported openEHR RM versions.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -121,7 +128,7 @@ impl EhrStatus {
     ///
     /// # Arguments
     ///
-    /// * `version` - RM version identifier.
+    /// * `rm_version` - RM version identifier.
     /// * `previous_data` - Optional YAML text representing an existing `EHR_STATUS`.
     /// * `ehr_id` - Optional EHR identifier.
     /// * `external_refs` - Optional subject external references.
@@ -137,12 +144,12 @@ impl EhrStatus {
     /// - the previous_data YAML is invalid,
     /// - both previous_data and ehr_id are None.
     pub fn render(
-        version: RmVersion,
+        rm_version: RmVersion,
         previous_data: Option<&str>,
         ehr_id: Option<&EhrId>,
         external_refs: Option<Vec<ExternalReference>>,
     ) -> Result<String, OpenEhrError> {
-        match version {
+        match rm_version {
             RmVersion::rm_1_1_0 => {
                 rm_1_1_0::ehr_status::ehr_status_render(previous_data, ehr_id, external_refs)
             }
@@ -153,7 +160,7 @@ impl EhrStatus {
     ///
     /// # Arguments
     ///
-    /// * `version` - RM version identifier.
+    /// * `rm_version` - RM version identifier.
     /// * `yaml_text` - YAML text expected to represent an `EHR_STATUS` mapping.
     ///
     /// # Returns
@@ -168,10 +175,10 @@ impl EhrStatus {
     /// - any field has an unexpected type,
     /// - any unknown keys are present.
     pub fn parse(
-        version: RmVersion,
+        rm_version: RmVersion,
         yaml_text: &str,
     ) -> Result<rm_1_1_0::ehr_status::EhrStatus, OpenEhrError> {
-        match version {
+        match rm_version {
             RmVersion::rm_1_1_0 => rm_1_1_0::ehr_status::ehr_status_parse(yaml_text),
         }
     }
@@ -188,7 +195,7 @@ impl Letter {
     ///
     /// # Arguments
     ///
-    /// * `version` - RM version identifier.
+    /// * `rm_version` - RM version identifier.
     /// * `yaml_text` - YAML text expected to represent a `COMPOSITION` (letter) mapping.
     ///
     /// # Returns
@@ -203,11 +210,11 @@ impl Letter {
     /// - any field has an unexpected type,
     /// - any unknown keys are present.
     pub fn composition_parse(
-        version: RmVersion,
+        rm_version: RmVersion,
         yaml_text: &str,
-    ) -> Result<rm_1_1_0::letter::Letter, OpenEhrError> {
-        match version {
-            RmVersion::rm_1_1_0 => rm_1_1_0::letter::letter_parse(yaml_text),
+    ) -> Result<rm_1_1_0::letter::Composition, OpenEhrError> {
+        match rm_version {
+            RmVersion::rm_1_1_0 => rm_1_1_0::letter::composition_parse(yaml_text),
         }
     }
 
@@ -215,13 +222,12 @@ impl Letter {
     ///
     /// # Arguments
     ///
-    /// * `version` - RM version identifier.
+    /// * `rm_version` - RM version identifier.
     /// * `previous_data` - Optional YAML text representing an existing letter.
-    /// * `rm_version` - Optional RM version string to update.
-    /// * `uid` - Optional UID string to update.
+    /// * `uid` - Optional timestamp-based unique identifier.
     /// * `composer_name` - Optional composer name to update.
     /// * `composer_role` - Optional composer role to update.
-    /// * `start_time` - Optional start time to update.
+    /// * `start_time` - Optional start time to update as a UTC datetime.
     ///
     /// # Returns
     ///
@@ -234,22 +240,22 @@ impl Letter {
     /// - the previous_data YAML is invalid,
     /// - required fields are missing when creating a new letter.
     pub fn composition_render(
-        version: RmVersion,
+        rm_version: RmVersion,
         previous_data: Option<&str>,
-        rm_version: Option<&str>,
-        uid: Option<&str>,
+        uid: Option<&TimestampId>,
         composer_name: Option<&str>,
         composer_role: Option<&str>,
-        start_time: Option<&str>,
+        start_time: Option<DateTime<Utc>>,
+        clinical_lists: Option<&[ClinicalList]>,
     ) -> Result<String, OpenEhrError> {
-        match version {
-            RmVersion::rm_1_1_0 => rm_1_1_0::letter::letter_render(
+        match rm_version {
+            RmVersion::rm_1_1_0 => rm_1_1_0::letter::composition_render(
                 previous_data,
-                rm_version,
                 uid,
                 composer_name,
                 composer_role,
                 start_time,
+                clinical_lists,
             ),
         }
     }
