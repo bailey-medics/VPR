@@ -429,17 +429,14 @@ impl ClinicalService<Initialised> {
 
         // Generate composition.yaml content using Letter::composition_render
         let rm_version = self.cfg.rm_system_version();
-        let start_time = timestamp_id
-            .timestamp()
-            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        let start_time = timestamp_id.timestamp();
         let composition_content = Letter::composition_render(
-            rm_version,                      // RM version
-            None,                            // No previous composition data
-            Some(rm_version.as_str()),       // RM version string for YAML
-            Some(&timestamp_id.to_string()), // UID (timestamp ID)
-            Some(&author.name),              // Composer name
-            Some("Clinical Practitioner"),   // Composer role
-            Some(&start_time),               // Start time
+            rm_version,                    // RM version for dispatch
+            None,                          // No previous composition data
+            Some(&timestamp_id),           // UID (timestamp ID)
+            Some(&author.name),            // Composer name
+            Some("Clinical Practitioner"), // Composer role
+            Some(start_time),              // Start time as DateTime<Utc>
         )
         .map_err(|e| {
             PatientError::InvalidInput(format!("Failed to create letter composition: {}", e))

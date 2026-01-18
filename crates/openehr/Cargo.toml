@@ -9,8 +9,10 @@ name = "openehr"
 path = "src/lib.rs"
 
 [dependencies]
+chrono = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
 serde_path_to_error = "0.1"
 thiserror = "1.0"
 uuid = { version = "1" }
+vpr-uuid = { path = "../uuid" }

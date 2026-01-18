@@ -12,8 +12,12 @@
 //! - Clinical meaning lives in domain logic; this crate focuses on file formats and standards
 //!   alignment.
 
+use super::MODULE_RM_VERSION;
+use crate::data_types::DvText;
 use crate::OpenEhrError;
+use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
+use vpr_uuid::TimestampId;
 
 /// RM 1.x-aligned wire representation of `COMPOSITION` (letter) for on-disk YAML.
 ///
@@ -47,13 +51,6 @@ impl Letter {
         serde_yaml::to_string(self)
             .map_err(|e| OpenEhrError::Translation(format!("Failed to serialize Letter: {}", e)))
     }
-}
-
-/// RM `DV_TEXT` (simplified to a `value` string wrapper).
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct DvText {
-    pub value: String,
 }
 
 /// Composer information for the letter.
@@ -138,7 +135,7 @@ pub struct Narrative {
 /// - the YAML does not represent a `COMPOSITION` (letter) mapping,
 /// - any field has an unexpected type,
 /// - any unknown keys are present (due to `#[serde(deny_unknown_fields)]`).
-pub fn letter_parse(yaml_text: &str) -> Result<Letter, OpenEhrError> {
+pub fn composition_parse(yaml_text: &str) -> Result<Letter, OpenEhrError> {
     let deserializer = serde_yaml::Deserializer::from_str(yaml_text);
 
     match serde_path_to_error::deserialize(deserializer) {
@@ -166,11 +163,10 @@ pub fn letter_parse(yaml_text: &str) -> Result<Letter, OpenEhrError> {
 ///
 /// * `previous_data` - Optional YAML text expected to represent a `COMPOSITION` (letter) mapping.
 ///   If provided, the existing letter is parsed and modified. If None, a new letter is created.
-/// * `rm_version` - Optional RM version string to update.
-/// * `uid` - Optional UID string to update.
+/// * `uid` - Optional timestamp-based unique identifier.
 /// * `composer_name` - Optional composer name to update.
 /// * `composer_role` - Optional composer role to update.
-/// * `start_time` - Optional start time to update.
+/// * `start_time` - Optional start time to update as a UTC datetime.
 ///
 /// # Returns
 ///
@@ -183,22 +179,18 @@ pub fn letter_parse(yaml_text: &str) -> Result<Letter, OpenEhrError> {
 /// - any field has an unexpected type,
 /// - any unknown keys are present,
 /// - `previous_data` is None and not enough information is provided to create a new letter.
-pub fn letter_render(
+pub fn composition_render(
     previous_data: Option<&str>,
-    rm_version: Option<&str>,
-    uid: Option<&str>,
+    uid: Option<&TimestampId>,
     composer_name: Option<&str>,
     composer_role: Option<&str>,
-    start_time: Option<&str>,
+    start_time: Option<DateTime<Utc>>,
 ) -> Result<String, OpenEhrError> {
-    let previous_yaml = previous_data.map(letter_parse).transpose()?;
+    let previous_yaml = previous_data.map(composition_parse).transpose()?;
 
     match previous_yaml {
         Some(mut letter) => {
             // Update fields if provided
-            if let Some(version) = rm_version {
-                letter.rm_version = version.to_string();
-            }
             if let Some(id) = uid {
                 letter.uid = id.to_string();
             }
@@ -209,19 +201,15 @@ pub fn letter_render(
                 letter.composer.role = role.to_string();
             }
             if let Some(time) = start_time {
-                letter.context.start_time = time.to_string();
+                letter.context.start_time = time.to_rfc3339_opts(SecondsFormat::Secs, true);
             }
 
             letter.to_string()
         }
         None => {
-            // Create a new letter - require all essential fields
-            let version = rm_version.ok_or_else(|| {
-                OpenEhrError::Translation(
-                    "Cannot create Letter: rm_version is required".to_string(),
-                )
-            })?;
-            let id = uid.ok_or_else(|| {
+            // Create a new letter - uses MODULE_RM_VERSION for this module
+            let version = MODULE_RM_VERSION.as_str();
+            let id = uid.map(|id| id.to_string()).ok_or_else(|| {
                 OpenEhrError::Translation("Cannot create Letter: uid is required".to_string())
             })?;
             let name = composer_name.ok_or_else(|| {
@@ -240,7 +228,7 @@ pub fn letter_render(
                 )
             })?;
 
-            letter_init(version, id, name, role, time).to_string()
+            letter_init(version, &id, name, role, time).to_string()
         }
     }
 }
@@ -255,7 +243,7 @@ pub fn letter_render(
 /// * `uid` - Unique identifier.
 /// * `composer_name` - Composer's name.
 /// * `composer_role` - Composer's role.
-/// * `start_time` - Context start time.
+/// * `start_time` - Context start time as a UTC datetime.
 ///
 /// # Returns
 ///
@@ -265,7 +253,7 @@ fn letter_init(
     uid: &str,
     composer_name: &str,
     composer_role: &str,
-    start_time: &str,
+    start_time: DateTime<Utc>,
 ) -> Letter {
     Letter {
         rm_version: rm_version.to_string(),
@@ -282,7 +270,7 @@ fn letter_init(
             role: composer_role.to_string(),
         },
         context: Context {
-            start_time: start_time.to_string(),
+            start_time: start_time.to_rfc3339_opts(SecondsFormat::Secs, true),
         },
         content: vec![ContentItem {
             section: Section {
@@ -344,9 +332,9 @@ content:
                 path: "./body.md"
 "#;
 
-        let letter = letter_parse(input).expect("parse yaml");
+        let letter = composition_parse(input).expect("parse yaml");
         let output = serde_yaml::to_string(&letter).expect("write yaml");
-        let reparsed = letter_parse(&output).expect("reparse yaml");
+        let reparsed = composition_parse(&output).expect("reparse yaml");
         assert_eq!(letter, reparsed);
     }
 
@@ -381,7 +369,7 @@ content:
 unexpected_key: "should fail"
 "#;
 
-        let err = letter_parse(input).expect_err("should reject unknown key");
+        let err = composition_parse(input).expect_err("should reject unknown key");
         match err {
             OpenEhrError::Translation(msg) => {
                 assert!(msg.contains("unexpected_key"));
@@ -408,7 +396,7 @@ context:
 content: "this should be an array"
 "#;
 
-        let err = letter_parse(wrong_type).expect_err("should reject wrong type");
+        let err = composition_parse(wrong_type).expect_err("should reject wrong type");
         match err {
             OpenEhrError::Translation(msg) => {
                 assert!(msg.contains("content"));
@@ -448,20 +436,28 @@ content:
                 path: "./body.md"
 "#;
 
-        let result_yaml = letter_render(
+        let uid = "20260113T153000.000Z-123e4567e89b12d3a456426614174000"
+            .parse::<TimestampId>()
+            .expect("should parse valid timestamp id");
+        let start_time = DateTime::parse_from_rfc3339("2026-01-13T15:30:00Z")
+            .expect("valid datetime")
+            .with_timezone(&Utc);
+        let result_yaml = composition_render(
             Some(yaml),
-            Some("1.0.5"),
-            Some("new-uid-12345"),
+            Some(&uid),
             Some("Dr John Doe"),
             Some("Senior Consultant"),
-            Some("2026-01-13T15:30:00Z"),
+            Some(start_time),
         )
-        .expect("letter_render should work");
+        .expect("composition_render should work");
 
-        let result = letter_parse(&result_yaml).expect("should parse returned YAML");
+        let result = composition_parse(&result_yaml).expect("should parse returned YAML");
 
-        assert_eq!(result.rm_version, "1.0.5");
-        assert_eq!(result.uid, "new-uid-12345");
+        assert_eq!(result.rm_version, "1.0.4");
+        assert_eq!(
+            result.uid,
+            "20260113T153000.000Z-123e4567-e89b-12d3-a456-426614174000"
+        );
         assert_eq!(result.composer.name, "Dr John Doe");
         assert_eq!(result.composer.role, "Senior Consultant");
         assert_eq!(result.context.start_time, "2026-01-13T15:30:00Z");
@@ -497,11 +493,10 @@ content:
                 path: "./body.md"
 "#;
 
-        let result_yaml =
-            letter_render(Some(yaml), None, None, Some("Dr Updated Name"), None, None)
-                .expect("letter_render should work with partial update");
+        let result_yaml = composition_render(Some(yaml), None, Some("Dr Updated Name"), None, None)
+            .expect("composition_render should work with partial update");
 
-        let result = letter_parse(&result_yaml).expect("should parse returned YAML");
+        let result = composition_parse(&result_yaml).expect("should parse returned YAML");
 
         // Only composer name should be updated
         assert_eq!(result.rm_version, "1.0.4");
@@ -516,13 +511,10 @@ content:
 
     #[test]
     fn letter_init_creates_valid_structure() {
-        let letter = letter_init(
-            "1.0.4",
-            "test-uid",
-            "Dr Test",
-            "Test Role",
-            "2026-01-12T00:00:00Z",
-        );
+        let start_time = DateTime::parse_from_rfc3339("2026-01-12T00:00:00Z")
+            .expect("valid datetime")
+            .with_timezone(&Utc);
+        let letter = letter_init("1.0.4", "test-uid", "Dr Test", "Test Role", start_time);
 
         assert_eq!(letter.rm_version, "1.0.4");
         assert_eq!(letter.uid, "test-uid");
@@ -544,13 +536,10 @@ content:
 
     #[test]
     fn letter_to_string_works() {
-        let letter = letter_init(
-            "1.0.4",
-            "test-uid",
-            "Dr Test",
-            "Test Role",
-            "2026-01-12T00:00:00Z",
-        );
+        let start_time = DateTime::parse_from_rfc3339("2026-01-12T00:00:00Z")
+            .expect("valid datetime")
+            .with_timezone(&Utc);
+        let letter = letter_init("1.0.4", "test-uid", "Dr Test", "Test Role", start_time);
 
         let yaml_string = letter.to_string().expect("to_string should work");
 
@@ -562,18 +551,22 @@ content:
         assert!(yaml_string.contains("start_time:"));
 
         // Verify it can be parsed back
-        let reparsed = letter_parse(&yaml_string).expect("should parse the generated YAML");
+        let reparsed = composition_parse(&yaml_string).expect("should parse the generated YAML");
         assert_eq!(reparsed, letter);
     }
 
     #[test]
     fn letter_render_rejects_create_without_required_fields() {
-        let err = letter_render(None, None, None, None, None, None)
-            .expect_err("should reject when creating without required fields");
+        // Test that required fields are still checked (uid is first required field)
+        let start_time = DateTime::parse_from_rfc3339("2026-01-18T00:00:00Z")
+            .expect("valid datetime")
+            .with_timezone(&Utc);
+        let err = composition_render(None, None, Some("Dr Test"), Some("Role"), Some(start_time))
+            .expect_err("should reject when creating without uid");
 
         match err {
             OpenEhrError::Translation(msg) => {
-                assert!(msg.contains("rm_version is required"));
+                assert!(msg.contains("uid is required"));
             }
             other => panic!("expected Translation error, got {other:?}"),
         }
@@ -581,20 +574,28 @@ content:
 
     #[test]
     fn letter_render_creates_new_from_scratch() {
-        let result_yaml = letter_render(
+        let uid = "20260112T100000.000Z-00000000000000000000000000000000"
+            .parse::<TimestampId>()
+            .expect("should parse valid timestamp id");
+        let start_time = DateTime::parse_from_rfc3339("2026-01-12T10:00:00Z")
+            .expect("valid datetime")
+            .with_timezone(&Utc);
+        let result_yaml = composition_render(
             None,
-            Some("1.0.4"),
-            Some("new-uid"),
+            Some(&uid),
             Some("Dr New"),
             Some("New Role"),
-            Some("2026-01-12T10:00:00Z"),
+            Some(start_time),
         )
-        .expect("letter_render should create new letter");
+        .expect("composition_render should create new letter");
 
-        let result = letter_parse(&result_yaml).expect("should parse the result");
+        let result = composition_parse(&result_yaml).expect("should parse the result");
 
-        assert_eq!(result.rm_version, "1.0.4");
-        assert_eq!(result.uid, "new-uid");
+        assert_eq!(result.rm_version, "rm_1_1_0");
+        assert_eq!(
+            result.uid,
+            "20260112T100000.000Z-00000000-0000-0000-0000-000000000000"
+        );
         assert_eq!(result.composer.name, "Dr New");
         assert_eq!(result.composer.role, "New Role");
         assert_eq!(result.context.start_time, "2026-01-12T10:00:00Z");
