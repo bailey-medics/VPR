@@ -26,8 +26,7 @@ use crate::versioned_files::{
 };
 use crate::ShardableUuid;
 use openehr::{
-    extract_rm_version, validation::validate_namespace_uri_safe, EhrId, EhrStatus,
-    ExternalReference, Letter,
+    extract_rm_version, validate_namespace_uri_safe, EhrId, EhrStatus, ExternalReference, Letter,
 };
 use std::{
     fs, io,

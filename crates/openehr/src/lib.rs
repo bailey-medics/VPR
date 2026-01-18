@@ -17,6 +17,9 @@ use serde::{Deserialize, Serialize};
 pub mod rm_1_1_0;
 pub mod validation;
 
+// Re-export commonly used validation functions
+pub use validation::validate_namespace_uri_safe;
+
 /// Supported openEHR RM versions.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[allow(non_camel_case_types)]
