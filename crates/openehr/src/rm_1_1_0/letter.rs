@@ -13,7 +13,7 @@
 //!   alignment.
 
 use super::MODULE_RM_VERSION;
-use crate::data_types::DvText;
+use crate::data_types::{ArchetypeId, DvText};
 use crate::OpenEhrError;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -54,8 +54,11 @@ impl Composition {
     }
 }
 
-/// Default archetype node ID for the letter Composition data.
-pub const ARCHETYPE_NODE_ID: &str = "openEHR-EHR-COMPOSITION.correspondence.v1";
+/// Returns the archetype node ID for the letter Composition.
+fn archetype_node_id() -> ArchetypeId {
+    ArchetypeId::parse("openEHR-EHR-COMPOSITION.correspondence.v1")
+        .expect("composition archetype ID is valid")
+}
 
 /// Default name for the letter Composition data.
 pub const NAME: &str = "Clinical letter";
@@ -94,8 +97,11 @@ pub struct Section {
     pub items: Vec<SectionItem>,
 }
 
-/// Default archetype node ID for SECTION (correspondence).
-pub const SECTION_ARCHETYPE_NODE_ID: &str = "openEHR-EHR-SECTION.correspondence.v1";
+/// Returns the archetype node ID for SECTION (correspondence).
+fn section_archetype_node_id() -> ArchetypeId {
+    ArchetypeId::parse("openEHR-EHR-SECTION.correspondence.v1")
+        .expect("section archetype ID is valid")
+}
 
 /// Default name for SECTION (correspondence).
 pub const SECTION_NAME: &str = "Correspondence";
@@ -116,8 +122,11 @@ pub struct Evaluation {
     pub data: EvaluationData,
 }
 
-/// Default archetype node ID for Evaluation (clinical correspondence).
-pub const EVALUATION_ARCHETYPE_NODE_ID: &str = "openEHR-EHR-EVALUATION.clinical_correspondence.v1";
+/// Returns the archetype node ID for Evaluation (clinical correspondence).
+fn evaluation_archetype_node_id() -> ArchetypeId {
+    ArchetypeId::parse("openEHR-EHR-EVALUATION.clinical_correspondence.v1")
+        .expect("evaluation archetype ID is valid")
+}
 
 /// Default name for Evaluation (clinical correspondence).
 pub const EVALUATION_NAME: &str = "Clinical correspondence";
@@ -164,8 +173,11 @@ pub(crate) struct Snapshot {
     data: SnapshotData,
 }
 
-/// Default archetype node ID for snapshot EVALUATION.
-const SNAPSHOT_ARCHETYPE_NODE_ID: &str = "openEHR-EHR-EVALUATION.snapshot.v1";
+/// Returns the archetype node ID for snapshot EVALUATION.
+fn snapshot_archetype_node_id() -> ArchetypeId {
+    ArchetypeId::parse("openEHR-EHR-EVALUATION.snapshot.v1")
+        .expect("snapshot archetype ID is valid")
+}
 
 /// Snapshot data structure.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -195,7 +207,7 @@ pub struct Code {
 impl From<&crate::clinical_list::ClinicalList> for Snapshot {
     fn from(list: &crate::clinical_list::ClinicalList) -> Self {
         Snapshot {
-            archetype_node_id: SNAPSHOT_ARCHETYPE_NODE_ID.to_string(),
+            archetype_node_id: snapshot_archetype_node_id().to_string(),
             name: DvText {
                 value: list.name.clone(),
             },
@@ -365,7 +377,7 @@ fn letter_init(
     // Start with the narrative evaluation
     let mut section_items = vec![SectionItem {
         evaluation: Evaluation {
-            archetype_node_id: EVALUATION_ARCHETYPE_NODE_ID.to_string(),
+            archetype_node_id: evaluation_archetype_node_id().to_string(),
             name: DvText {
                 value: EVALUATION_NAME.to_string(),
             },
@@ -398,7 +410,7 @@ fn letter_init(
     Composition {
         rm_version: rm_version.to_string(),
         uid: uid.to_string(),
-        archetype_node_id: ARCHETYPE_NODE_ID.to_string(),
+        archetype_node_id: archetype_node_id().to_string(),
         name: DvText {
             value: NAME.to_string(),
         },
@@ -412,7 +424,7 @@ fn letter_init(
         context: Context { start_time },
         content: vec![ContentItem {
             section: Section {
-                archetype_node_id: SECTION_ARCHETYPE_NODE_ID.to_string(),
+                archetype_node_id: section_archetype_node_id().to_string(),
                 name: DvText {
                     value: SECTION_NAME.to_string(),
                 },
@@ -656,7 +668,7 @@ content:
 
         assert_eq!(letter.rm_version, "1.0.4");
         assert_eq!(letter.uid, "test-uid");
-        assert_eq!(letter.archetype_node_id, ARCHETYPE_NODE_ID);
+        assert_eq!(letter.archetype_node_id, archetype_node_id().to_string());
         assert_eq!(letter.name.value, NAME);
         assert_eq!(letter.category.value, CATEGORY);
         assert_eq!(letter.composer.name, "Dr Test");
@@ -665,7 +677,7 @@ content:
         assert_eq!(letter.content.len(), 1);
         assert_eq!(
             letter.content[0].section.archetype_node_id,
-            SECTION_ARCHETYPE_NODE_ID
+            section_archetype_node_id().to_string()
         );
     }
 
@@ -749,7 +761,7 @@ content:
         assert_eq!(result.composer.name, "Dr New");
         assert_eq!(result.composer.role, "New Role");
         assert_eq!(result.context.start_time, start_time);
-        assert_eq!(result.archetype_node_id, ARCHETYPE_NODE_ID);
+        assert_eq!(result.archetype_node_id, archetype_node_id().to_string());
         assert_eq!(result.name.value, NAME);
         assert_eq!(result.category.value, CATEGORY);
     }

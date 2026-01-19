@@ -112,6 +112,9 @@ pub enum OpenEhrError {
 
     #[error("unsupported RM version: {0}")]
     UnsupportedRmVersion(String),
+
+    #[error("invalid archetype ID: {0}")]
+    InvalidArchetypeId(String),
 }
 
 /// Type alias for Results that can fail with an [`OpenEhrError`].

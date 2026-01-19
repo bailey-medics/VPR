@@ -13,7 +13,7 @@
 //! - Clinical meaning lives in domain logic; this crate focuses on file formats and standards
 //!   alignment.
 
-use crate::data_types::DvText;
+use crate::data_types::{ArchetypeId, DvText};
 use crate::{EhrId, ExternalReference, OpenEhrError, RmVersion};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -42,8 +42,11 @@ pub struct EhrStatus {
 }
 
 impl EhrStatus {
-    /// Default archetype node ID for EHR_STATUS.
-    pub const DEFAULT_ARCHETYPE_NODE_ID: &'static str = "openEHR-EHR-STATUS.ehr_status.v1";
+    /// Returns the default archetype node ID for EHR_STATUS.
+    pub fn default_archetype_node_id() -> ArchetypeId {
+        ArchetypeId::parse("openEHR-EHR-STATUS.ehr_status.v1")
+            .expect("ehr_status archetype ID is valid")
+    }
 
     /// Default name for EHR_STATUS.
     pub const DEFAULT_NAME: &'static str = "EHR Status";
@@ -317,7 +320,7 @@ fn ehr_status_init(ehr_id: &EhrId, external_refs: Option<Vec<ExternalReference>>
         ehr_id: HierObjectId {
             value: ehr_id.as_str().to_string(),
         },
-        archetype_node_id: EhrStatus::DEFAULT_ARCHETYPE_NODE_ID.to_string(),
+        archetype_node_id: EhrStatus::default_archetype_node_id().to_string(),
         name: DvText {
             value: EhrStatus::DEFAULT_NAME.to_string(),
         },
@@ -617,7 +620,7 @@ is_modifiable: true
         // Check default values
         assert_eq!(
             result.archetype_node_id,
-            EhrStatus::DEFAULT_ARCHETYPE_NODE_ID
+            EhrStatus::default_archetype_node_id().to_string()
         );
         assert_eq!(result.name.value, EhrStatus::DEFAULT_NAME);
         assert!(result.is_queryable);
@@ -708,7 +711,7 @@ is_modifiable: true
         assert_eq!(result.ehr_id.value, "1166765a406a4552ac9b8e141931a3dc");
         assert_eq!(
             result.archetype_node_id,
-            EhrStatus::DEFAULT_ARCHETYPE_NODE_ID
+            EhrStatus::default_archetype_node_id().to_string()
         );
         assert_eq!(result.name.value, EhrStatus::DEFAULT_NAME);
         assert!(result.is_queryable);
