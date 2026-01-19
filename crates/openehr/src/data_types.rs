@@ -135,7 +135,7 @@ impl ArchetypeId {
     /// - `authority`: The archetype authority (must be `"openEHR"`).
     /// - `rm_package`: The Reference Model package (must be `"EHR"`).
     /// - `rm_class`: The Reference Model class (must be `STATUS`, `COMPOSITION`, `SECTION`, or `EVALUATION`).
-    /// - `concept`: The archetype concept (must be `ehr_status`, `correspondence`, or `snapshot`).
+    /// - `concept`: The archetype concept (must be `ehr_status`, `correspondence`, `snapshot`, or `clinical_correspondence`).
     /// - `version`: The archetype version number (must be `1`).
     ///
     /// # Errors
@@ -144,7 +144,7 @@ impl ArchetypeId {
     /// - Authority is not exactly `"openEHR"`.
     /// - RM package is not exactly `"EHR"`.
     /// - RM class is not one of the permitted values (`STATUS`, `COMPOSITION`, `SECTION`, `EVALUATION`).
-    /// - Concept is not one of the permitted values (`ehr_status`, `correspondence`, `snapshot`).
+    /// - Concept is not one of the permitted values (`ehr_status`, `correspondence`, `snapshot`, `clinical_correspondence`).
     /// - Version is not exactly `1`.
     fn validate_components(
         authority: &str,
@@ -180,10 +180,13 @@ impl ArchetypeId {
             )));
         }
 
-        // Validate concept must be one of: ehr_status, correspondence, snapshot
-        if !matches!(concept, "ehr_status" | "correspondence" | "snapshot") {
+        // Validate concept must be one of: ehr_status, correspondence, snapshot, clinical_correspondence
+        if !matches!(
+            concept,
+            "ehr_status" | "correspondence" | "snapshot" | "clinical_correspondence"
+        ) {
             return Err(OpenEhrError::InvalidArchetypeId(format!(
-                "concept must be ehr_status, correspondence, or snapshot, got '{}'",
+                "concept must be ehr_status, correspondence, snapshot, or clinical_correspondence, got '{}'",
                 concept
             )));
         }
@@ -206,7 +209,7 @@ impl ArchetypeId {
     /// - `authority`: Must be exactly `"openEHR"`.
     /// - `rm_package`: Must be exactly `"EHR"`.
     /// - `rm_class`: Must be one of: `STATUS`, `COMPOSITION`, `SECTION`, or `EVALUATION`.
-    /// - `concept`: Must be one of: `ehr_status`, `correspondence`, or `snapshot`.
+    /// - `concept`: Must be one of: `ehr_status`, `correspondence`, `snapshot`, or `clinical_correspondence`.
     /// - `version`: Must be `1`.
     ///
     /// # Returns

@@ -1,9 +1,11 @@
-//! Public RM-agnostic clinical list types for external use.
+//! Public domain-level letter data types.
 //!
-//! This module provides domain-friendly types that can be used by callers (like clinical.rs)
-//! without coupling to specific RM versions. The openehr crate handles mapping these to the
-//! appropriate RM structures internally.
+//! This module provides RM-agnostic data carriers for letter compositions,
+//! allowing external code to work with domain concepts without coupling to
+//! specific RM wire formats.
 
+use crate::RmVersion;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 /// A clinical list representing a collection of related clinical items.
@@ -40,4 +42,33 @@ pub struct CodedConcept {
 
     /// Code value within the terminology system.
     pub value: String,
+}
+
+/// Domain-level carrier for letter composition data.
+///
+/// This struct represents the essential fields of a clinical letter composition
+/// in a format that is independent of specific RM versions and wire formats.
+///
+/// This type is symmetric with both parsing and rendering:
+/// - `composition_parse()` extracts domain fields into this struct
+/// - `composition_render()` builds wire format from this struct
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LetterData {
+    /// RM version for this letter.
+    pub rm_version: RmVersion,
+
+    /// Unique identifier for this composition.
+    pub uid: String,
+
+    /// Name of the composer (author) of the letter.
+    pub composer_name: String,
+
+    /// Role of the composer (for example "Consultant Physician").
+    pub composer_role: String,
+
+    /// Start time of the clinical context.
+    pub start_time: DateTime<Utc>,
+
+    /// Optional clinical lists (snapshot evaluations) to include.
+    pub clinical_lists: Vec<ClinicalList>,
 }
