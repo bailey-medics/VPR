@@ -158,7 +158,7 @@ content:
 
               items:
                 - text: "Amlodipine 10 mg once daily"
-                
+
                 - text: "Atorvastatin 20 mg nocte"
 ```
 
@@ -166,7 +166,7 @@ content:
 
 - `openEHR-EHR-EVALUATION.snapshot.v1` is a **custom archetype**, not a core OpenEHR entity.
 - This is intentional and aligned with OpenEHR practice.
-- Snapshots are **letter-scoped, time-bound clinical summaries**, not canonical state.
+- Snapshots are **letter-scoped, time-bound clinical summaries**, not canonical state. We call these `ClinicalList`s.
 
 ---
 

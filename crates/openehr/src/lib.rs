@@ -10,22 +10,20 @@
 //! - translation between domain primitives and wire structs,
 //! - version dispatch via small facade functions where needed.
 
-use chrono::{DateTime, Utc};
 use uuid::Uuid;
-use vpr_uuid::TimestampId;
 
 use serde::{Deserialize, Serialize};
 
-pub mod clinical_list;
 pub mod data_types;
+pub mod public_structs;
 pub mod rm_1_1_0;
 pub mod validation;
 
 // Re-export commonly used validation functions
 pub use validation::validate_namespace_uri_safe;
 
-// Re-export public clinical list types
-pub use clinical_list::{ClinicalList, ClinicalListItem, CodedConcept};
+// Re-export public domain-level types
+pub use public_structs::{ClinicalList, ClinicalListItem, CodedConcept, LetterData};
 
 /// Supported openEHR RM versions.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -112,6 +110,9 @@ pub enum OpenEhrError {
 
     #[error("unsupported RM version: {0}")]
     UnsupportedRmVersion(String),
+
+    #[error("invalid archetype ID: {0}")]
+    InvalidArchetypeId(String),
 }
 
 /// Type alias for Results that can fail with an [`OpenEhrError`].
@@ -194,13 +195,16 @@ impl Letter {
     /// Parse a letter composition from YAML for the specified RM version.
     ///
     /// # Arguments
+    /// Parse a letter composition from YAML text for the specified RM version.
     ///
-    /// * `rm_version` - RM version identifier.
+    /// # Arguments
+    ///
+    /// * `rm_version` - RM version identifier (currently only rm_1_1_0 supported).
     /// * `yaml_text` - YAML text expected to represent a `COMPOSITION` (letter) mapping.
     ///
     /// # Returns
     ///
-    /// Returns a valid letter composition on success.
+    /// Returns a [`LetterData`] with domain-level fields extracted from the composition.
     ///
     /// # Errors
     ///
@@ -212,7 +216,7 @@ impl Letter {
     pub fn composition_parse(
         rm_version: RmVersion,
         yaml_text: &str,
-    ) -> Result<rm_1_1_0::letter::Composition, OpenEhrError> {
+    ) -> Result<LetterData, OpenEhrError> {
         match rm_version {
             RmVersion::rm_1_1_0 => rm_1_1_0::letter::composition_parse(yaml_text),
         }
@@ -220,14 +224,12 @@ impl Letter {
 
     /// Render a letter composition as YAML for the specified RM version.
     ///
+    /// This converts domain-level [`LetterData`] into wire format and serializes to YAML.
+    ///
     /// # Arguments
     ///
-    /// * `rm_version` - RM version identifier.
-    /// * `previous_data` - Optional YAML text representing an existing letter.
-    /// * `uid` - Optional timestamp-based unique identifier.
-    /// * `composer_name` - Optional composer name to update.
-    /// * `composer_role` - Optional composer role to update.
-    /// * `start_time` - Optional start time to update as a UTC datetime.
+    /// * `rm_version` - RM version identifier (currently only rm_1_1_0 supported).
+    /// * `data` - Letter data containing all composition fields.
     ///
     /// # Returns
     ///
@@ -237,26 +239,13 @@ impl Letter {
     ///
     /// Returns [`OpenEhrError`] if:
     /// - the RM version is not supported,
-    /// - the previous_data YAML is invalid,
-    /// - required fields are missing when creating a new letter.
+    /// - serialization fails.
     pub fn composition_render(
         rm_version: RmVersion,
-        previous_data: Option<&str>,
-        uid: Option<&TimestampId>,
-        composer_name: Option<&str>,
-        composer_role: Option<&str>,
-        start_time: Option<DateTime<Utc>>,
-        clinical_lists: Option<&[ClinicalList]>,
+        data: &LetterData,
     ) -> Result<String, OpenEhrError> {
         match rm_version {
-            RmVersion::rm_1_1_0 => rm_1_1_0::letter::composition_render(
-                previous_data,
-                uid,
-                composer_name,
-                composer_role,
-                start_time,
-                clinical_lists,
-            ),
+            RmVersion::rm_1_1_0 => rm_1_1_0::letter::composition_render(data),
         }
     }
 }

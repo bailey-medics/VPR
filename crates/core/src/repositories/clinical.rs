@@ -432,18 +432,23 @@ impl ClinicalService<Initialised> {
         // Generate composition.yaml content using Letter::composition_render
         let rm_version = self.cfg.rm_system_version();
         let start_time = timestamp_id.timestamp();
-        let composition_content = Letter::composition_render(
+
+        // Construct LetterData for the new letter
+        let letter_data = openehr::LetterData {
             rm_version,
-            None,
-            Some(&timestamp_id),
-            Some(&author.name),
-            Some("Clinical Practitioner"),
-            Some(start_time),
-            clinical_lists,
-        )
-        .map_err(|e| {
-            PatientError::InvalidInput(format!("Failed to create letter composition: {}", e))
-        })?;
+            uid: timestamp_id.to_string(),
+            composer_name: author.name.clone(),
+            composer_role: "Clinical Practitioner".to_string(),
+            start_time,
+            clinical_lists: clinical_lists
+                .map(|lists| lists.to_vec())
+                .unwrap_or_default(),
+        };
+
+        let composition_content =
+            Letter::composition_render(rm_version, &letter_data).map_err(|e| {
+                PatientError::InvalidInput(format!("Failed to create letter composition: {}", e))
+            })?;
 
         let files_to_write = [
             FileToWrite {
