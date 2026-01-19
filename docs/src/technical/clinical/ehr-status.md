@@ -1,8 +1,9 @@
 # OpenEHR EHR Status file
 
-We have not added the `other_details` section yet (and we will have to see if we need to). However, below is an example of an EHR Status file in YAML format:
+Below is an example of an EHR Status file in YAML format. The actual implementation may or may not include the `other_details` section depending on use case:
 
 ```yaml
+rm_version: rm_1_1_0
 
 ehr_id:
   value: 1166765a-406a-4552-ac9b-8e141931a3dc
@@ -21,28 +22,6 @@ subject:
 
 is_queryable: true
 is_modifiable: true
-
-other_details:
-  items:
-    - name:
-        value: record_owner
-      value:
-        value: Gloucestershire Hospitals NHS Foundation Trust
-
-    - name:
-        value: confidentiality_level
-      value:
-        value: normal
-
-    - name:
-        value: created_reason
-      value:
-        value: Imported from legacy system
-
-    - name:
-        value: legal_status
-      value:
-        value: active
-
-
 ```
+
+Note: The `other_details` field is optional and only included when additional metadata is needed for a specific use case.

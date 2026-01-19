@@ -16,15 +16,16 @@ This document intentionally avoids imposing stylistic rules on how letters are w
 
 ## Letters are version-controlled via git
 
-Letters can be edited, with all changes tracked through git version control. OpenEHR does not specify that letters must be closed to further edits.
+Letters can be edited after creation, with all changes tracked through git version control. OpenEHR does not specify that letters must be closed to further edits.
 
 This means:
 
 - Every edit creates a new git commit,
 - The full history of changes is preserved and auditable,
-- Previous versions can be retrieved at any time.
+- Previous versions can be retrieved at any time,
+- No data is ever lost or overwritten.
 
-This provides both flexibility and a complete audit trail.
+This provides both flexibility and a complete audit trail for clinical governance and patient safety.
 
 ---
 
@@ -101,7 +102,7 @@ category:
 
 composer:
   name: "Dr Jane Smith"
-  role: "Consultant Physician"
+  role: "Clinical Practitioner"
 
 context:
   start_time: "2026-01-12T10:14:00Z"
@@ -124,7 +125,7 @@ content:
                 type: "external_text"
                 path: "./body.md"
 
-        # Optional reusable snapshot entries
+        # Optional reusable clinical lists (snapshots)
         - evaluation:
             archetype_node_id: "openEHR-EHR-EVALUATION.snapshot.v1"
             name:
@@ -174,7 +175,7 @@ content:
 
 The `snapshot.v1` archetype is intentionally **minimal and generic**.
 
-Its purpose is to support selective reuse of clinically relevant context *without* enforcing letter style or duplicating persistent records.
+Its purpose is to support selective reuse of clinically relevant context _without_ enforcing letter style or duplicating persistent records.
 
 ### Snapshot properties
 
@@ -236,8 +237,8 @@ Snapshots are **not** persistent lists.
 
 They answer a different question:
 
-- Persistent list: *"What do we currently believe is true?"*
-- Snapshot: *"What did the author consider relevant for this letter at that time?"*
+- Persistent list: _"What do we currently believe is true?"_
+- Snapshot: _"What did the author consider relevant for this letter at that time?"_
 
 Snapshots:
 
@@ -260,7 +261,7 @@ It records:
 
 - clinical prose only,
 - written for human readers,
-- frozen at the time of issue.
+- editable after creation with full git version history.
 
 It must not contain workflow, delivery, or coordination semantics.
 
@@ -278,6 +279,7 @@ We reviewed her medication list together. Atorvastatin was started during her re
 There are no new red flag symptoms. Examination today was unremarkable.
 
 Plan:
+
 - Continue amlodipine 10 mg once daily
 - Continue atorvastatin 20 mg nocte
 - Routine follow-up in six months
@@ -325,26 +327,6 @@ Letters represent **clinical documentation**, not behaviour or process.
 
 VPR prioritises clarity, honesty, and auditability over convenience.
 
-- support cross-site and cross-system communication,
-- remain human-readable without specialist software,
-- withstand audit, legal, and regulatory review.
-
----
-
-## Letters are immutable once issued
-
-Once a letter is issued, it:
-
-- MUST NOT be edited,
-- MUST NOT be deleted.
-
-If a correction or clarification is required, this is handled by issuing a **new letter** that explicitly references the prior one.
-
-This mirrors established professional, legal, and regulatory practice.
-
-> **Note on “issued”**  
-> A letter is considered *issued* when it is finalised and made available outside the authoring context (for example, shared with a patient, sent to another organisation, or rendered as a PDF for distribution). Drafts that have not been issued are out of scope for this model.
-
 ---
 
 ## File layout
@@ -388,17 +370,17 @@ The `composition.yaml` file contains the **OpenEHR composition** representing th
 
 ```yaml
 rm_version: "1.0.4" # updatable via api
-uid: "20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000"  # updatable via api
+uid: "20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000" # updatable via api
 archetype_node_id: "openEHR-EHR-COMPOSITION.correspondence.v1"
 name:
   value: "Clinical letter"
 category:
   value: "event"
 composer:
-  name: "Dr Jane Smith"  # updatable via api
-  role: "Consultant Physician"  # updatable via api
+  name: "Dr Jane Smith" # updatable via api
+  role: "Consultant Physician" # updatable via api
 context:
-  start_time: "2026-01-12T10:14:00Z"  # updatable via api
+  start_time: "2026-01-12T10:14:00Z" # updatable via api
 content:
   - section:
       archetype_node_id: "openEHR-EHR-SECTION.correspondence.v1"
@@ -453,6 +435,7 @@ We reviewed her medication list together. Atorvastatin was started during her re
 There are no new red flag symptoms. Examination today was unremarkable.
 
 Plan:
+
 - Continue amlodipine 10 mg once daily
 - Continue atorvastatin 20 mg nocte
 - Routine follow-up in six months
