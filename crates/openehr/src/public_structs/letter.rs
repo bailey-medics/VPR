@@ -4,9 +4,38 @@
 //! allowing external code to work with domain concepts without coupling to
 //! specific RM wire formats.
 
-use crate::RmVersion;
+use crate::{RmVersion, TimestampId};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+
+/// Domain-level carrier for letter composition data.
+///
+/// This struct represents the essential fields of a clinical letter composition
+/// in a format that is independent of specific RM versions and wire formats.
+///
+/// This type is symmetric with both parsing and rendering:
+/// - `composition_parse()` extracts domain fields into this struct
+/// - `composition_render()` builds wire format from this struct
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LetterData {
+    /// RM version for this letter.
+    pub rm_version: RmVersion,
+
+    /// Unique identifier for this composition.
+    pub uid: TimestampId,
+
+    /// Name of the composer (author) of the letter.
+    pub composer_name: String,
+
+    /// Role of the composer (for example "Consultant Physician").
+    pub composer_role: String,
+
+    /// Start time of the clinical context.
+    pub start_time: DateTime<Utc>,
+
+    /// Optional clinical lists (snapshot evaluations) to include.
+    pub clinical_lists: Vec<ClinicalList>,
+}
 
 /// A clinical list representing a collection of related clinical items.
 ///
@@ -34,7 +63,14 @@ pub struct ClinicalListItem {
     pub code: Option<CodedConcept>,
 }
 
+// TODO: Replace with a proper coded concept implementation.
+
 /// A coded concept with terminology and code value.
+///
+/// NOTE: This is a simplified representation. A proper implementation of coded concepts
+/// would require significantly more work and validation, including terminology binding,
+/// code system validation, versioning, and conformance to standards like FHIR CodeableConcept
+/// or openEHR DV_CODED_TEXT constraints.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodedConcept {
     /// Terminology system (for example "SNOMED-CT", "ICD-10").
@@ -42,33 +78,4 @@ pub struct CodedConcept {
 
     /// Code value within the terminology system.
     pub value: String,
-}
-
-/// Domain-level carrier for letter composition data.
-///
-/// This struct represents the essential fields of a clinical letter composition
-/// in a format that is independent of specific RM versions and wire formats.
-///
-/// This type is symmetric with both parsing and rendering:
-/// - `composition_parse()` extracts domain fields into this struct
-/// - `composition_render()` builds wire format from this struct
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LetterData {
-    /// RM version for this letter.
-    pub rm_version: RmVersion,
-
-    /// Unique identifier for this composition.
-    pub uid: String,
-
-    /// Name of the composer (author) of the letter.
-    pub composer_name: String,
-
-    /// Role of the composer (for example "Consultant Physician").
-    pub composer_role: String,
-
-    /// Start time of the clinical context.
-    pub start_time: DateTime<Utc>,
-
-    /// Optional clinical lists (snapshot evaluations) to include.
-    pub clinical_lists: Vec<ClinicalList>,
 }

@@ -14,9 +14,10 @@
 
 use crate::data_types::{ArchetypeId, DvText};
 use crate::public_structs::letter::ClinicalList as PublicClinicalList;
-use crate::{LetterData, OpenEhrError, RmVersion};
+use crate::{LetterData, OpenEhrError, RmVersion, TimestampId};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 /// RM 1.x-aligned wire representation of `COMPOSITION` (letter) for on-disk YAML.
 ///
@@ -25,7 +26,7 @@ use serde::{Deserialize, Serialize};
 /// - Optional RM fields are represented as `Option<T>`.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct Composition {
+struct Composition {
     pub rm_version: String,
     pub uid: String,
     pub archetype_node_id: String,
@@ -46,6 +47,7 @@ impl Composition {
     /// # Errors
     ///
     /// Returns [`OpenEhrError`] if serialisation fails.
+    #[cfg(test)]
     pub fn to_string(&self) -> Result<String, OpenEhrError> {
         serde_yaml::to_string(self).map_err(|e| {
             OpenEhrError::Translation(format!("Failed to serialize Composition: {}", e))
@@ -60,15 +62,15 @@ fn archetype_node_id() -> ArchetypeId {
 }
 
 /// Default name for the letter Composition data.
-pub const NAME: &str = "Clinical letter";
+const NAME: &str = "Clinical letter";
 
 /// Default category for the letter Composition data.
-pub const CATEGORY: &str = "event";
+const CATEGORY: &str = "event";
 
 /// Composer information for the letter.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct Composer {
+struct Composer {
     pub name: String,
     pub role: String,
 }
@@ -76,21 +78,21 @@ pub struct Composer {
 /// Context information for the letter.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct Context {
+struct Context {
     pub start_time: DateTime<Utc>,
 }
 
 /// Content item wrapper (can be a section).
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct ContentItem {
+struct ContentItem {
     pub section: Section,
 }
 
 /// RM `SECTION` representation.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct Section {
+struct Section {
     pub archetype_node_id: String,
     pub name: DvText,
     pub items: Vec<SectionItem>,
@@ -103,19 +105,19 @@ fn section_archetype_node_id() -> ArchetypeId {
 }
 
 /// Default name for SECTION (correspondence).
-pub const SECTION_NAME: &str = "Correspondence";
+const SECTION_NAME: &str = "Correspondence";
 
 /// Section item wrapper (can be an evaluation).
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct SectionItem {
+struct SectionItem {
     pub evaluation: Evaluation,
 }
 
 /// RM `EVALUATION` representation.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct Evaluation {
+struct Evaluation {
     pub archetype_node_id: String,
     pub name: DvText,
     pub data: EvaluationData,
@@ -128,13 +130,13 @@ fn evaluation_archetype_node_id() -> ArchetypeId {
 }
 
 /// Default name for Evaluation (clinical correspondence).
-pub const EVALUATION_NAME: &str = "Clinical correspondence";
+const EVALUATION_NAME: &str = "Clinical correspondence";
 
 /// Evaluation data wrapper.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 #[serde(untagged)]
-pub enum EvaluationData {
+enum EvaluationData {
     Narrative {
         narrative: Narrative,
     },
@@ -147,22 +149,22 @@ pub enum EvaluationData {
 /// Narrative content that can reference an external file.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct Narrative {
+struct Narrative {
     #[serde(rename = "type")]
     pub type_: String,
     pub path: String,
 }
 
 /// Default type for external text narrative.
-pub const NARRATIVE_TYPE: &str = "external_text";
+const NARRATIVE_TYPE: &str = "external_text";
 
 /// Default path for narrative body.
-pub const NARRATIVE_PATH: &str = "./body.md";
+const NARRATIVE_PATH: &str = "./body.md";
 
 /// RM-specific ClinicalList EVALUATION (maps internally from public ClinicalList).
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ClinicalList {
+struct ClinicalList {
     archetype_node_id: String,
     name: DvText,
     data: ClinicalListData,
@@ -178,7 +180,7 @@ fn snapshot_archetype_node_id() -> ArchetypeId {
 /// ClinicalList data structure.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ClinicalListData {
+struct ClinicalListData {
     kind: DvText,
     items: Vec<ClinicalListItem>,
 }
@@ -186,7 +188,7 @@ pub(crate) struct ClinicalListData {
 /// A single item within a ClinicalList.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct ClinicalListItem {
+struct ClinicalListItem {
     pub text: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code: Option<Code>,
@@ -195,11 +197,36 @@ pub struct ClinicalListItem {
 /// A coded concept with terminology and value.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct Code {
+struct Code {
     pub terminology: String,
     pub value: String,
 }
 
+/// Converts a public domain-level clinical list to wire format.
+///
+/// This implementation transforms the domain type [`PublicClinicalList`] into the
+/// internal wire representation [`ClinicalList`] used for YAML serialization.
+///
+/// The conversion:
+/// - Wraps the list name in a [`DvText`] structure required by openEHR RM
+/// - Assigns the snapshot evaluation archetype ID (`openEHR-EHR-EVALUATION.snapshot.v1`)
+/// - Wraps the kind field in [`DvText`]
+/// - Converts each item, preserving text and optional coded concepts
+/// - Maps [`CodedConcept`] to wire format [`Code`] structures
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use openehr::ClinicalList as PublicClinicalList;
+///
+/// let public_list = PublicClinicalList {
+///     name: "Diagnoses (snapshot)".to_string(),
+///     kind: "diagnoses".to_string(),
+///     items: vec![],
+/// };
+///
+/// let wire_list: ClinicalList = (&public_list).into();
+/// ```
 impl From<&PublicClinicalList> for ClinicalList {
     fn from(list: &PublicClinicalList) -> Self {
         ClinicalList {
@@ -227,6 +254,37 @@ impl From<&PublicClinicalList> for ClinicalList {
     }
 }
 
+/// Extracts domain-level letter data from wire format composition.
+///
+/// This implementation parses a deserialized [`Composition`] (wire format) and extracts
+/// the essential domain-level fields into a [`LetterData`] carrier struct.
+///
+/// The extraction process:
+/// 1. **Parses rm_version**: Converts the string to [`RmVersion`] enum, defaulting to
+///    `rm_1_1_0` if parsing fails
+/// 2. **Extracts scalar fields**: uid, composer name/role, start_time
+/// 3. **Walks nested structure**: Traverses content → section → items to find evaluations
+/// 4. **Filters clinical lists**: Only extracts [`EvaluationData::ClinicalList`] variants,
+///    ignoring narrative evaluations
+/// 5. **Converts to public types**: Maps wire format clinical lists and coded concepts
+///    to public domain types
+///
+/// This conversion is used by [`composition_parse()`] to provide a clean domain-level
+/// API that hides the complexity of the openEHR RM structure.
+///
+/// # Panics
+///
+/// Does not panic. Invalid rm_version strings fall back to `rm_1_1_0`.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// let composition: Composition = serde_yaml::from_str(yaml)?;
+/// let letter_data: LetterData = composition.into();
+///
+/// assert_eq!(letter_data.composer_name, "Dr Jane Smith");
+/// assert_eq!(letter_data.clinical_lists.len(), 2);
+/// ```
 impl From<Composition> for LetterData {
     fn from(comp: Composition) -> Self {
         // Extract clinical lists from the composition content
@@ -264,7 +322,10 @@ impl From<Composition> for LetterData {
                 .rm_version
                 .parse::<RmVersion>()
                 .unwrap_or(RmVersion::rm_1_1_0),
-            uid: comp.uid,
+            uid: comp
+                .uid
+                .parse()
+                .unwrap_or_else(|_| TimestampId::new(Utc::now(), Uuid::new_v4())),
             composer_name: comp.composer.name,
             composer_role: comp.composer.role,
             start_time: comp.context.start_time,
@@ -273,11 +334,42 @@ impl From<Composition> for LetterData {
     }
 }
 
+/// Builds wire format composition from domain-level letter data.
+///
+/// This implementation creates a complete openEHR RM [`Composition`] structure from
+/// the simplified domain-level [`LetterData`] by delegating to the internal
+/// `letter_init()` function.
+///
+/// The conversion:
+/// - Constructs a full openEHR RM COMPOSITION with proper archetype IDs
+/// - Creates the correspondence SECTION with required structure
+/// - Adds a narrative EVALUATION pointing to the external body.md file
+/// - Converts clinical lists to snapshot EVALUATIONs with proper archetype IDs
+/// - Wraps all text fields in [`DvText`] structures as required by the RM
+///
+/// This is used by [`composition_render()`] to transform domain data into
+/// serializable YAML that conforms to the openEHR specification.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// let letter_data = LetterData {
+///     rm_version: RmVersion::rm_1_1_0,
+///     uid: "20260112T100000.000Z-uuid".to_string(),
+///     composer_name: "Dr Smith".to_string(),
+///     composer_role: "Consultant".to_string(),
+///     start_time: Utc::now(),
+///     clinical_lists: vec![],
+/// };
+///
+/// let composition: Composition = (&letter_data).into();
+/// let yaml = serde_yaml::to_string(&composition)?;
+/// ```
 impl From<&LetterData> for Composition {
     fn from(data: &LetterData) -> Self {
         letter_init(
             data.rm_version.as_str(),
-            &data.uid,
+            &data.uid.to_string(),
             &data.composer_name,
             &data.composer_role,
             data.start_time,
@@ -572,7 +664,9 @@ content:
         let mut letter_data = composition_parse(yaml).expect("should parse YAML");
 
         // Modify fields
-        letter_data.uid = "20260113T153000.000Z-123e4567-e89b-12d3-a456-426614174000".to_string();
+        letter_data.uid = "20260113T153000.000Z-123e4567-e89b-12d3-a456-426614174000"
+            .parse()
+            .expect("valid TimestampId");
         letter_data.composer_name = "Dr John Doe".to_string();
         letter_data.composer_role = "Senior Consultant".to_string();
         let start_time = DateTime::parse_from_rfc3339("2026-01-13T15:30:00Z")
@@ -588,7 +682,7 @@ content:
 
         assert_eq!(result.rm_version.as_str(), "rm_1_1_0");
         assert_eq!(
-            result.uid,
+            result.uid.to_string(),
             "20260113T153000.000Z-123e4567-e89b-12d3-a456-426614174000"
         );
         assert_eq!(result.composer_name, "Dr John Doe");
@@ -599,7 +693,7 @@ content:
     #[test]
     fn letter_render_partial_update() {
         let yaml = r#"rm_version: "rm_1_1_0"
-uid: "20260111T143522.045Z-550e8400e29b41d4a716446655440000"
+uid: "20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000"
 archetype_node_id: "openEHR-EHR-COMPOSITION.correspondence.v1"
 name:
   value: "Clinical letter"
@@ -642,8 +736,8 @@ content:
         // Only composer name should be updated
         assert_eq!(result.rm_version.as_str(), "rm_1_1_0");
         assert_eq!(
-            result.uid,
-            "20260111T143522.045Z-550e8400e29b41d4a716446655440000"
+            result.uid.to_string(),
+            "20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000"
         );
         assert_eq!(result.composer_name, "Dr Updated Name");
         assert_eq!(result.composer_role, "Consultant Physician");
@@ -689,9 +783,10 @@ content:
         let start_time = DateTime::parse_from_rfc3339("2026-01-12T00:00:00Z")
             .expect("valid datetime")
             .with_timezone(&Utc);
+        let test_uid = "20260112T000000.000Z-00000000-0000-0000-0000-000000000000";
         let letter = letter_init(
             "rm_1_1_0",
-            "test-uid",
+            test_uid,
             "Dr Test",
             "Test Role",
             start_time,
@@ -701,7 +796,7 @@ content:
         let yaml_string = letter.to_string().expect("to_string should work");
 
         assert!(yaml_string.contains("rm_version:"));
-        assert!(yaml_string.contains("uid: test-uid"));
+        assert!(yaml_string.contains(&format!("uid: {}", test_uid)));
         assert!(yaml_string.contains("composer:"));
         assert!(yaml_string.contains("name: Dr Test"));
         assert!(yaml_string.contains("role: Test Role"));
@@ -723,7 +818,9 @@ content:
         // Create LetterData from scratch
         let letter_data = LetterData {
             rm_version: RmVersion::rm_1_1_0,
-            uid: "20260112T100000.000Z-00000000-0000-0000-0000-000000000000".to_string(),
+            uid: "20260112T100000.000Z-00000000-0000-0000-0000-000000000000"
+                .parse()
+                .expect("valid TimestampId"),
             composer_name: "Dr New".to_string(),
             composer_role: "New Role".to_string(),
             start_time,
@@ -737,7 +834,7 @@ content:
 
         assert_eq!(result.rm_version, RmVersion::rm_1_1_0);
         assert_eq!(
-            result.uid,
+            result.uid.to_string(),
             "20260112T100000.000Z-00000000-0000-0000-0000-000000000000"
         );
         assert_eq!(result.composer_name, "Dr New");
