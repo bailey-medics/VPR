@@ -25,6 +25,9 @@ pub use validation::validate_namespace_uri_safe;
 // Re-export public domain-level types
 pub use public_structs::{ClinicalList, ClinicalListItem, CodedConcept, LetterData};
 
+// Re-export TimestampId from vpr_uuid crate
+pub use vpr_uuid::TimestampId;
+
 /// Supported openEHR RM versions.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[allow(non_camel_case_types)]

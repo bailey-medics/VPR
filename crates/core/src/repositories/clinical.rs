@@ -436,7 +436,7 @@ impl ClinicalService<Initialised> {
         // Construct LetterData for the new letter
         let letter_data = openehr::LetterData {
             rm_version,
-            uid: timestamp_id.to_string(),
+            uid: timestamp_id.clone(),
             composer_name: author.name.clone(),
             composer_role: "Clinical Practitioner".to_string(),
             start_time,
