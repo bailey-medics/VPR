@@ -1,0 +1,666 @@
+//! FHIR-aligned messaging wire models and translation helpers.
+//!
+//! This module provides both domain-level types and wire models for messaging thread ledgers,
+//! which store contextual and policy metadata (not clinical narrative).
+//!
+//! Responsibilities:
+//! - Define public domain-level types for external API use
+//! - Define a strict wire model (`Ledger`) for serialisation/deserialisation
+//! - Provide translation helpers between domain primitives and the wire model
+//! - Validate ledger structure and enforce required fields
+//!
+//! Notes:
+//! - Clinical messages are stored separately in messages.md
+//! - This ledger is mutable and overwriteable (unlike messages)
+//! - Changes are git-audited via the change_log
+
+use crate::{FhirError, TimestampId};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+// ============================================================================
+// Public domain-level types
+// ============================================================================
+
+/// Domain-level carrier for thread ledger data.
+///
+/// This struct represents the contextual and policy metadata for a messaging thread
+/// in a format that is independent of specific wire formats.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LedgerData {
+    /// Unique identifier for this thread (timestamp-prefixed UUID).
+    pub thread_id: TimestampId,
+
+    /// Current status of the thread.
+    pub status: ThreadStatus,
+
+    /// Timestamp when the thread was created.
+    pub created_at: DateTime<Utc>,
+
+    /// Timestamp when the thread was last updated.
+    pub last_updated_at: DateTime<Utc>,
+
+    /// Participants in this thread with their roles and display information.
+    pub participants: Vec<LedgerParticipant>,
+
+    /// Visibility and sensitivity settings for this thread.
+    pub visibility: LedgerVisibility,
+
+    /// Thread policies controlling participation and access.
+    pub policies: LedgerPolicies,
+
+    /// Audit trail for thread creation and modifications.
+    pub audit: LedgerAudit,
+}
+
+/// Thread status enumeration.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThreadStatus {
+    /// Thread is active and accepting new messages.
+    Open,
+    /// Thread is closed to new messages but remains readable.
+    Closed,
+    /// Thread is archived (typically not shown in default views).
+    Archived,
+}
+
+/// A participant in a messaging thread.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LedgerParticipant {
+    /// Unique identifier for this participant (UUID).
+    pub participant_id: Uuid,
+
+    /// Role of this participant in the conversation.
+    pub role: ParticipantRole,
+
+    /// Human-readable display name for this participant.
+    pub display_name: String,
+
+    /// Optional organisation affiliation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub organisation: Option<String>,
+}
+
+/// Role of a participant in a messaging thread.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ParticipantRole {
+    /// Clinical staff member.
+    Clinician,
+    /// Patient participant.
+    Patient,
+    /// Care team member or other healthcare professional.
+    CareTeam,
+    /// System-generated participant (for automated messages).
+    System,
+}
+
+/// Visibility and sensitivity settings for a thread.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LedgerVisibility {
+    /// Sensitivity level (standard, confidential, restricted).
+    pub sensitivity: String,
+
+    /// Whether access is restricted beyond normal rules.
+    pub restricted: bool,
+}
+
+/// Thread policies controlling participation and access.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LedgerPolicies {
+    /// Whether patient participation is allowed.
+    pub allow_patient_participation: bool,
+
+    /// Whether external organisations can participate.
+    pub allow_external_organisations: bool,
+}
+
+/// Audit trail for thread creation and modifications.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LedgerAudit {
+    /// Identifier of who/what created the thread.
+    pub created_by: String,
+
+    /// Chronological log of changes to the ledger.
+    pub change_log: Vec<AuditChangeLog>,
+}
+
+/// A single entry in the audit change log.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuditChangeLog {
+    /// Timestamp when the change occurred.
+    pub changed_at: DateTime<Utc>,
+
+    /// Identifier of who/what made the change.
+    pub changed_by: String,
+
+    /// Human-readable description of what changed.
+    pub description: String,
+}
+
+// ============================================================================
+// Public Messaging operations
+// ============================================================================
+
+/// Messaging operations for thread ledgers.
+///
+/// This is a zero-sized type used for namespacing messaging-related operations.
+/// All methods are associated functions.
+pub struct Messaging;
+
+impl Messaging {
+    /// Parse a thread ledger from YAML text.
+    ///
+    /// This uses `serde_path_to_error` to surface a best-effort "path" (e.g. `participants[0].role`)
+    /// to the failing field when the YAML does not match the `Ledger` wire schema.
+    ///
+    /// # Arguments
+    ///
+    /// * `yaml_text` - YAML text expected to represent a thread ledger mapping.
+    ///
+    /// # Returns
+    ///
+    /// Returns a [`LedgerData`] with domain-level fields extracted from the ledger.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FhirError`] if:
+    /// - the YAML does not represent a valid thread ledger,
+    /// - any field has an unexpected type,
+    /// - any unknown keys are present (due to `#[serde(deny_unknown_fields)]`),
+    /// - thread_id is not a valid TimestampId,
+    /// - participant_id values are not valid UUIDs.
+    pub fn ledger_parse(yaml_text: &str) -> Result<LedgerData, FhirError> {
+        let deserializer = serde_yaml::Deserializer::from_str(yaml_text);
+
+        let wire = match serde_path_to_error::deserialize::<_, Ledger>(deserializer) {
+            Ok(parsed) => parsed,
+            Err(err) => {
+                let path = err.path().to_string();
+                let source = err.into_inner();
+                let path = if path.is_empty() {
+                    "<root>"
+                } else {
+                    path.as_str()
+                };
+                return Err(FhirError::Translation(format!(
+                    "Thread ledger schema mismatch at {path}: {source}"
+                )));
+            }
+        };
+
+        // Convert wire format to domain types
+        wire_to_domain(wire)
+    }
+
+    /// Render a thread ledger as YAML text.
+    ///
+    /// This converts domain-level [`LedgerData`] into wire format and serializes to YAML.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - Ledger data containing all fields.
+    ///
+    /// # Returns
+    ///
+    /// Returns a YAML string representation of the ledger.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FhirError`] if serialization fails.
+    pub fn ledger_render(data: &LedgerData) -> Result<String, FhirError> {
+        let wire: Ledger = domain_to_wire(data);
+        serde_yaml::to_string(&wire)
+            .map_err(|e| FhirError::Translation(format!("Failed to serialize ledger: {e}")))
+    }
+}
+
+// ============================================================================
+// Wire types (internal)
+// ============================================================================
+
+/// Wire representation of a thread ledger for on-disk YAML.
+///
+/// This is the exact structure that will be serialized to/from YAML.
+/// All fields use `#[serde(deny_unknown_fields)]` for strict validation.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct Ledger {
+    pub thread_id: String,
+    pub status: ThreadStatus,
+    pub created_at: DateTime<Utc>,
+    pub last_updated_at: DateTime<Utc>,
+    pub participants: Vec<Participant>,
+    pub visibility: Visibility,
+    pub policies: Policies,
+    pub audit: Audit,
+}
+
+/// Wire representation of a participant.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct Participant {
+    pub participant_id: String,
+    pub role: ParticipantRole,
+    pub display_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub organisation: Option<String>,
+}
+
+/// Wire representation of visibility settings.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct Visibility {
+    pub sensitivity: String,
+    pub restricted: bool,
+}
+
+/// Wire representation of thread policies.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct Policies {
+    pub allow_patient_participation: bool,
+    pub allow_external_organisations: bool,
+}
+
+/// Wire representation of audit trail.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct Audit {
+    pub created_by: String,
+    pub change_log: Vec<ChangeLog>,
+}
+
+/// Wire representation of a change log entry.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct ChangeLog {
+    pub changed_at: DateTime<Utc>,
+    pub changed_by: String,
+    pub description: String,
+}
+
+// ============================================================================
+// Helper functions (internal)
+// ============================================================================
+
+/// Convert wire format ledger to domain types.
+///
+/// This performs validation and conversion of string identifiers to proper types.
+fn wire_to_domain(wire: Ledger) -> Result<LedgerData, FhirError> {
+    // Parse thread_id as TimestampId
+    let thread_id = wire
+        .thread_id
+        .parse::<TimestampId>()
+        .map_err(|e| FhirError::InvalidInput(format!("Invalid thread_id: {e}")))?;
+
+    // Convert participants, validating UUIDs
+    let mut participants = Vec::with_capacity(wire.participants.len());
+    for (idx, p) in wire.participants.iter().enumerate() {
+        let participant_id = Uuid::parse_str(&p.participant_id).map_err(|_| {
+            FhirError::InvalidUuid(format!(
+                "Invalid UUID in participants[{idx}].participant_id: {}",
+                p.participant_id
+            ))
+        })?;
+
+        participants.push(LedgerParticipant {
+            participant_id,
+            role: p.role.clone(),
+            display_name: p.display_name.clone(),
+            organisation: p.organisation.clone(),
+        });
+    }
+
+    Ok(LedgerData {
+        thread_id,
+        status: wire.status,
+        created_at: wire.created_at,
+        last_updated_at: wire.last_updated_at,
+        participants,
+        visibility: LedgerVisibility {
+            sensitivity: wire.visibility.sensitivity,
+            restricted: wire.visibility.restricted,
+        },
+        policies: LedgerPolicies {
+            allow_patient_participation: wire.policies.allow_patient_participation,
+            allow_external_organisations: wire.policies.allow_external_organisations,
+        },
+        audit: LedgerAudit {
+            created_by: wire.audit.created_by,
+            change_log: wire
+                .audit
+                .change_log
+                .into_iter()
+                .map(|c| AuditChangeLog {
+                    changed_at: c.changed_at,
+                    changed_by: c.changed_by,
+                    description: c.description,
+                })
+                .collect(),
+        },
+    })
+}
+
+/// Convert domain types to wire format ledger.
+fn domain_to_wire(data: &LedgerData) -> Ledger {
+    Ledger {
+        thread_id: data.thread_id.to_string(),
+        status: data.status.clone(),
+        created_at: data.created_at,
+        last_updated_at: data.last_updated_at,
+        participants: data
+            .participants
+            .iter()
+            .map(|p| Participant {
+                participant_id: p.participant_id.to_string(),
+                role: p.role.clone(),
+                display_name: p.display_name.clone(),
+                organisation: p.organisation.clone(),
+            })
+            .collect(),
+        visibility: Visibility {
+            sensitivity: data.visibility.sensitivity.clone(),
+            restricted: data.visibility.restricted,
+        },
+        policies: Policies {
+            allow_patient_participation: data.policies.allow_patient_participation,
+            allow_external_organisations: data.policies.allow_external_organisations,
+        },
+        audit: Audit {
+            created_by: data.audit.created_by.clone(),
+            change_log: data
+                .audit
+                .change_log
+                .iter()
+                .map(|c| ChangeLog {
+                    changed_at: c.changed_at,
+                    changed_by: c.changed_by.clone(),
+                    description: c.description.clone(),
+                })
+                .collect(),
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn round_trips_sample_yaml() {
+        let input = r#"thread_id: 20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000
+status: open
+created_at: "2026-01-11T14:35:22.045Z"
+last_updated_at: "2026-01-11T15:10:04.912Z"
+participants:
+  - participant_id: 4f8c2a1d-9e3b-4a7c-8f1e-6b0d2c5a9f12
+    role: clinician
+    display_name: Dr Jane Smith
+    organisation: Gloucestershire Hospitals NHS Foundation Trust
+  - participant_id: a1d3c5e7-f9b2-4680-b2d4-f6e8c0a9d1e3
+    role: clinician
+    display_name: Dr Tom Patel
+    organisation: Gloucestershire Hospitals NHS Foundation Trust
+  - participant_id: 9b7c6d5e-4f3a-2b1c-0e8d-7f6a5b4c3d2e
+    role: patient
+    display_name: John Doe
+visibility:
+  sensitivity: standard
+  restricted: false
+policies:
+  allow_patient_participation: true
+  allow_external_organisations: false
+audit:
+  created_by: system
+  change_log:
+    - changed_at: "2026-01-11T14:35:22.045Z"
+      changed_by: system
+      description: Thread created
+"#;
+
+        let ledger_data = Messaging::ledger_parse(input).expect("parse yaml");
+        let output = Messaging::ledger_render(&ledger_data).expect("render ledger");
+        let reparsed = Messaging::ledger_parse(&output).expect("reparse yaml");
+        assert_eq!(ledger_data, reparsed);
+    }
+
+    #[test]
+    fn strict_validation_rejects_unknown_keys() {
+        let input = r#"thread_id: 20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000
+status: open
+created_at: "2026-01-11T14:35:22.045Z"
+last_updated_at: "2026-01-11T15:10:04.912Z"
+participants: []
+visibility:
+  sensitivity: standard
+  restricted: false
+policies:
+  allow_patient_participation: true
+  allow_external_organisations: false
+audit:
+  created_by: system
+  change_log: []
+unexpected_key: should_fail
+"#;
+
+        let err = Messaging::ledger_parse(input).expect_err("should reject unknown key");
+        match err {
+            FhirError::Translation(msg) => {
+                assert!(msg.contains("unexpected_key"));
+            }
+            other => panic!("expected Translation error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn strict_validation_rejects_wrong_types() {
+        let input = r#"thread_id: 20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000
+status: open
+created_at: "2026-01-11T14:35:22.045Z"
+last_updated_at: "2026-01-11T15:10:04.912Z"
+participants: []
+visibility:
+  sensitivity: standard
+  restricted: "not_a_boolean"
+policies:
+  allow_patient_participation: true
+  allow_external_organisations: false
+audit:
+  created_by: system
+  change_log: []
+"#;
+
+        let err = Messaging::ledger_parse(input).expect_err("should reject wrong type");
+        match err {
+            FhirError::Translation(msg) => {
+                assert!(msg.contains("restricted"));
+            }
+            other => panic!("expected Translation error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_thread_id() {
+        let input = r#"thread_id: not-a-valid-timestamp-id
+status: open
+created_at: "2026-01-11T14:35:22.045Z"
+last_updated_at: "2026-01-11T15:10:04.912Z"
+participants: []
+visibility:
+  sensitivity: standard
+  restricted: false
+policies:
+  allow_patient_participation: true
+  allow_external_organisations: false
+audit:
+  created_by: system
+  change_log: []
+"#;
+
+        let err = Messaging::ledger_parse(input).expect_err("should reject invalid thread_id");
+        match err {
+            FhirError::InvalidInput(msg) => {
+                assert!(msg.contains("Invalid thread_id"));
+            }
+            other => panic!("expected InvalidInput error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_participant_uuid() {
+        let input = r#"thread_id: 20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000
+status: open
+created_at: "2026-01-11T14:35:22.045Z"
+last_updated_at: "2026-01-11T15:10:04.912Z"
+participants:
+  - participant_id: not-a-valid-uuid
+    role: clinician
+    display_name: Dr Jane Smith
+visibility:
+  sensitivity: standard
+  restricted: false
+policies:
+  allow_patient_participation: true
+  allow_external_organisations: false
+audit:
+  created_by: system
+  change_log: []
+"#;
+
+        let err =
+            Messaging::ledger_parse(input).expect_err("should reject invalid participant UUID");
+        match err {
+            FhirError::InvalidUuid(msg) => {
+                assert!(msg.contains("participants[0].participant_id"));
+            }
+            other => panic!("expected InvalidUuid error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_minimal_valid_ledger() {
+        let input = r#"thread_id: 20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000
+status: open
+created_at: "2026-01-11T14:35:22.045Z"
+last_updated_at: "2026-01-11T15:10:04.912Z"
+participants: []
+visibility:
+  sensitivity: standard
+  restricted: false
+policies:
+  allow_patient_participation: false
+  allow_external_organisations: false
+audit:
+  created_by: system
+  change_log: []
+"#;
+
+        let result = Messaging::ledger_parse(input).expect("should parse minimal ledger");
+        assert_eq!(
+            result.thread_id.to_string(),
+            "20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000"
+        );
+        assert_eq!(result.status, ThreadStatus::Open);
+        assert!(result.participants.is_empty());
+        assert_eq!(result.visibility.sensitivity, "standard");
+        assert!(!result.visibility.restricted);
+    }
+
+    #[test]
+    fn handles_multiple_participants() {
+        let input = r#"thread_id: 20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000
+status: open
+created_at: "2026-01-11T14:35:22.045Z"
+last_updated_at: "2026-01-11T15:10:04.912Z"
+participants:
+  - participant_id: 4f8c2a1d-9e3b-4a7c-8f1e-6b0d2c5a9f12
+    role: clinician
+    display_name: Dr Jane Smith
+    organisation: Test Hospital
+  - participant_id: a1d3c5e7-f9b2-4680-b2d4-f6e8c0a9d1e3
+    role: patient
+    display_name: John Doe
+visibility:
+  sensitivity: standard
+  restricted: false
+policies:
+  allow_patient_participation: true
+  allow_external_organisations: false
+audit:
+  created_by: system
+  change_log: []
+"#;
+
+        let result = Messaging::ledger_parse(input).expect("should parse multiple participants");
+        assert_eq!(result.participants.len(), 2);
+        assert_eq!(result.participants[0].role, ParticipantRole::Clinician);
+        assert_eq!(result.participants[1].role, ParticipantRole::Patient);
+        assert_eq!(
+            result.participants[0].organisation,
+            Some("Test Hospital".to_string())
+        );
+        assert_eq!(result.participants[1].organisation, None);
+    }
+
+    #[test]
+    fn handles_closed_and_archived_status() {
+        let closed = r#"thread_id: 20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000
+status: closed
+created_at: "2026-01-11T14:35:22.045Z"
+last_updated_at: "2026-01-11T15:10:04.912Z"
+participants: []
+visibility:
+  sensitivity: standard
+  restricted: false
+policies:
+  allow_patient_participation: true
+  allow_external_organisations: false
+audit:
+  created_by: system
+  change_log: []
+"#;
+
+        let result = Messaging::ledger_parse(closed).expect("should parse closed status");
+        assert_eq!(result.status, ThreadStatus::Closed);
+
+        let archived = closed.replace("status: closed", "status: archived");
+        let result = Messaging::ledger_parse(&archived).expect("should parse archived status");
+        assert_eq!(result.status, ThreadStatus::Archived);
+    }
+
+    #[test]
+    fn handles_change_log_entries() {
+        let input = r#"thread_id: 20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000
+status: open
+created_at: "2026-01-11T14:35:22.045Z"
+last_updated_at: "2026-01-11T15:10:04.912Z"
+participants: []
+visibility:
+  sensitivity: standard
+  restricted: false
+policies:
+  allow_patient_participation: true
+  allow_external_organisations: false
+audit:
+  created_by: system
+  change_log:
+    - changed_at: "2026-01-11T14:35:22.045Z"
+      changed_by: system
+      description: Thread created
+    - changed_at: "2026-01-11T15:10:04.912Z"
+      changed_by: dr-jane-smith
+      description: Added participant Dr Tom Patel
+"#;
+
+        let result = Messaging::ledger_parse(input).expect("should parse change log");
+        assert_eq!(result.audit.change_log.len(), 2);
+        assert_eq!(result.audit.change_log[0].description, "Thread created");
+        assert_eq!(
+            result.audit.change_log[1].description,
+            "Added participant Dr Tom Patel"
+        );
+    }
+}

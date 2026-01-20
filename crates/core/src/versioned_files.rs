@@ -174,6 +174,7 @@ impl ClinicalDomain {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum CoordinationDomain {
+    Record,
     Messaging,
 }
 
@@ -181,6 +182,7 @@ impl CoordinationDomain {
     #[allow(dead_code)]
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
+            Self::Record => "record",
             Self::Messaging => "messaging",
         }
     }

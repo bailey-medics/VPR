@@ -1,0 +1,18 @@
+[package]
+name = "fhir"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+
+[lib]
+name = "fhir"
+path = "src/lib.rs"
+
+[dependencies]
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = "0.9"
+serde_path_to_error = "0.1"
+thiserror = "1.0"
+uuid = { version = "1", features = ["serde"] }
+vpr-uuid = { path = "../uuid" }

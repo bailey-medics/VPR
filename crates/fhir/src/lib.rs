@@ -1,0 +1,49 @@
+//! FHIR wire/boundary support for Care Coordination Repository.
+//!
+//! This crate provides **wire models** and **format/translation helpers** for on-disk,
+//! version-controlled coordination files:
+//! - YAML components (for example messaging thread ledgers)
+//!
+//! This crate focuses on:
+//! - FHIR semantic alignment (without FHIR JSON/REST transport)
+//! - serialisation/deserialisation
+//! - translation between domain primitives and wire structs
+//!
+//! Unlike the openehr crate, this crate is NOT version-aware. FHIR-aligned structures
+//! evolve more slowly and are internally versioned when needed.
+
+pub mod messaging;
+
+// Re-export Messaging facade
+pub use messaging::Messaging;
+
+// Re-export public domain-level types
+pub use messaging::{
+    AuditChangeLog, LedgerAudit, LedgerData, LedgerParticipant, LedgerPolicies, LedgerVisibility,
+    ParticipantRole, ThreadStatus,
+};
+
+// Re-export TimestampId from vpr_uuid crate
+pub use vpr_uuid::TimestampId;
+
+/// Errors returned by the `fhir` boundary crate.
+#[derive(Debug, thiserror::Error)]
+pub enum FhirError {
+    #[error("invalid input: {0}")]
+    InvalidInput(String),
+
+    #[error("invalid YAML: {0}")]
+    InvalidYaml(#[from] serde_yaml::Error),
+
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("translation error: {0}")]
+    Translation(String),
+
+    #[error("invalid UUID: {0}")]
+    InvalidUuid(String),
+}
+
+/// Type alias for Results that can fail with a [`FhirError`].
+pub type FhirResult<T> = Result<T, FhirError>;

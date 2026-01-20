@@ -97,7 +97,7 @@ impl CoordinationService<Uninitialised> {
         author.validate_commit_author()?;
 
         let commit_message = VprCommitMessage::new(
-            VprCommitDomain::Coordination(Messaging),
+            VprCommitDomain::Coordination(Record),
             VprCommitAction::Create,
             "Created coordination record",
             care_location,
@@ -750,14 +750,113 @@ fn parse_messages_md(content: &str) -> PatientResult<Vec<Message>> {
 
 /// Serializes ThreadLedger to YAML for ledger.yaml.
 fn serialize_ledger(ledger: &ThreadLedger) -> PatientResult<String> {
-    serde_yaml::to_string(ledger)
+    // Convert ThreadLedger to fhir::LedgerData
+    let ledger_data = fhir::LedgerData {
+        thread_id: ledger
+            .thread_id
+            .parse()
+            .map_err(|e| PatientError::InvalidInput(format!("Invalid thread_id format: {}", e)))?,
+        status: match ledger.status {
+            ThreadStatus::Open => fhir::ThreadStatus::Open,
+            ThreadStatus::Closed => fhir::ThreadStatus::Closed,
+            ThreadStatus::Archived => fhir::ThreadStatus::Archived,
+        },
+        created_at: chrono::DateTime::parse_from_rfc3339(&ledger.created_at)
+            .map_err(|e| PatientError::InvalidInput(format!("Invalid created_at: {}", e)))?
+            .with_timezone(&chrono::Utc),
+        last_updated_at: chrono::DateTime::parse_from_rfc3339(&ledger.last_updated_at)
+            .map_err(|e| PatientError::InvalidInput(format!("Invalid last_updated_at: {}", e)))?
+            .with_timezone(&chrono::Utc),
+        participants: ledger
+            .participants
+            .iter()
+            .map(|p| fhir::LedgerParticipant {
+                participant_id: p.participant_id,
+                role: match p.role {
+                    ParticipantRole::Clinician => fhir::ParticipantRole::Clinician,
+                    ParticipantRole::Patient => fhir::ParticipantRole::Patient,
+                    ParticipantRole::System => fhir::ParticipantRole::System,
+                },
+                display_name: p.display_name.clone(),
+                organisation: p.organisation.clone(),
+            })
+            .collect(),
+        visibility: fhir::LedgerVisibility {
+            sensitivity: match ledger.visibility.sensitivity {
+                SensitivityLevel::Standard => "standard".to_string(),
+                SensitivityLevel::Confidential => "confidential".to_string(),
+                SensitivityLevel::Restricted => "restricted".to_string(),
+            },
+            restricted: ledger.visibility.restricted,
+        },
+        policies: fhir::LedgerPolicies {
+            allow_patient_participation: ledger.policies.allow_patient_participation,
+            allow_external_organisations: ledger.policies.allow_external_organisations,
+        },
+        audit: fhir::LedgerAudit {
+            created_by: "system".to_string(),
+            change_log: vec![fhir::AuditChangeLog {
+                changed_at: chrono::DateTime::parse_from_rfc3339(&ledger.created_at)
+                    .map_err(|e| PatientError::InvalidInput(format!("Invalid created_at: {}", e)))?
+                    .with_timezone(&chrono::Utc),
+                changed_by: "system".to_string(),
+                description: "Thread created".to_string(),
+            }],
+        },
+    };
+
+    fhir::Messaging::ledger_render(&ledger_data)
         .map_err(|e| PatientError::InvalidInput(format!("Failed to serialize ledger: {}", e)))
 }
 
 /// Deserializes ledger.yaml into ThreadLedger.
 fn deserialize_ledger(content: &str) -> PatientResult<ThreadLedger> {
-    serde_yaml::from_str(content)
-        .map_err(|e| PatientError::InvalidInput(format!("Failed to deserialize ledger: {}", e)))
+    // Parse using fhir::Messaging
+    let ledger_data = fhir::Messaging::ledger_parse(content)
+        .map_err(|e| PatientError::InvalidInput(format!("Failed to deserialize ledger: {}", e)))?;
+
+    // Convert fhir::LedgerData to ThreadLedger
+    Ok(ThreadLedger {
+        thread_id: ledger_data.thread_id.to_string(),
+        status: match ledger_data.status {
+            fhir::ThreadStatus::Open => ThreadStatus::Open,
+            fhir::ThreadStatus::Closed => ThreadStatus::Closed,
+            fhir::ThreadStatus::Archived => ThreadStatus::Archived,
+        },
+        created_at: ledger_data
+            .created_at
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        last_updated_at: ledger_data
+            .last_updated_at
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        participants: ledger_data
+            .participants
+            .iter()
+            .map(|p| ThreadParticipant {
+                participant_id: p.participant_id,
+                role: match p.role {
+                    fhir::ParticipantRole::Clinician => ParticipantRole::Clinician,
+                    fhir::ParticipantRole::Patient => ParticipantRole::Patient,
+                    fhir::ParticipantRole::System => ParticipantRole::System,
+                    fhir::ParticipantRole::CareTeam => ParticipantRole::Clinician, // Map CareTeam to Clinician
+                },
+                display_name: p.display_name.clone(),
+                organisation: p.organisation.clone(),
+            })
+            .collect(),
+        visibility: Visibility {
+            sensitivity: match ledger_data.visibility.sensitivity.as_str() {
+                "confidential" => SensitivityLevel::Confidential,
+                "restricted" => SensitivityLevel::Restricted,
+                _ => SensitivityLevel::Standard,
+            },
+            restricted: ledger_data.visibility.restricted,
+        },
+        policies: Policies {
+            allow_patient_participation: ledger_data.policies.allow_patient_participation,
+            allow_external_organisations: ledger_data.policies.allow_external_organisations,
+        },
+    })
 }
 #[cfg(test)]
 static FORCE_CLEANUP_ERROR_FOR_THREADS: LazyLock<Mutex<HashSet<std::thread::ThreadId>>> =

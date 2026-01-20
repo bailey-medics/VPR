@@ -671,6 +671,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "fhir"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_path_to_error",
+ "serde_yaml",
+ "thiserror 1.0.69",
+ "uuid",
+ "vpr-uuid",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2902,6 +2915,7 @@ dependencies = [
  "api-shared",
  "base64 0.21.7",
  "chrono",
+ "fhir",
  "git2",
  "openehr",
  "p256",
