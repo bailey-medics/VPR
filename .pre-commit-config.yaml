@@ -5,6 +5,7 @@ repos:
     hooks:
       - id: cspell
         args: ["--no-progress", "--config", "cspell.config.json"]
+        types_or: [markdown, text, rust, yaml, json, toml]
 
   # cargo fmt (auto-format)
   - repo: local

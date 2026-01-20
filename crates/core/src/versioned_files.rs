@@ -138,34 +138,91 @@ fn extract_cert_public_key_sec1(cert_bytes: &[u8]) -> PatientResult<Vec<u8>> {
     Ok(spk.subject_public_key.data.to_vec())
 }
 
-/// Controlled vocabulary for VPR commit message domains.
+/// Clinical domain categories for commit messages.
 ///
-/// These are intentionally small and stable, and should be treated as labels/indexes.
-/// They categorize the type of change being made to patient records.
-///
-/// Safety/intent: Do not include patient identifiers or raw clinical data in commit messages.
+/// These represent different types of clinical data being modified.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum VprCommitDomain {
+pub(crate) enum ClinicalDomain {
     Record,
-    Obs,
-    Dx,
-    Tx,
-    Admin,
-    Corr,
-    Meta,
+    Observation,
+    Diagnosis,
+    Treatment,
+    Administration,
+    Correction,
+    Metadata,
+}
+
+impl ClinicalDomain {
+    #[allow(dead_code)]
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Record => "record",
+            Self::Observation => "observation",
+            Self::Diagnosis => "diagnosis",
+            Self::Treatment => "treatment",
+            Self::Administration => "administration",
+            Self::Correction => "correction",
+            Self::Metadata => "metadata",
+        }
+    }
+}
+
+/// Coordination domain categories for commit messages.
+///
+/// These represent different types of care coordination activities.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum CoordinationDomain {
+    Messaging,
+}
+
+impl CoordinationDomain {
+    #[allow(dead_code)]
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Messaging => "messaging",
+        }
+    }
+}
+
+/// Demographics domain categories for commit messages.
+///
+/// These represent different types of demographic data being modified.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum DemographicsDomain {
+    Record,
+}
+
+impl DemographicsDomain {
+    #[allow(dead_code)]
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Record => "record",
+        }
+    }
+}
+
+/// Controlled vocabulary for VPR commit message domains.
+///
+/// Hierarchical structure organizing commits by repository type (Clinical, Coordination, Demographics)
+/// and specific domain within that repository.
+///
+/// Safety/intent: Do not include patient identifiers or raw clinical data in commit messages.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub(crate) enum VprCommitDomain {
+    Clinical(ClinicalDomain),
+    Coordination(CoordinationDomain),
+    Demographics(DemographicsDomain),
 }
 
 impl VprCommitDomain {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
-            Self::Record => "record",
-            Self::Obs => "obs",
-            Self::Dx => "dx",
-            Self::Tx => "tx",
-            Self::Admin => "admin",
-            Self::Corr => "corr",
-            Self::Meta => "meta",
+            Self::Clinical(subdomain) => subdomain.as_str(),
+            Self::Coordination(subdomain) => subdomain.as_str(),
+            Self::Demographics(subdomain) => subdomain.as_str(),
         }
     }
 }
@@ -173,6 +230,47 @@ impl VprCommitDomain {
 impl fmt::Display for VprCommitDomain {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+impl Serialize for VprCommitDomain {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for VprCommitDomain {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        match s.as_str() {
+            "record" => Ok(Self::Clinical(ClinicalDomain::Record)),
+            "observation" => Ok(Self::Clinical(ClinicalDomain::Observation)),
+            "diagnosis" => Ok(Self::Clinical(ClinicalDomain::Diagnosis)),
+            "treatment" => Ok(Self::Clinical(ClinicalDomain::Treatment)),
+            "administration" => Ok(Self::Clinical(ClinicalDomain::Administration)),
+            "correction" => Ok(Self::Clinical(ClinicalDomain::Correction)),
+            "metadata" => Ok(Self::Clinical(ClinicalDomain::Metadata)),
+            "messaging" => Ok(Self::Coordination(CoordinationDomain::Messaging)),
+            _ => Err(serde::de::Error::unknown_variant(
+                &s,
+                &[
+                    "record",
+                    "observation",
+                    "diagnosis",
+                    "treatment",
+                    "administration",
+                    "correction",
+                    "metadata",
+                    "messaging",
+                ],
+            )),
+        }
     }
 }
 
@@ -1311,12 +1409,13 @@ fn verifying_key_from_public_key_or_cert_pem(pem_or_cert: &str) -> PatientResult
 
 #[cfg(test)]
 mod tests {
+    use super::ClinicalDomain::*;
     use super::*;
     use tempfile::TempDir;
 
     #[test]
     fn domain_serialises_lowercase() {
-        let s = serde_json::to_string(&VprCommitDomain::Record).unwrap();
+        let s = serde_json::to_string(&VprCommitDomain::Clinical(Record)).unwrap();
         assert_eq!(s, "\"record\"");
     }
 
@@ -1329,19 +1428,19 @@ mod tests {
     #[test]
     fn can_get_domain() {
         let msg = VprCommitMessage::new(
-            VprCommitDomain::Record,
+            VprCommitDomain::Clinical(Record),
             VprCommitAction::Create,
             "test",
             "location",
         )
         .unwrap();
-        assert_eq!(msg.domain(), VprCommitDomain::Record);
+        assert_eq!(msg.domain(), VprCommitDomain::Clinical(Record));
     }
 
     #[test]
     fn can_get_action() {
         let msg = VprCommitMessage::new(
-            VprCommitDomain::Record,
+            VprCommitDomain::Clinical(Record),
             VprCommitAction::Create,
             "test",
             "location",
@@ -1353,7 +1452,7 @@ mod tests {
     #[test]
     fn can_get_summary() {
         let msg = VprCommitMessage::new(
-            VprCommitDomain::Record,
+            VprCommitDomain::Clinical(Record),
             VprCommitAction::Create,
             "test summary",
             "location",
@@ -1365,7 +1464,7 @@ mod tests {
     #[test]
     fn can_get_trailers() {
         let msg = VprCommitMessage::new(
-            VprCommitDomain::Record,
+            VprCommitDomain::Clinical(Record),
             VprCommitAction::Create,
             "test",
             "location",
@@ -1424,7 +1523,7 @@ mod tests {
     #[test]
     fn render_without_trailers_is_single_line() {
         let msg = VprCommitMessage::new(
-            VprCommitDomain::Record,
+            VprCommitDomain::Clinical(Record),
             VprCommitAction::Create,
             "Patient record created",
             "St Elsewhere Hospital",
@@ -1439,7 +1538,7 @@ mod tests {
     #[test]
     fn render_with_trailers_matches_git_trailer_format() {
         let msg = VprCommitMessage::new(
-            VprCommitDomain::Record,
+            VprCommitDomain::Clinical(Record),
             VprCommitAction::Create,
             "Patient record created",
             "St Elsewhere Hospital",
@@ -1468,7 +1567,7 @@ mod tests {
         };
 
         let msg = VprCommitMessage::new(
-            VprCommitDomain::Record,
+            VprCommitDomain::Clinical(Record),
             VprCommitAction::Create,
             "Patient record created",
             "St Elsewhere Hospital",
@@ -1486,7 +1585,7 @@ mod tests {
     #[test]
     fn rejects_multiline_summary() {
         let err = VprCommitMessage::new(
-            VprCommitDomain::Record,
+            VprCommitDomain::Clinical(Record),
             VprCommitAction::Create,
             "line1\nline2",
             "St Elsewhere Hospital",
@@ -1499,7 +1598,7 @@ mod tests {
     #[test]
     fn rejects_missing_care_location() {
         let err = VprCommitMessage::new(
-            VprCommitDomain::Record,
+            VprCommitDomain::Clinical(Record),
             VprCommitAction::Create,
             "Patient record created",
             "   ",
@@ -1512,7 +1611,7 @@ mod tests {
     #[test]
     fn rejects_multiline_care_location() {
         let err = VprCommitMessage::new(
-            VprCommitDomain::Record,
+            VprCommitDomain::Clinical(Record),
             VprCommitAction::Create,
             "Patient record created",
             "St Elsewhere\nHospital",

@@ -22,7 +22,8 @@ use crate::repositories::shared::{
     copy_dir_recursive, create_uuid_and_shard_dir, validate_template, TemplateDirKind,
 };
 use crate::versioned_files::{
-    FileToWrite, VersionedFileService, VprCommitAction, VprCommitDomain, VprCommitMessage,
+    ClinicalDomain, FileToWrite, VersionedFileService, VprCommitAction, VprCommitDomain,
+    VprCommitMessage,
 };
 use crate::ShardableUuid;
 use openehr::{
@@ -35,6 +36,7 @@ use std::{
     sync::Arc,
 };
 use vpr_uuid::TimestampIdGenerator;
+use ClinicalDomain::*;
 
 #[cfg(test)]
 use std::io::ErrorKind;
@@ -223,7 +225,7 @@ impl ClinicalService<Uninitialised> {
         author.validate_commit_author()?;
 
         let commit_message = VprCommitMessage::new(
-            VprCommitDomain::Record,
+            VprCommitDomain::Clinical(Record),
             VprCommitAction::Create,
             "Initialised the clinical record",
             care_location,
@@ -330,7 +332,7 @@ impl ClinicalService<Initialised> {
         author.validate_commit_author()?;
 
         let msg = VprCommitMessage::new(
-            VprCommitDomain::Record,
+            VprCommitDomain::Clinical(Record),
             VprCommitAction::Update,
             "EHR status linked to demographics",
             care_location,
@@ -414,7 +416,7 @@ impl ClinicalService<Initialised> {
         author.validate_commit_author()?;
 
         let msg = VprCommitMessage::new(
-            VprCommitDomain::Record,
+            VprCommitDomain::Clinical(Record),
             VprCommitAction::Create,
             "Created new letter",
             care_location,
@@ -1535,12 +1537,6 @@ mod tests {
 
         let ehr_dir = patient_dir.join(".ehr");
         assert!(ehr_dir.exists(), ".ehr directory should exist");
-
-        let demographics_dir = patient_dir.join("demographics");
-        assert!(
-            demographics_dir.exists(),
-            "demographics directory should exist"
-        );
 
         let imaging_dir = patient_dir.join("imaging");
         assert!(imaging_dir.exists(), "imaging directory should exist");

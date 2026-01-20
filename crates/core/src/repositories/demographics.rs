@@ -10,7 +10,7 @@ use crate::author::Author;
 use crate::config::CoreConfig;
 use crate::error::{PatientError, PatientResult};
 use crate::versioned_files::{
-    VersionedFileService, VprCommitAction, VprCommitDomain, VprCommitMessage,
+    DemographicsDomain, VersionedFileService, VprCommitAction, VprCommitDomain, VprCommitMessage,
 };
 use crate::ShardableUuid;
 use api_shared::pb;
@@ -21,6 +21,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing;
+use DemographicsDomain::*;
 
 /// Represents a patient demographics record in FHIR-like format.
 /// This struct contains basic demographic information for a patient.
@@ -107,7 +108,7 @@ impl DemographicsService {
         // Initialise Git repository for the patient
         let repo = VersionedFileService::init(&patient_dir)?;
         let msg = VprCommitMessage::new(
-            VprCommitDomain::Record,
+            VprCommitDomain::Demographics(Record),
             VprCommitAction::Create,
             "Demographics record created",
             care_location,

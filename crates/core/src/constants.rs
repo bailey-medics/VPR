@@ -15,6 +15,9 @@ pub const CLINICAL_TEMPLATE_DIR: &str = "crates/core/templates/clinical";
 /// Directory name for demographics records storage.
 pub const DEMOGRAPHICS_DIR_NAME: &str = "demographics";
 
+/// Directory name for coordination records storage.
+pub const COORDINATION_DIR_NAME: &str = "coordination";
+
 /// Latest supported openEHR RM module version.
 pub const LATEST_RM: openehr::RmVersion = openehr::RmVersion::rm_1_1_0;
 /// Filename for patient JSON files.
