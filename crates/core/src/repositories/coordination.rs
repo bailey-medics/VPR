@@ -219,10 +219,7 @@ impl CoordinationService<Initialised> {
 
         // Create initial messages.md
         let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-        let mut messages_content = format!(
-            "# Care Coordination Thread\n\nThread ID: `{}`  \nCreated: {}\n\n---\n\n",
-            thread_id, now
-        );
+        let mut messages_content = "# Messages\n\n".to_string();
 
         // Add initial message if provided
         if let Some(msg_content) = initial_message {
@@ -243,7 +240,7 @@ impl CoordinationService<Initialised> {
             },
             policies: Policies {
                 allow_patient_participation: true,
-                allow_external_organisations: false,
+                allow_external_organisations: true,
             },
         };
         let ledger_content = serialize_ledger(&ledger)?;
@@ -327,16 +324,33 @@ impl CoordinationService<Initialised> {
             fs::read_to_string(&messages_path).map_err(PatientError::FileRead)?;
         let new_content = format!("{}{}", existing_content, formatted_message);
 
+        // Update ledger last_updated_at
+        let ledger_path = thread_dir.join("ledger.yaml");
+        let ledger_content = fs::read_to_string(&ledger_path).map_err(PatientError::FileRead)?;
+        let mut ledger = deserialize_ledger(&ledger_content)?;
+        ledger.last_updated_at = now.clone();
+        let updated_ledger_content = serialize_ledger(&ledger)?;
+
         // Write and commit
         let messages_relative = messages_path
             .strip_prefix(&patient_dir)
             .map_err(|_| PatientError::InvalidInput("Invalid path prefix".to_string()))?;
+        let ledger_relative = ledger_path
+            .strip_prefix(&patient_dir)
+            .map_err(|_| PatientError::InvalidInput("Invalid path prefix".to_string()))?;
 
-        let files_to_write = [FileToWrite {
-            relative_path: messages_relative,
-            content: &new_content,
-            old_content: Some(&existing_content),
-        }];
+        let files_to_write = [
+            FileToWrite {
+                relative_path: messages_relative,
+                content: &new_content,
+                old_content: Some(&existing_content),
+            },
+            FileToWrite {
+                relative_path: ledger_relative,
+                content: &updated_ledger_content,
+                old_content: Some(&ledger_content),
+            },
+        ];
 
         let repo = VersionedFileService::open(&patient_dir)?;
         repo.write_and_commit_files(author, &msg, &files_to_write)?;
@@ -473,7 +487,6 @@ pub struct ThreadParticipant {
     pub participant_id: Uuid,
     pub role: ParticipantRole,
     pub display_name: String,
-    pub organisation: Option<String>,
 }
 
 /// Role of a participant in care coordination.
@@ -790,7 +803,7 @@ fn serialize_ledger(ledger: &ThreadLedger) -> PatientResult<String> {
                     ParticipantRole::System => fhir::ParticipantRole::System,
                 },
                 display_name: p.display_name.clone(),
-                organisation: p.organisation.clone(),
+                organisation: None,
             })
             .collect(),
         visibility: fhir::LedgerVisibility {
@@ -804,16 +817,6 @@ fn serialize_ledger(ledger: &ThreadLedger) -> PatientResult<String> {
         policies: fhir::LedgerPolicies {
             allow_patient_participation: ledger.policies.allow_patient_participation,
             allow_external_organisations: ledger.policies.allow_external_organisations,
-        },
-        audit: fhir::LedgerAudit {
-            created_by: "system".to_string(),
-            change_log: vec![fhir::AuditChangeLog {
-                changed_at: chrono::DateTime::parse_from_rfc3339(&ledger.created_at)
-                    .map_err(|e| PatientError::InvalidInput(format!("Invalid created_at: {}", e)))?
-                    .with_timezone(&chrono::Utc),
-                changed_by: "system".to_string(),
-                description: "Thread created".to_string(),
-            }],
         },
     };
 
@@ -853,7 +856,6 @@ fn deserialize_ledger(content: &str) -> PatientResult<ThreadLedger> {
                     fhir::ParticipantRole::CareTeam => ParticipantRole::Clinician, // Map CareTeam to Clinician
                 },
                 display_name: p.display_name.clone(),
-                organisation: p.organisation.clone(),
             })
             .collect(),
         visibility: Visibility {

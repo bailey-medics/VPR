@@ -49,9 +49,6 @@ pub struct LedgerData {
 
     /// Thread policies controlling participation and access.
     pub policies: LedgerPolicies,
-
-    /// Audit trail for thread creation and modifications.
-    pub audit: LedgerAudit,
 }
 
 /// Thread status enumeration.
@@ -115,29 +112,6 @@ pub struct LedgerPolicies {
 
     /// Whether external organisations can participate.
     pub allow_external_organisations: bool,
-}
-
-/// Audit trail for thread creation and modifications.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LedgerAudit {
-    /// Identifier of who/what created the thread.
-    pub created_by: String,
-
-    /// Chronological log of changes to the ledger.
-    pub change_log: Vec<AuditChangeLog>,
-}
-
-/// A single entry in the audit change log.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AuditChangeLog {
-    /// Timestamp when the change occurred.
-    pub changed_at: DateTime<Utc>,
-
-    /// Identifier of who/what made the change.
-    pub changed_by: String,
-
-    /// Human-readable description of what changed.
-    pub description: String,
 }
 
 // ============================================================================
@@ -235,7 +209,6 @@ struct Ledger {
     pub participants: Vec<Participant>,
     pub visibility: Visibility,
     pub policies: Policies,
-    pub audit: Audit,
 }
 
 /// Wire representation of a participant.
@@ -263,23 +236,6 @@ struct Visibility {
 struct Policies {
     pub allow_patient_participation: bool,
     pub allow_external_organisations: bool,
-}
-
-/// Wire representation of audit trail.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-struct Audit {
-    pub created_by: String,
-    pub change_log: Vec<ChangeLog>,
-}
-
-/// Wire representation of a change log entry.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-struct ChangeLog {
-    pub changed_at: DateTime<Utc>,
-    pub changed_by: String,
-    pub description: String,
 }
 
 // ============================================================================
@@ -328,19 +284,6 @@ fn wire_to_domain(wire: Ledger) -> Result<LedgerData, FhirError> {
             allow_patient_participation: wire.policies.allow_patient_participation,
             allow_external_organisations: wire.policies.allow_external_organisations,
         },
-        audit: LedgerAudit {
-            created_by: wire.audit.created_by,
-            change_log: wire
-                .audit
-                .change_log
-                .into_iter()
-                .map(|c| AuditChangeLog {
-                    changed_at: c.changed_at,
-                    changed_by: c.changed_by,
-                    description: c.description,
-                })
-                .collect(),
-        },
     })
 }
 
@@ -369,19 +312,6 @@ fn domain_to_wire(data: &LedgerData) -> Ledger {
             allow_patient_participation: data.policies.allow_patient_participation,
             allow_external_organisations: data.policies.allow_external_organisations,
         },
-        audit: Audit {
-            created_by: data.audit.created_by.clone(),
-            change_log: data
-                .audit
-                .change_log
-                .iter()
-                .map(|c| ChangeLog {
-                    changed_at: c.changed_at,
-                    changed_by: c.changed_by.clone(),
-                    description: c.description.clone(),
-                })
-                .collect(),
-        },
     }
 }
 
@@ -399,11 +329,9 @@ participants:
   - participant_id: 4f8c2a1d-9e3b-4a7c-8f1e-6b0d2c5a9f12
     role: clinician
     display_name: Dr Jane Smith
-    organisation: Gloucestershire Hospitals NHS Foundation Trust
   - participant_id: a1d3c5e7-f9b2-4680-b2d4-f6e8c0a9d1e3
     role: clinician
     display_name: Dr Tom Patel
-    organisation: Gloucestershire Hospitals NHS Foundation Trust
   - participant_id: 9b7c6d5e-4f3a-2b1c-0e8d-7f6a5b4c3d2e
     role: patient
     display_name: John Doe
@@ -413,12 +341,6 @@ visibility:
 policies:
   allow_patient_participation: true
   allow_external_organisations: false
-audit:
-  created_by: system
-  change_log:
-    - changed_at: "2026-01-11T14:35:22.045Z"
-      changed_by: system
-      description: Thread created
 "#;
 
         let ledger_data = Messaging::ledger_parse(input).expect("parse yaml");
@@ -440,9 +362,6 @@ visibility:
 policies:
   allow_patient_participation: true
   allow_external_organisations: false
-audit:
-  created_by: system
-  change_log: []
 unexpected_key: should_fail
 "#;
 
@@ -468,9 +387,6 @@ visibility:
 policies:
   allow_patient_participation: true
   allow_external_organisations: false
-audit:
-  created_by: system
-  change_log: []
 "#;
 
         let err = Messaging::ledger_parse(input).expect_err("should reject wrong type");
@@ -495,9 +411,6 @@ visibility:
 policies:
   allow_patient_participation: true
   allow_external_organisations: false
-audit:
-  created_by: system
-  change_log: []
 "#;
 
         let err = Messaging::ledger_parse(input).expect_err("should reject invalid thread_id");
@@ -525,9 +438,6 @@ visibility:
 policies:
   allow_patient_participation: true
   allow_external_organisations: false
-audit:
-  created_by: system
-  change_log: []
 "#;
 
         let err =
@@ -553,9 +463,6 @@ visibility:
 policies:
   allow_patient_participation: false
   allow_external_organisations: false
-audit:
-  created_by: system
-  change_log: []
 "#;
 
         let result = Messaging::ledger_parse(input).expect("should parse minimal ledger");
@@ -589,9 +496,6 @@ visibility:
 policies:
   allow_patient_participation: true
   allow_external_organisations: false
-audit:
-  created_by: system
-  change_log: []
 "#;
 
         let result = Messaging::ledger_parse(input).expect("should parse multiple participants");
@@ -618,9 +522,6 @@ visibility:
 policies:
   allow_patient_participation: true
   allow_external_organisations: false
-audit:
-  created_by: system
-  change_log: []
 "#;
 
         let result = Messaging::ledger_parse(closed).expect("should parse closed status");
@@ -629,38 +530,5 @@ audit:
         let archived = closed.replace("status: closed", "status: archived");
         let result = Messaging::ledger_parse(&archived).expect("should parse archived status");
         assert_eq!(result.status, ThreadStatus::Archived);
-    }
-
-    #[test]
-    fn handles_change_log_entries() {
-        let input = r#"thread_id: 20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000
-status: open
-created_at: "2026-01-11T14:35:22.045Z"
-last_updated_at: "2026-01-11T15:10:04.912Z"
-participants: []
-visibility:
-  sensitivity: standard
-  restricted: false
-policies:
-  allow_patient_participation: true
-  allow_external_organisations: false
-audit:
-  created_by: system
-  change_log:
-    - changed_at: "2026-01-11T14:35:22.045Z"
-      changed_by: system
-      description: Thread created
-    - changed_at: "2026-01-11T15:10:04.912Z"
-      changed_by: dr-jane-smith
-      description: Added participant Dr Tom Patel
-"#;
-
-        let result = Messaging::ledger_parse(input).expect("should parse change log");
-        assert_eq!(result.audit.change_log.len(), 2);
-        assert_eq!(result.audit.change_log[0].description, "Thread created");
-        assert_eq!(
-            result.audit.change_log[1].description,
-            "Added participant Dr Tom Patel"
-        );
     }
 }

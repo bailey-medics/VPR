@@ -854,21 +854,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
-            // Parse participants
+            // Parse participants - each --participant flag captures 3-4 values
+            // The Vec is structured as: [UUID, role, name, org?, UUID, role, name, org?, ...]
             let mut participants = Vec::new();
-            for chunk in participant.chunks(3) {
-                if chunk.len() < 3 {
+            let mut i = 0;
+            while i < participant.len() {
+                if i + 2 >= participant.len() {
                     eprintln!("Invalid participant format: needs UUID, role, display_name, and optional organisation");
                     return Ok(());
                 }
-                let participant_id = match uuid::Uuid::parse_str(&chunk[0]) {
+
+                let participant_id = match uuid::Uuid::parse_str(&participant[i]) {
                     Ok(id) => id,
                     Err(e) => {
                         eprintln!("Invalid participant UUID: {}", e);
                         return Ok(());
                     }
                 };
-                let role = match chunk[1].to_lowercase().as_str() {
+
+                let role = match participant[i + 1].to_lowercase().as_str() {
                     "clinician" => ParticipantRole::Clinician,
                     "patient" => ParticipantRole::Patient,
                     "system" => ParticipantRole::System,
@@ -877,8 +881,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         return Ok(());
                     }
                 };
-                let display_name = chunk[2].clone();
-                let organisation = chunk.get(3).cloned();
+
+                let display_name = participant[i + 2].clone();
+
+                // Check if next element exists and is NOT a valid UUID (i.e., it's an organisation)
+                let organisation = if i + 3 < participant.len() {
+                    // Try to parse as UUID - if it fails, it's an organisation string
+                    match uuid::Uuid::parse_str(&participant[i + 3]) {
+                        Ok(_) => {
+                            // It's a UUID, so no organisation for this participant
+                            i += 3;
+                            None
+                        }
+                        Err(_) => {
+                            // Not a UUID, so it's an organisation
+                            i += 4;
+                            Some(participant[i - 1].clone())
+                        }
+                    }
+                } else {
+                    i += 3;
+                    None
+                };
 
                 participants.push(ThreadParticipant {
                     participant_id,

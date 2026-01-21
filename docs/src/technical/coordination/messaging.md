@@ -221,29 +221,28 @@ These concepts imply human cognition or behaviour that the system cannot verify 
 ### Example structure
 
 ```markdown
-# Care Coordination Thread
+# Messages
 
-Thread ID: `20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000`  
-Created: 2026-01-11T14:35:22.045Z
+## Message
 
----
-
-## Message: 3f7a8d2c-1e9b-4a6d-9f2e-5c8b7a4d1f92
-
+**ID:** `3f7a8d2c-1e9b-4a6d-9f2e-5c8b7a4d1f92`  
 **Type:** clinician  
-**Author:** Dr Jane Smith (GMC 1234567)  
-**Timestamp:** 2026-01-11T14:36:15.234Z
+**Timestamp:** 2026-01-11T14:36:15.234Z  
+**Author ID:** `4f8c2a1d-9e3b-4a7c-8f1e-6b0d2c5a9f12`  
+**Author:** Dr Jane Smith
 
 Patient has reported increasing shortness of breath.
 Please review chest X-ray and advise on next steps.
 
 ---
 
-## Message: 8b2f6a5c-3d1e-4a9b-8c7f-6d5e4a3b2c1d
+## Message
 
+**ID:** `8b2f6a5c-3d1e-4a9b-8c7f-6d5e4a3b2c1d`  
 **Type:** clinician  
-**Author:** Dr Tom Patel (GMC 7654321)  
-**Timestamp:** 2026-01-11T15:42:30.567Z
+**Timestamp:** 2026-01-11T15:42:30.567Z  
+**Author ID:** `a1d3c5e7-f9b2-4680-b2d4-f6e8c0a9d1e3`  
+**Author:** Dr Tom Patel
 
 Reviewed X-ray. No acute changes. Continue current management
 and reassess in 48 hours. If symptoms worsen, arrange urgent review.
@@ -278,20 +277,17 @@ created_at: 2026-01-11T14:35:22.045Z
 last_updated_at: 2026-01-11T15:10:04.912Z
 
 participants:
-  - participant_id: 4f8c2a1d9e3b4a7c8f1e6b0d2c5a9f12
+  - participant_id: 4f8c2a1d-9e3b-4a7c-8f1e-6b0d2c5a9f12
     role: clinician
     display_name: Dr Jane Smith
-    organisation: Gloucestershire Hospitals NHS Foundation Trust
 
-  - participant_id: a1d3c5e7f9b24680b2d4f6e8c0a9d1e3
+  - participant_id: a1d3c5e7-f9b2-4680-b2d4-f6e8c0a9d1e3
     role: clinician
     display_name: Dr Tom Patel
-    organisation: Gloucestershire Hospitals NHS Foundation Trust
 
-  - participant_id: 9b7c6d5e4f3a2b1c0e8d7f6a5b4c3d2
+  - participant_id: 9b7c6d5e-4f3a-2b1c-0e8d-7f6a5b4c3d2e
     role: patient
     display_name: John Doe
-    organisation: null
 
 visibility:
   sensitivity: standard
@@ -299,14 +295,7 @@ visibility:
 
 policies:
   allow_patient_participation: true
-  allow_external_organisations: false
-
-audit:
-  created_by: system
-  change_log:
-    - changed_at: 2026-01-11T14:35:22.045Z
-      changed_by: system
-      description: Thread created
+  allow_external_organisations: true
 ```
 
 ---
@@ -317,14 +306,16 @@ audit:
 - Overwriteable
 - Git-audited
 - Changes are deliberate and relatively infrequent
+- `last_updated_at` is automatically updated when messages are added
 
 **Thread-level metadata:**
 
 - Thread status: open, closed, or archived
-- Participant list with roles and organizations
+- Participant list with roles (organisation field removed for simplicity)
 - Visibility and sensitivity settings
-- Participation policies
-- Audit trail for all changes
+- Participation policies (external organisations allowed by default)
+
+**Audit trail:** Inherent in Git commit history and messages.md content - no separate audit section needed.
 
 ---
 

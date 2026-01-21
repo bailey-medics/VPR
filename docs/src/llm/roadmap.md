@@ -2,7 +2,7 @@
 
 ## Overview
 
-**Purpose:**  
+**Purpose:**
 
 This roadmap outlines the planned development work for the Versioned Patient Repository (VPR) – a Git-backed clinical record system designed to preserve verifiable clinical truth, authorship, and history over decades. VPR treats patient records as durable, inspectable artefacts with explicit provenance, rather than mutable database rows.
 
@@ -15,10 +15,10 @@ This roadmap outlines the planned development work for the Versioned Patient Rep
 
 ## Phase Grouping
 
-- **Phase 1 – Foundations of Truth:** Epics 1–3  
-- **Phase 2 – Semantics and Meaning:** Epics 4–6  
-- **Phase 3 – Operational Reality:** Epics 7–9  
-- **Phase 4 – Access, Projections, and Record upload:** Epics 10–15  
+- **Phase 1 – Foundations of Truth:** Epics 1–3
+- **Phase 2 – Semantics and Meaning:** Epics 4–6
+- **Phase 3 – Operational Reality:** Epics 7–9
+- **Phase 4 – Access, Projections, and Record upload:** Epics 10–15
 
 ---
 
@@ -79,7 +79,7 @@ Separates patient identity from clinical truth while enabling interoperability.
 ## Epic 4. Clinical Record Lifecycle and Semantic States
 
 **Business Value:**  
-Removes ambiguity about what a clinical record *means* over time.
+Removes ambiguity about what a clinical record _means_ over time.
 
 - [ ] Define lifecycle states (created, amended, corrected, superseded, closed)
 - [ ] Define metadata conventions for lifecycle state
@@ -186,6 +186,7 @@ Provides secure, well-defined access to VPR.
 
 - [x] REST and gRPC transports with shared protobufs
 - [x] API key authentication for gRPC
+- [ ] Configuration options to enable/disable gRPC and/or REST APIs independently (allow both, either, or neither)
 - [ ] Disable reflection in production
 - [ ] REST authentication parity with gRPC
 - [ ] Optional mTLS design (future)
