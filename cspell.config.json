@@ -15,13 +15,18 @@
     "analyzer",
     "Antwi",
     "axum",
+    "behavior",
     "bigserial",
     "Burgun",
+    "careadministrator",
+    "Carequality",
+    "careteam",
     "cfgs",
     "Choo",
     "chrono",
     "cleanup",
     "clippy",
+    "Codeable",
     "color",
     "compile_protos",
     "Coulet",
@@ -47,8 +52,11 @@
     "grpcui",
     "grpcurl",
     "healthcheck",
+    "HEDIS",
+    "Helse",
     "HIER",
     "Hyperledger",
+    "informaticians",
     "inspectable",
     "IPFS",
     "Justfile",
@@ -58,10 +66,12 @@
     "libgit",
     "libvpr",
     "linters",
+    "LOINC",
     "makedirs",
     "mdbook",
     "Miri",
     "Mishra",
+    "modeling",
     "Mohandas",
     "MSRV",
     "MSVC",
@@ -81,6 +91,7 @@
     "openehr",
     "Overwriteable",
     "Parmar",
+    "patientassociate",
     "PGPASSWORD",
     "PGURL",
     "pipefail",
@@ -92,6 +103,7 @@
     "PROV",
     "psql",
     "psql_ok",
+    "queryability",
     "rcgen",
     "Reen",
     "Rehman",
@@ -112,11 +124,14 @@
     "shopt",
     "Smartcard",
     "Smartcards",
+    "SNOMED",
     "SNOMED-CT",
     "stringly",
     "subdirs",
     "Szilagyi",
+    "thiserror",
     "timestamptz",
+    "timezone",
     "tlsv",
     "Tunables",
     "unterminated",
@@ -127,23 +142,15 @@
     "writable",
     "YYYYMMDDTHHMMSS"
   ],
-  "ignoreWords": [
-    "Exampletown"
-  ],
+  "ignoreWords": ["Exampletown"],
   "languageSettings": [
     {
       "languageId": "rust",
-      "includeRegExpList": [
-        "string",
-        "comment",
-        "doc"
-      ]
+      "includeRegExpList": ["string", "comment", "doc"]
     },
     {
       "languageId": "markdown",
-      "includeRegExpList": [
-        ".*"
-      ]
+      "includeRegExpList": [".*"]
     }
   ]
 }

@@ -12,6 +12,9 @@ use vpr_core::{
     config::rm_system_version_from_env_value,
     constants,
     repositories::clinical::ClinicalService,
+    repositories::coordination::{
+        CoordinationService, MessageContent, MessageType, ParticipantRole, ThreadParticipant,
+    },
     repositories::demographics::DemographicsService,
     repositories::shared::{resolve_clinical_template_dir, validate_template, TemplateDirKind},
     versioned_files::VersionedFileService,
@@ -230,6 +233,130 @@ enum Commands {
     ///
     /// Refuses to run unless `DEV_ENV=true`.
     DeleteAllData,
+
+    /// Initialise coordination record:
+    ///
+    /// <clinical_uuid> <author_name> <author_email>
+    /// --role <author_role>
+    /// --care-location <care_location>
+    /// [--registration <AUTHORITY> <NUMBER> ...]
+    /// [--signature <ecdsa_private_key_pem>]
+    InitialiseCoordination {
+        /// Clinical record UUID to link coordination record to
+        clinical_uuid: String,
+        /// Author name for Git commit
+        author_name: String,
+        /// Author email for Git commit
+        author_email: String,
+        /// Mandatory author role for commit metadata
+        #[arg(long)]
+        role: String,
+        /// Declared professional registrations (repeatable): --registration <AUTHORITY> <NUMBER>
+        #[arg(long, value_names = ["AUTHORITY", "NUMBER"], num_args = 2, action = clap::ArgAction::Append)]
+        registration: Vec<String>,
+        /// Mandatory organisational location for the commit (e.g. hospital name, GP surgery)
+        #[arg(long)]
+        care_location: String,
+        /// ECDSA private key PEM for X.509 signing (optional, can be PEM string, base64-encoded PEM, or file path)
+        #[arg(long)]
+        signature: Option<String>,
+    },
+
+    /// Create a messaging thread:
+    ///
+    /// <coordination_uuid> <author_name> <author_email>
+    /// --role <author_role>
+    /// --care-location <care_location>
+    /// --participant <participant_id> <role> <display_name> [organisation]
+    /// [--initial-message <message_content>]
+    /// [--registration <AUTHORITY> <NUMBER> ...]
+    /// [--signature <ecdsa_private_key_pem>]
+    CreateThread {
+        /// Coordination repository UUID
+        coordination_uuid: String,
+        /// Author name for Git commit
+        author_name: String,
+        /// Author email for Git commit
+        author_email: String,
+        /// Mandatory author role for commit metadata
+        #[arg(long)]
+        role: String,
+        /// Declared professional registrations (repeatable): --registration <AUTHORITY> <NUMBER>
+        #[arg(long, value_names = ["AUTHORITY", "NUMBER"], num_args = 2, action = clap::ArgAction::Append)]
+        registration: Vec<String>,
+        /// Mandatory organisational location for the commit (e.g. hospital name, GP surgery)
+        #[arg(long)]
+        care_location: String,
+        /// Thread participants (repeatable): --participant <UUID> <clinician|patient|system> <display_name> [organisation]
+        #[arg(long, value_names = ["UUID", "ROLE", "DISPLAY_NAME", "ORGANISATION"], num_args = 3..=4, action = clap::ArgAction::Append)]
+        participant: Vec<String>,
+        /// Initial message content (markdown)
+        #[arg(long)]
+        initial_message: Option<String>,
+        /// ECDSA private key PEM for X.509 signing (optional, can be PEM string, base64-encoded PEM, or file path)
+        #[arg(long)]
+        signature: Option<String>,
+    },
+
+    /// Add a message to a thread:
+    ///
+    /// <coordination_uuid> <thread_id> <author_name> <author_email>
+    /// --role <author_role>
+    /// --care-location <care_location>
+    /// --message-type <clinician|patient|system|correction>
+    /// --message-body <content>
+    /// --message-author-id <UUID>
+    /// --message-author-name <display_name>
+    /// [--corrects <message_id>]
+    /// [--registration <AUTHORITY> <NUMBER> ...]
+    /// [--signature <ecdsa_private_key_pem>]
+    AddMessage {
+        /// Coordination repository UUID
+        coordination_uuid: String,
+        /// Thread ID
+        thread_id: String,
+        /// Author name for Git commit
+        author_name: String,
+        /// Author email for Git commit
+        author_email: String,
+        /// Mandatory author role for commit metadata
+        #[arg(long)]
+        role: String,
+        /// Declared professional registrations (repeatable): --registration <AUTHORITY> <NUMBER>
+        #[arg(long, value_names = ["AUTHORITY", "NUMBER"], num_args = 2, action = clap::ArgAction::Append)]
+        registration: Vec<String>,
+        /// Mandatory organisational location for the commit (e.g. hospital name, GP surgery)
+        #[arg(long)]
+        care_location: String,
+        /// Type of message (clinician, patient, system, correction)
+        #[arg(long)]
+        message_type: String,
+        /// Message content (markdown)
+        #[arg(long)]
+        message_body: String,
+        /// Author ID for the message
+        #[arg(long)]
+        message_author_id: String,
+        /// Author display name for the message
+        #[arg(long)]
+        message_author_name: String,
+        /// Message ID being corrected (for correction messages)
+        #[arg(long)]
+        corrects: Option<String>,
+        /// ECDSA private key PEM for X.509 signing (optional, can be PEM string, base64-encoded PEM, or file path)
+        #[arg(long)]
+        signature: Option<String>,
+    },
+
+    /// Read a messaging thread:
+    ///
+    /// <coordination_uuid> <thread_id>
+    ReadThread {
+        /// Coordination repository UUID
+        coordination_uuid: String,
+        /// Thread ID
+        thread_id: String,
+    },
 }
 
 #[derive(Debug)]
@@ -651,6 +778,303 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "Deleted all patient data under {}",
                 base_dir.to_string_lossy()
             );
+        }
+        Some(Commands::InitialiseCoordination {
+            clinical_uuid,
+            author_name,
+            author_email,
+            role,
+            registration,
+            care_location,
+            signature,
+        }) => {
+            let registrations: Vec<AuthorRegistration> = registration
+                .chunks(2)
+                .map(|chunk| AuthorRegistration {
+                    authority: chunk.first().cloned().unwrap_or_default(),
+                    number: chunk.get(1).cloned().unwrap_or_default(),
+                })
+                .collect();
+            let author = Author {
+                name: author_name,
+                role,
+                email: author_email,
+                registrations,
+                signature,
+                certificate: None,
+            };
+            let clinical_id = match uuid::Uuid::parse_str(&clinical_uuid) {
+                Ok(id) => id,
+                Err(e) => {
+                    eprintln!("Error parsing clinical UUID: {}", e);
+                    return Ok(());
+                }
+            };
+            let coordination_service = CoordinationService::new(cfg.clone());
+            match coordination_service.initialise(author, care_location, clinical_id) {
+                Ok(service) => println!(
+                    "Initialised coordination with UUID: {}",
+                    service.coordination_id().simple()
+                ),
+                Err(e) => eprintln!("Error initialising coordination: {}", e),
+            }
+        }
+        Some(Commands::CreateThread {
+            coordination_uuid,
+            author_name,
+            author_email,
+            role,
+            registration,
+            care_location,
+            participant,
+            initial_message,
+            signature,
+        }) => {
+            let registrations: Vec<AuthorRegistration> = registration
+                .chunks(2)
+                .map(|chunk| AuthorRegistration {
+                    authority: chunk.first().cloned().unwrap_or_default(),
+                    number: chunk.get(1).cloned().unwrap_or_default(),
+                })
+                .collect();
+            let author = Author {
+                name: author_name,
+                role,
+                email: author_email,
+                registrations,
+                signature,
+                certificate: None,
+            };
+
+            let coordination_uuid_parsed = match ShardableUuid::parse(&coordination_uuid) {
+                Ok(uuid) => uuid.uuid(),
+                Err(e) => {
+                    eprintln!("Error parsing coordination UUID: {}", e);
+                    return Ok(());
+                }
+            };
+
+            // Parse participants - each --participant flag captures 3-4 values
+            // The Vec is structured as: [UUID, role, name, org?, UUID, role, name, org?, ...]
+            let mut participants = Vec::new();
+            let mut i = 0;
+            while i < participant.len() {
+                if i + 2 >= participant.len() {
+                    eprintln!("Invalid participant format: needs UUID, role, display_name, and optional organisation");
+                    return Ok(());
+                }
+
+                let participant_id = match uuid::Uuid::parse_str(&participant[i]) {
+                    Ok(id) => id,
+                    Err(e) => {
+                        eprintln!("Invalid participant UUID: {}", e);
+                        return Ok(());
+                    }
+                };
+
+                let role = match participant[i + 1].to_lowercase().as_str() {
+                    "clinician" => ParticipantRole::Clinician,
+                    "careadministrator" | "care_administrator" | "care-administrator" => {
+                        ParticipantRole::CareAdministrator
+                    }
+                    "patient" => ParticipantRole::Patient,
+                    "patientassociate" | "patient_associate" | "patient-associate" => {
+                        ParticipantRole::PatientAssociate
+                    }
+                    "system" => ParticipantRole::System,
+                    _ => {
+                        eprintln!("Invalid role: must be clinician, careadministrator, patient, patientassociate, or system");
+                        return Ok(());
+                    }
+                };
+
+                let display_name = participant[i + 2].clone();
+
+                // Check if next element exists and is NOT a valid UUID (i.e., it's an organisation)
+                let organisation = if i + 3 < participant.len() {
+                    // Try to parse as UUID - if it fails, it's an organisation string
+                    match uuid::Uuid::parse_str(&participant[i + 3]) {
+                        Ok(_) => {
+                            // It's a UUID, so no organisation for this participant
+                            i += 3;
+                            None
+                        }
+                        Err(_) => {
+                            // Not a UUID, so it's an organisation
+                            i += 4;
+                            Some(participant[i - 1].clone())
+                        }
+                    }
+                } else {
+                    i += 3;
+                    None
+                };
+
+                participants.push(ThreadParticipant {
+                    participant_id,
+                    role,
+                    display_name,
+                });
+            }
+
+            let initial_msg = initial_message.map(|body| {
+                // Use first participant as message author if available
+                let (author_id, author_name) = if let Some(p) = participants.first() {
+                    (p.participant_id, p.display_name.clone())
+                } else {
+                    (uuid::Uuid::new_v4(), "System".to_string())
+                };
+
+                MessageContent {
+                    message_type: MessageType::System,
+                    author_id,
+                    author_display_name: author_name,
+                    body,
+                    corrects: None,
+                }
+            });
+
+            let coordination_service =
+                CoordinationService::with_id(cfg.clone(), coordination_uuid_parsed);
+            match coordination_service.create_thread(
+                &author,
+                care_location,
+                participants,
+                initial_msg,
+            ) {
+                Ok(thread_id) => println!("Created thread with ID: {}", thread_id),
+                Err(e) => eprintln!("Error creating thread: {}", e),
+            }
+        }
+        Some(Commands::AddMessage {
+            coordination_uuid,
+            thread_id,
+            author_name,
+            author_email,
+            role,
+            registration,
+            care_location,
+            message_type,
+            message_body,
+            message_author_id,
+            message_author_name,
+            corrects,
+            signature,
+        }) => {
+            let registrations: Vec<AuthorRegistration> = registration
+                .chunks(2)
+                .map(|chunk| AuthorRegistration {
+                    authority: chunk.first().cloned().unwrap_or_default(),
+                    number: chunk.get(1).cloned().unwrap_or_default(),
+                })
+                .collect();
+            let author = Author {
+                name: author_name,
+                role,
+                email: author_email,
+                registrations,
+                signature,
+                certificate: None,
+            };
+
+            let coordination_uuid_parsed = match ShardableUuid::parse(&coordination_uuid) {
+                Ok(uuid) => uuid.uuid(),
+                Err(e) => {
+                    eprintln!("Error parsing coordination UUID: {}", e);
+                    return Ok(());
+                }
+            };
+
+            let msg_type = match message_type.to_lowercase().as_str() {
+                "clinician" => MessageType::Clinician,
+                "patient" => MessageType::Patient,
+                "system" => MessageType::System,
+                "correction" => MessageType::Correction,
+                _ => {
+                    eprintln!(
+                        "Invalid message type: must be clinician, patient, system, or correction"
+                    );
+                    return Ok(());
+                }
+            };
+
+            let author_id = match uuid::Uuid::parse_str(&message_author_id) {
+                Ok(id) => id,
+                Err(e) => {
+                    eprintln!("Invalid message author UUID: {}", e);
+                    return Ok(());
+                }
+            };
+
+            let corrects_id = if let Some(c) = corrects {
+                match uuid::Uuid::parse_str(&c) {
+                    Ok(id) => Some(id),
+                    Err(e) => {
+                        eprintln!("Invalid corrects UUID: {}", e);
+                        return Ok(());
+                    }
+                }
+            } else {
+                None
+            };
+
+            let message = MessageContent {
+                message_type: msg_type,
+                author_id,
+                author_display_name: message_author_name,
+                body: message_body,
+                corrects: corrects_id,
+            };
+
+            let coordination_service =
+                CoordinationService::with_id(cfg.clone(), coordination_uuid_parsed);
+            match coordination_service.add_message(&author, care_location, &thread_id, message) {
+                Ok(message_id) => println!("Added message with ID: {}", message_id),
+                Err(e) => eprintln!("Error adding message: {}", e),
+            }
+        }
+        Some(Commands::ReadThread {
+            coordination_uuid,
+            thread_id,
+        }) => {
+            let coordination_uuid_parsed = match ShardableUuid::parse(&coordination_uuid) {
+                Ok(uuid) => uuid.uuid(),
+                Err(e) => {
+                    eprintln!("Error parsing coordination UUID: {}", e);
+                    return Ok(());
+                }
+            };
+
+            let coordination_service =
+                CoordinationService::with_id(cfg.clone(), coordination_uuid_parsed);
+            match coordination_service.read_thread(&thread_id) {
+                Ok(thread) => {
+                    println!("Thread ID: {}", thread.thread_id);
+                    println!("Status: {:?}", thread.ledger.status);
+                    println!("Created: {}", thread.ledger.created_at);
+                    println!("Last Updated: {}", thread.ledger.last_updated_at);
+                    println!("\nParticipants:");
+                    for p in &thread.ledger.participants {
+                        println!(
+                            "  - {} ({:?}): {}",
+                            p.participant_id, p.role, p.display_name
+                        );
+                    }
+                    println!("\nMessages ({}):", thread.messages.len());
+                    for msg in &thread.messages {
+                        println!("  ---");
+                        println!("  ID: {}", msg.message_id);
+                        println!("  Type: {:?}", msg.message_type);
+                        println!("  Timestamp: {}", msg.timestamp);
+                        println!("  Author: {} ({})", msg.author_display_name, msg.author_id);
+                        if let Some(corrects) = msg.corrects {
+                            println!("  Corrects: {}", corrects);
+                        }
+                        println!("  Body: {}", msg.body);
+                    }
+                }
+                Err(e) => eprintln!("Error reading thread: {}", e),
+            }
         }
         None => {
             println!("Use 'vpr --help' for commands");

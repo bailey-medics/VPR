@@ -81,23 +81,23 @@ impl CoordinationService<Uninitialised> {
 
     /// Initializes a new coordination repository for a patient.
     ///
-    /// Unlike clinical.rs, this does NOT copy from a template.
-    /// It simply:
-    /// - Creates UUID and sharded directory structure
-    /// - Creates coordination/{shard1}/{shard2}/{uuid}/ directory
-    /// - Initializes Git repository
-    /// - Creates initial commit with metadata
+    /// Creates:
+    /// - UUID and sharded directory structure
+    /// - coordination/{shard1}/{shard2}/{uuid}/ directory
+    /// - COORDINATION_STATUS.yaml linking to clinical record
+    /// - Git repository with initial commit
     ///
     /// Consumes self and returns CoordinationService<Initialised>.
     pub fn initialise(
         self,
         author: Author,
         care_location: String,
+        clinical_id: Uuid,
     ) -> PatientResult<CoordinationService<Initialised>> {
         author.validate_commit_author()?;
 
         let commit_message = VprCommitMessage::new(
-            VprCommitDomain::Coordination(Messaging),
+            VprCommitDomain::Coordination(Record),
             VprCommitAction::Create,
             "Created coordination record",
             care_location,
@@ -111,17 +111,29 @@ impl CoordinationService<Uninitialised> {
             // Initialize Git repository
             let repo = VersionedFileService::init(&patient_dir)?;
 
-            // Create initial .gitkeep file to allow empty commit
-            let gitkeep_path = patient_dir.join(".gitkeep");
-            fs::write(&gitkeep_path, b"").map_err(PatientError::FileWrite)?;
+            // Create COORDINATION_STATUS.yaml with link to clinical record
+            let status_data = fhir::CoordinationStatusData {
+                coordination_id: coordination_uuid.uuid(),
+                clinical_id,
+                status: fhir::StatusInfo {
+                    lifecycle_state: fhir::LifecycleState::Active,
+                    record_open: true,
+                    record_queryable: true,
+                    record_modifiable: true,
+                },
+            };
+
+            let status_yaml = fhir::CoordinationStatus::render(&status_data)?;
+            let status_path = patient_dir.join("COORDINATION_STATUS.yaml");
+            fs::write(&status_path, status_yaml).map_err(PatientError::FileWrite)?;
 
             // Initial commit
             repo.write_and_commit_files(
                 &author,
                 &commit_message,
                 &[FileToWrite {
-                    relative_path: Path::new(".gitkeep"),
-                    content: "",
+                    relative_path: Path::new("COORDINATION_STATUS.yaml"),
+                    content: &fs::read_to_string(&status_path).map_err(PatientError::FileRead)?,
                     old_content: None,
                 }],
             )?;
@@ -207,10 +219,7 @@ impl CoordinationService<Initialised> {
 
         // Create initial messages.md
         let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-        let mut messages_content = format!(
-            "# Care Coordination Thread\n\nThread ID: `{}`  \nCreated: {}\n\n---\n\n",
-            thread_id, now
-        );
+        let mut messages_content = "# Messages\n\n".to_string();
 
         // Add initial message if provided
         if let Some(msg_content) = initial_message {
@@ -231,7 +240,7 @@ impl CoordinationService<Initialised> {
             },
             policies: Policies {
                 allow_patient_participation: true,
-                allow_external_organisations: false,
+                allow_external_organisations: true,
             },
         };
         let ledger_content = serialize_ledger(&ledger)?;
@@ -315,16 +324,33 @@ impl CoordinationService<Initialised> {
             fs::read_to_string(&messages_path).map_err(PatientError::FileRead)?;
         let new_content = format!("{}{}", existing_content, formatted_message);
 
+        // Update ledger last_updated_at
+        let ledger_path = thread_dir.join("ledger.yaml");
+        let ledger_content = fs::read_to_string(&ledger_path).map_err(PatientError::FileRead)?;
+        let mut ledger = deserialize_ledger(&ledger_content)?;
+        ledger.last_updated_at = now.clone();
+        let updated_ledger_content = serialize_ledger(&ledger)?;
+
         // Write and commit
         let messages_relative = messages_path
             .strip_prefix(&patient_dir)
             .map_err(|_| PatientError::InvalidInput("Invalid path prefix".to_string()))?;
+        let ledger_relative = ledger_path
+            .strip_prefix(&patient_dir)
+            .map_err(|_| PatientError::InvalidInput("Invalid path prefix".to_string()))?;
 
-        let files_to_write = [FileToWrite {
-            relative_path: messages_relative,
-            content: &new_content,
-            old_content: Some(&existing_content),
-        }];
+        let files_to_write = [
+            FileToWrite {
+                relative_path: messages_relative,
+                content: &new_content,
+                old_content: Some(&existing_content),
+            },
+            FileToWrite {
+                relative_path: ledger_relative,
+                content: &updated_ledger_content,
+                old_content: Some(&ledger_content),
+            },
+        ];
 
         let repo = VersionedFileService::open(&patient_dir)?;
         repo.write_and_commit_files(author, &msg, &files_to_write)?;
@@ -461,14 +487,15 @@ pub struct ThreadParticipant {
     pub participant_id: Uuid,
     pub role: ParticipantRole,
     pub display_name: String,
-    pub organisation: Option<String>,
 }
 
 /// Role of a participant in care coordination.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ParticipantRole {
     Clinician,
+    CareAdministrator,
     Patient,
+    PatientAssociate,
     System,
 }
 
@@ -750,14 +777,105 @@ fn parse_messages_md(content: &str) -> PatientResult<Vec<Message>> {
 
 /// Serializes ThreadLedger to YAML for ledger.yaml.
 fn serialize_ledger(ledger: &ThreadLedger) -> PatientResult<String> {
-    serde_yaml::to_string(ledger)
+    // Convert ThreadLedger to fhir::LedgerData
+    let ledger_data = fhir::LedgerData {
+        thread_id: ledger
+            .thread_id
+            .parse()
+            .map_err(|e| PatientError::InvalidInput(format!("Invalid thread_id format: {}", e)))?,
+        status: match ledger.status {
+            ThreadStatus::Open => fhir::ThreadStatus::Open,
+            ThreadStatus::Closed => fhir::ThreadStatus::Closed,
+            ThreadStatus::Archived => fhir::ThreadStatus::Archived,
+        },
+        created_at: chrono::DateTime::parse_from_rfc3339(&ledger.created_at)
+            .map_err(|e| PatientError::InvalidInput(format!("Invalid created_at: {}", e)))?
+            .with_timezone(&chrono::Utc),
+        last_updated_at: chrono::DateTime::parse_from_rfc3339(&ledger.last_updated_at)
+            .map_err(|e| PatientError::InvalidInput(format!("Invalid last_updated_at: {}", e)))?
+            .with_timezone(&chrono::Utc),
+        participants: ledger
+            .participants
+            .iter()
+            .map(|p| fhir::LedgerParticipant {
+                participant_id: p.participant_id,
+                role: match p.role {
+                    ParticipantRole::Clinician => fhir::ParticipantRole::Clinician,
+                    ParticipantRole::CareAdministrator => fhir::ParticipantRole::CareAdministrator,
+                    ParticipantRole::Patient => fhir::ParticipantRole::Patient,
+                    ParticipantRole::PatientAssociate => fhir::ParticipantRole::PatientAssociate,
+                    ParticipantRole::System => fhir::ParticipantRole::System,
+                },
+                display_name: p.display_name.clone(),
+                organisation: None,
+            })
+            .collect(),
+        visibility: fhir::LedgerVisibility {
+            sensitivity: match ledger.visibility.sensitivity {
+                SensitivityLevel::Standard => "standard".to_string(),
+                SensitivityLevel::Confidential => "confidential".to_string(),
+                SensitivityLevel::Restricted => "restricted".to_string(),
+            },
+            restricted: ledger.visibility.restricted,
+        },
+        policies: fhir::LedgerPolicies {
+            allow_patient_participation: ledger.policies.allow_patient_participation,
+            allow_external_organisations: ledger.policies.allow_external_organisations,
+        },
+    };
+
+    fhir::Messaging::ledger_render(&ledger_data)
         .map_err(|e| PatientError::InvalidInput(format!("Failed to serialize ledger: {}", e)))
 }
 
 /// Deserializes ledger.yaml into ThreadLedger.
 fn deserialize_ledger(content: &str) -> PatientResult<ThreadLedger> {
-    serde_yaml::from_str(content)
-        .map_err(|e| PatientError::InvalidInput(format!("Failed to deserialize ledger: {}", e)))
+    // Parse using fhir::Messaging
+    let ledger_data = fhir::Messaging::ledger_parse(content)
+        .map_err(|e| PatientError::InvalidInput(format!("Failed to deserialize ledger: {}", e)))?;
+
+    // Convert fhir::LedgerData to ThreadLedger
+    Ok(ThreadLedger {
+        thread_id: ledger_data.thread_id.to_string(),
+        status: match ledger_data.status {
+            fhir::ThreadStatus::Open => ThreadStatus::Open,
+            fhir::ThreadStatus::Closed => ThreadStatus::Closed,
+            fhir::ThreadStatus::Archived => ThreadStatus::Archived,
+        },
+        created_at: ledger_data
+            .created_at
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        last_updated_at: ledger_data
+            .last_updated_at
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        participants: ledger_data
+            .participants
+            .iter()
+            .map(|p| ThreadParticipant {
+                participant_id: p.participant_id,
+                role: match p.role {
+                    fhir::ParticipantRole::Clinician => ParticipantRole::Clinician,
+                    fhir::ParticipantRole::CareAdministrator => ParticipantRole::CareAdministrator,
+                    fhir::ParticipantRole::Patient => ParticipantRole::Patient,
+                    fhir::ParticipantRole::PatientAssociate => ParticipantRole::PatientAssociate,
+                    fhir::ParticipantRole::System => ParticipantRole::System,
+                },
+                display_name: p.display_name.clone(),
+            })
+            .collect(),
+        visibility: Visibility {
+            sensitivity: match ledger_data.visibility.sensitivity.as_str() {
+                "confidential" => SensitivityLevel::Confidential,
+                "restricted" => SensitivityLevel::Restricted,
+                _ => SensitivityLevel::Standard,
+            },
+            restricted: ledger_data.visibility.restricted,
+        },
+        policies: Policies {
+            allow_patient_participation: ledger_data.policies.allow_patient_participation,
+            allow_external_organisations: ledger_data.policies.allow_external_organisations,
+        },
+    })
 }
 #[cfg(test)]
 static FORCE_CLEANUP_ERROR_FOR_THREADS: LazyLock<Mutex<HashSet<std::thread::ThreadId>>> =
