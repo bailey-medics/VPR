@@ -236,12 +236,14 @@ enum Commands {
 
     /// Initialise coordination record:
     ///
-    /// <author_name> <author_email>
+    /// <clinical_uuid> <author_name> <author_email>
     /// --role <author_role>
     /// --care-location <care_location>
     /// [--registration <AUTHORITY> <NUMBER> ...]
     /// [--signature <ecdsa_private_key_pem>]
     InitialiseCoordination {
+        /// Clinical record UUID to link coordination record to
+        clinical_uuid: String,
         /// Author name for Git commit
         author_name: String,
         /// Author email for Git commit
@@ -778,6 +780,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
         }
         Some(Commands::InitialiseCoordination {
+            clinical_uuid,
             author_name,
             author_email,
             role,
@@ -800,8 +803,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 signature,
                 certificate: None,
             };
+            let clinical_id = match uuid::Uuid::parse_str(&clinical_uuid) {
+                Ok(id) => id,
+                Err(e) => {
+                    eprintln!("Error parsing clinical UUID: {}", e);
+                    return Ok(());
+                }
+            };
             let coordination_service = CoordinationService::new(cfg.clone());
-            match coordination_service.initialise(author, care_location) {
+            match coordination_service.initialise(author, care_location, clinical_id) {
                 Ok(service) => println!(
                     "Initialised coordination with UUID: {}",
                     service.coordination_id().simple()

@@ -352,7 +352,7 @@ VPR can expose FHIR APIs via an API gateway:
 
 **REST API (future):**
 
-```
+```http
 GET /fhir/Communication?subject=Patient/123
 GET /fhir/Patient/123
 POST /fhir/Communication
@@ -415,7 +415,7 @@ VPR's Git-based storage supports bulk data patterns:
 
 **Patient-level export:**
 
-```
+```http
 GET /fhir/$export?_type=Communication,Observation,Condition
 ```
 
@@ -427,7 +427,7 @@ Would generate:
 
 **Group-level export:**
 
-```
+```http
 GET /fhir/Group/high-risk-patients/$export
 ```
 
@@ -461,7 +461,7 @@ VPR can support SMART app launches:
 
 VPR could provide clinical decision support:
 
-**Hook: patient-view**
+### Hook: patient-view
 
 Triggered when clinician opens patient chart:
 

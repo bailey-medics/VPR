@@ -256,7 +256,7 @@ VPR's structured data enables OpenEHR-style querying:
 
 Data elements are addressable via standardized paths:
 
-```
+```text
 /content[openEHR-EHR-OBSERVATION.blood_pressure.v2]/data/events[at0006]/data/items[at0004]/value
 ```
 

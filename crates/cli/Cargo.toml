@@ -12,3 +12,4 @@ clap = { version = "4.0", features = ["derive"] }
 vpr-core = { path = "../core", version = "0.1.0" }
 vpr-certificates = { path = "../certificates", version = "0.1.0" }
 base64 = "0.21"
+uuid = { version = "1", features = ["v4", "serde"] }

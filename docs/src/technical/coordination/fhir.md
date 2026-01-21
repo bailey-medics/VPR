@@ -283,7 +283,7 @@ This ensures:
 
 ### Module Structure
 
-```
+```text
 crates/fhir/src/
     lib.rs                    # Public exports and error types
     coordination_status.rs    # COORDINATION_STATUS.yaml handling
