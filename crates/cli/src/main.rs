@@ -874,10 +874,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 let role = match participant[i + 1].to_lowercase().as_str() {
                     "clinician" => ParticipantRole::Clinician,
+                    "careadministrator" | "care_administrator" | "care-administrator" => {
+                        ParticipantRole::CareAdministrator
+                    }
                     "patient" => ParticipantRole::Patient,
+                    "patientassociate" | "patient_associate" | "patient-associate" => {
+                        ParticipantRole::PatientAssociate
+                    }
                     "system" => ParticipantRole::System,
                     _ => {
-                        eprintln!("Invalid role: must be clinician, patient, or system");
+                        eprintln!("Invalid role: must be clinician, careadministrator, patient, patientassociate, or system");
                         return Ok(());
                     }
                 };
@@ -908,7 +914,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     participant_id,
                     role,
                     display_name,
-                    organisation,
                 });
             }
 
@@ -1054,9 +1059,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             "  - {} ({:?}): {}",
                             p.participant_id, p.role, p.display_name
                         );
-                        if let Some(org) = &p.organisation {
-                            println!("    Organisation: {}", org);
-                        }
                     }
                     println!("\nMessages ({}):", thread.messages.len());
                     for msg in &thread.messages {

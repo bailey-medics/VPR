@@ -493,7 +493,9 @@ pub struct ThreadParticipant {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ParticipantRole {
     Clinician,
+    CareAdministrator,
     Patient,
+    PatientAssociate,
     System,
 }
 
@@ -799,7 +801,9 @@ fn serialize_ledger(ledger: &ThreadLedger) -> PatientResult<String> {
                 participant_id: p.participant_id,
                 role: match p.role {
                     ParticipantRole::Clinician => fhir::ParticipantRole::Clinician,
+                    ParticipantRole::CareAdministrator => fhir::ParticipantRole::CareAdministrator,
                     ParticipantRole::Patient => fhir::ParticipantRole::Patient,
+                    ParticipantRole::PatientAssociate => fhir::ParticipantRole::PatientAssociate,
                     ParticipantRole::System => fhir::ParticipantRole::System,
                 },
                 display_name: p.display_name.clone(),
@@ -851,9 +855,10 @@ fn deserialize_ledger(content: &str) -> PatientResult<ThreadLedger> {
                 participant_id: p.participant_id,
                 role: match p.role {
                     fhir::ParticipantRole::Clinician => ParticipantRole::Clinician,
+                    fhir::ParticipantRole::CareAdministrator => ParticipantRole::CareAdministrator,
                     fhir::ParticipantRole::Patient => ParticipantRole::Patient,
+                    fhir::ParticipantRole::PatientAssociate => ParticipantRole::PatientAssociate,
                     fhir::ParticipantRole::System => ParticipantRole::System,
-                    fhir::ParticipantRole::CareTeam => ParticipantRole::Clinician, // Map CareTeam to Clinician
                 },
                 display_name: p.display_name.clone(),
             })

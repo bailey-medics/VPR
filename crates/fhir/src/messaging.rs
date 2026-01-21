@@ -86,10 +86,12 @@ pub struct LedgerParticipant {
 pub enum ParticipantRole {
     /// Clinical staff member.
     Clinician,
+    /// Care administrator or coordinator.
+    CareAdministrator,
     /// Patient participant.
     Patient,
-    /// Care team member or other healthcare professional.
-    CareTeam,
+    /// Patient associate (family member, carer, or authorized representative).
+    PatientAssociate,
     /// System-generated participant (for automated messages).
     System,
 }
