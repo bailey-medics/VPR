@@ -267,7 +267,7 @@ enum Commands {
     /// <coordination_uuid> <author_name> <author_email>
     /// --role <author_role>
     /// --care-location <care_location>
-    /// --participant <participant_id> <role> <display_name> [organisation]
+    /// --participant <participant_id> <role> <display_name>
     /// [--initial-message <message_content>]
     /// [--registration <AUTHORITY> <NUMBER> ...]
     /// [--signature <ecdsa_private_key_pem>]
@@ -773,6 +773,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             clear_dir_contents(&base_dir.join(constants::CLINICAL_DIR_NAME))?;
             clear_dir_contents(&base_dir.join(constants::DEMOGRAPHICS_DIR_NAME))?;
+            clear_dir_contents(&base_dir.join(constants::COORDINATION_DIR_NAME))?;
 
             println!(
                 "Deleted all patient data under {}",
@@ -854,13 +855,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
-            // Parse participants - each --participant flag captures 3-4 values
-            // The Vec is structured as: [UUID, role, name, org?, UUID, role, name, org?, ...]
+            // Parse participants - each --participant flag captures 3 values: UUID, role, display_name
             let mut participants = Vec::new();
             let mut i = 0;
             while i < participant.len() {
                 if i + 2 >= participant.len() {
-                    eprintln!("Invalid participant format: needs UUID, role, display_name, and optional organisation");
+                    eprintln!("Invalid participant format: needs UUID, role, and display_name");
                     return Ok(());
                 }
 
@@ -890,31 +890,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 let display_name = participant[i + 2].clone();
 
-                // Check if next element exists and is NOT a valid UUID (i.e., it's an organisation)
-                let organisation = if i + 3 < participant.len() {
-                    // Try to parse as UUID - if it fails, it's an organisation string
-                    match uuid::Uuid::parse_str(&participant[i + 3]) {
-                        Ok(_) => {
-                            // It's a UUID, so no organisation for this participant
-                            i += 3;
-                            None
-                        }
-                        Err(_) => {
-                            // Not a UUID, so it's an organisation
-                            i += 4;
-                            Some(participant[i - 1].clone())
-                        }
-                    }
-                } else {
-                    i += 3;
-                    None
-                };
-
                 participants.push(ThreadParticipant {
                     participant_id,
-                    role,
                     display_name,
+                    role,
                 });
+
+                i += 3;
             }
 
             let initial_msg = initial_message.map(|body| {

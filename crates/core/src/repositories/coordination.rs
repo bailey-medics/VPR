@@ -485,8 +485,8 @@ impl CoordinationService<Initialised> {
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ThreadParticipant {
     pub participant_id: Uuid,
-    pub role: ParticipantRole,
     pub display_name: String,
+    pub role: ParticipantRole,
 }
 
 /// Role of a participant in care coordination.
@@ -646,19 +646,19 @@ fn format_message(message: &MessageContent, message_id: Uuid, timestamp: &str) -
     };
 
     let mut output = format!(
-        "## Message\n\n**ID:** `{}`  \n**Type:** {}  \n**Timestamp:** {}  \n**Author ID:** `{}`  \n**Author:** {}  \n",
+        "**Message ID:** `{}`  \n**Timestamp:** {}  \n**Author ID:** `{}`  \n**Author:** {}  \n**Role:** {}  \n",
         message_id,
-        message_type_str,
         timestamp,
         message.author_id,
-        message.author_display_name
+        message.author_display_name,
+        message_type_str
     );
 
     if let Some(corrects_id) = message.corrects {
         output.push_str(&format!("**Corrects:** `{}`  \n", corrects_id));
     }
 
-    output.push_str(&format!("\n{}\n\n---\n\n", message.body));
+    output.push_str(&format!("\n{}\n\n---\n", message.body));
     output
 }
 
@@ -669,14 +669,8 @@ fn parse_messages_md(content: &str) -> PatientResult<Vec<Message>> {
     let mut i = 0;
 
     while i < lines.len() {
-        // Look for message header
-        if lines[i] == "## Message" {
-            i += 1;
-            if i >= lines.len() {
-                break;
-            }
-            i += 1; // Skip blank line
-
+        // Look for message metadata (starts with **Message ID:**)
+        if lines[i].starts_with("**Message ID:**") {
             // Parse metadata
             let mut message_id: Option<Uuid> = None;
             let mut message_type: Option<MessageType> = None;
@@ -687,14 +681,16 @@ fn parse_messages_md(content: &str) -> PatientResult<Vec<Message>> {
 
             while i < lines.len() && lines[i].starts_with("**") {
                 let line = lines[i];
-                if line.starts_with("**ID:**") {
-                    let id_str = line.trim_start_matches("**ID:** `").trim_end_matches("`  ");
+                if line.starts_with("**Message ID:**") {
+                    let id_str = line
+                        .trim_start_matches("**Message ID:** `")
+                        .trim_end_matches("`  ");
                     message_id =
                         Some(Uuid::parse_str(id_str).map_err(|e| {
                             PatientError::InvalidInput(format!("Invalid UUID: {}", e))
                         })?);
-                } else if line.starts_with("**Type:**") {
-                    let type_str = line.trim_start_matches("**Type:** ").trim();
+                } else if line.starts_with("**Role:**") {
+                    let type_str = line.trim_start_matches("**Role:** ").trim();
                     message_type = Some(match type_str {
                         "clinician" => MessageType::Clinician,
                         "patient" => MessageType::Patient,
@@ -799,6 +795,7 @@ fn serialize_ledger(ledger: &ThreadLedger) -> PatientResult<String> {
             .iter()
             .map(|p| fhir::LedgerParticipant {
                 participant_id: p.participant_id,
+                display_name: p.display_name.clone(),
                 role: match p.role {
                     ParticipantRole::Clinician => fhir::ParticipantRole::Clinician,
                     ParticipantRole::CareAdministrator => fhir::ParticipantRole::CareAdministrator,
@@ -806,7 +803,6 @@ fn serialize_ledger(ledger: &ThreadLedger) -> PatientResult<String> {
                     ParticipantRole::PatientAssociate => fhir::ParticipantRole::PatientAssociate,
                     ParticipantRole::System => fhir::ParticipantRole::System,
                 },
-                display_name: p.display_name.clone(),
                 organisation: None,
             })
             .collect(),
@@ -853,6 +849,7 @@ fn deserialize_ledger(content: &str) -> PatientResult<ThreadLedger> {
             .iter()
             .map(|p| ThreadParticipant {
                 participant_id: p.participant_id,
+                display_name: p.display_name.clone(),
                 role: match p.role {
                     fhir::ParticipantRole::Clinician => ParticipantRole::Clinician,
                     fhir::ParticipantRole::CareAdministrator => ParticipantRole::CareAdministrator,
@@ -860,7 +857,6 @@ fn deserialize_ledger(content: &str) -> PatientResult<ThreadLedger> {
                     fhir::ParticipantRole::PatientAssociate => ParticipantRole::PatientAssociate,
                     fhir::ParticipantRole::System => ParticipantRole::System,
                 },
-                display_name: p.display_name.clone(),
             })
             .collect(),
         visibility: Visibility {
