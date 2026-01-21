@@ -12,12 +12,15 @@
 //! Unlike the openehr crate, this crate is NOT version-aware. FHIR-aligned structures
 //! evolve more slowly and are internally versioned when needed.
 
+pub mod coordination_status;
 pub mod messaging;
 
-// Re-export Messaging facade
+// Re-export facades
+pub use coordination_status::CoordinationStatus;
 pub use messaging::Messaging;
 
 // Re-export public domain-level types
+pub use coordination_status::{CoordinationStatusData, LifecycleState, StatusInfo};
 pub use messaging::{
     AuditChangeLog, LedgerAudit, LedgerData, LedgerParticipant, LedgerPolicies, LedgerVisibility,
     ParticipantRole, ThreadStatus,

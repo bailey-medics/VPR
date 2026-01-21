@@ -19,9 +19,11 @@ patient_data/
       <s2>/
         <uuid>/
           .git/
-          messaging/
+          COORDINATION_STATUS.yaml
+          communications/
             <thread-id>/
-              render_state.yaml
+              messages.md
+              ledger.yaml
           encounters/
             ...
           appointments/
@@ -30,85 +32,51 @@ patient_data/
 
 ---
 
+## Root Status File
+
+### COORDINATION_STATUS.yaml
+
+Each coordination repository includes a root status file that links it to the associated clinical record:
+
+```yaml
+coordination_id: "7f4c2e9d-4b0a-4f3a-9a2c-0e9a6b5d1c88"
+clinical_id: "a4f91c6d-3b2e-4c5f-9d7a-1e8b6c0a9f12"
+status:
+  lifecycle_state: active # active | suspended | closed
+  record_open: true
+  record_queryable: true
+  record_modifiable: true
+```
+
+**Purpose:**
+
+- Links coordination record to clinical record via `clinical_id`
+- Tracks lifecycle state of the coordination repository
+- Controls operational permissions (queryable, modifiable)
+- Created during coordination repository initialization
+
+**Lifecycle states:**
+
+- **active**: Coordination record is operational and accepting updates
+- **suspended**: Temporarily inactive (e.g., during data migration)
+- **closed**: Permanently closed (e.g., patient deceased, record archived)
+
+**Properties:**
+
+- Mutable, overwriteable
+- Git-versioned for audit trail
+- Uses FHIR-aligned wire format for interoperability
+- Validated against strict schema with UUID checks
+
+---
+
 ## Key Components
 
 ### Messaging Coordination
 
-Manages render state for clinical messaging threads to enable cross-system coordination.
+Manages clinical communication threads between clinicians, patients, and authorized participants.
 
-#### File Layout
-
-Render state is stored as:
-
-```
-coordination/
-  messaging/
-    <thread-id>/
-      render_state.yaml
-```
-
-Where `<thread-id>` matches the unique identifier for each messaging thread in the EHR.
-
-#### render_state.yaml Structure
-
-The `render_state.yaml` file stores **best-effort system render coordination state**.
-
-**Key Concept - render_cursor:**
-
-> The furthest message ID that a consuming system last attempted to render when presenting the conversation.
-
-This records **system behaviour**, not human behaviour. It does NOT imply that a participant read, saw, understood, acknowledged, or acted upon any message.
-
-**Example structure:**
-
-```yaml
-participants:
-  gmc:1234567:
-    render_cursor: 6f2c1b8a-4f7c-4f7a-9e6b-3b3d7c8c6d92
-    recorded_at: 2026-01-06T09:12:00Z
-    source: quill-ehr-oxford
-  patient:456:
-    render_cursor: 6f2c1b8a-4f7c-4f7a-9e6b-3b3d7c8c6d92
-    recorded_at: 2026-01-06T09:15:00Z
-    source: patient-portal-oxford
-```
-
-**Properties:**
-
-- Optional, mutable, overwriteable
-- Soft state - allowed to be stale or wrong
-- Losing it causes annoyance, not clinical harm
-- Can be rebuilt from EHR message history
-
-#### Git Versioning
-
-Changes are Git-versioned for audit purposes:
-
-```text
-coordination:update: Render cursor updated for participant gmc:1234567
-
-Care-Location: Oxford University Hospitals
-```
-
-Commits are frequent and automated, with signatures applied where configured.
-
-#### Alerting Behaviour
-
-VPR does not record alerts. Consuming systems derive alerts by:
-
-1. Reading the latest message_id from EHR messages.md
-2. Reading participant's render_cursor from coordination render_state.yaml
-3. Alerting only if messages exist beyond the last render attempt
-
-This enables:
-
-- **Alert suppression**: Prevents duplicate notifications across systems
-- **Continuity of care**: Consistent state across different EHR systems
-- **Patient experience**: No redundant notifications
-
-#### Lifecycle
-
-Render state is created when participants first interact with threads and updated automatically by consuming systems. It may become stale if systems are offline but can always be rebuilt from EHR message history.
+See [Messaging Design](messaging.md) for detailed specifications.
 
 ### Encounter Management
 
@@ -159,9 +127,11 @@ Enables seamless care delivery across multiple systems:
 
 ### Relationship to Clinical Repository
 
-- References clinical records by UUID
-- Does not duplicate clinical content
-- Enables coordination without coupling
+- **Explicitly linked**: Each coordination record has a `clinical_id` in COORDINATION_STATUS.yaml
+- **Initialization dependency**: Coordination records require an existing clinical record UUID
+- **References not duplication**: Does not duplicate clinical content
+- **Separation of concerns**: Clinical facts vs. coordination state
+- **Enables coordination without coupling**: Systems can coordinate without accessing clinical details
 
 ### Relationship to Demographics
 
@@ -205,4 +175,5 @@ The coordination repository provides foundation for:
 - [VPR Architecture Overview](../overview.md)
 - [Clinical Repository Design](../design-decisions.md)
 - [Messaging Design](messaging.md)
+- [FHIR Integration](fhir.md)
 - [API Specifications](../../specifications.md)

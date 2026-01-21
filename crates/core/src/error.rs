@@ -92,6 +92,8 @@ pub enum PatientError {
 
     #[error("openEHR error: {0}")]
     Openehr(#[from] openehr::OpenEhrError),
+    #[error("FHIR error: {0}")]
+    Fhir(#[from] fhir::FhirError),
     #[error("UUID error: {0}")]
     Uuid(#[from] vpr_uuid::UuidError),
     #[error("failed to initialise git repository: {0}")]

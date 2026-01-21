@@ -91,11 +91,23 @@ Each messaging thread is stored as:
 
 ```text
 coordination/
-    communications/
-        <thread-id>/
-            messages.md
-            ledger.yaml
+    <shard1>/
+        <shard2>/
+            <coordination-uuid>/
+                COORDINATION_STATUS.yaml
+                communications/
+                    <thread-id>/
+                        messages.md
+                        ledger.yaml
 ```
+
+The coordination repository is sharded by UUID for scalability, similar to clinical records.
+
+Where:
+
+- `<thread-id>` is a timestamp-prefixed UUID (e.g., `20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000`)
+- `messages.md` contains the canonical clinical conversation
+- `ledger.yaml` contains thread metadata and participant information
 
 ---
 
@@ -206,6 +218,39 @@ These concepts imply human cognition or behaviour that the system cannot verify 
 
 ---
 
+### Example structure
+
+```markdown
+# Care Coordination Thread
+
+Thread ID: `20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000`  
+Created: 2026-01-11T14:35:22.045Z
+
+---
+
+## Message: 3f7a8d2c-1e9b-4a6d-9f2e-5c8b7a4d1f92
+
+**Type:** clinician  
+**Author:** Dr Jane Smith (GMC 1234567)  
+**Timestamp:** 2026-01-11T14:36:15.234Z
+
+Patient has reported increasing shortness of breath.
+Please review chest X-ray and advise on next steps.
+
+---
+
+## Message: 8b2f6a5c-3d1e-4a9b-8c7f-6d5e4a3b2c1d
+
+**Type:** clinician  
+**Author:** Dr Tom Patel (GMC 7654321)  
+**Timestamp:** 2026-01-11T15:42:30.567Z
+
+Reviewed X-ray. No acute changes. Continue current management
+and reassess in 48 hours. If symptoms worsen, arrange urgent review.
+```
+
+---
+
 ## `ledger.yaml` – Thread context and policy
 
 ### Purpose
@@ -273,6 +318,14 @@ audit:
 - Git-audited
 - Changes are deliberate and relatively infrequent
 
+**Thread-level metadata:**
+
+- Thread status: open, closed, or archived
+- Participant list with roles and organizations
+- Visibility and sensitivity settings
+- Participation policies
+- Audit trail for all changes
+
 ---
 
 ### Explicit exclusions
@@ -285,17 +338,196 @@ audit:
 
 ---
 
+## Git Versioning
+
+All changes to coordination records are Git-versioned for audit purposes:
+
+```text
+coordination:create: Created messaging thread
+
+Care-Location: Oxford University Hospitals
+```
+
+```text
+coordination:update: Added message to thread
+
+Care-Location: Oxford University Hospitals
+```
+
+```text
+coordination:update: Updated thread participant list
+
+Care-Location: Oxford University Hospitals
+```
+
+Commits include:
+
+- Structured commit messages with domain and action
+- Care location metadata
+- Optional cryptographic signatures
+- Full audit trail of all changes
+
+---
+
 ## Alerting behaviour
 
-CCR does not record alerts as clinical facts.
+CCR does **not** record:
 
-Consuming systems may derive alerts by:
+- Read receipts or "seen" status
+- Acknowledgements
+- Urgency flags
+- Task completion or responsibility transfer
 
-1. Reading the latest `message_id` from `messages.md`
-2. Comparing it to a participant-specific render cursor (stored externally or in a coordination projection)
-3. Alerting only if messages exist beyond the last render attempt
+These concepts imply human cognition or behaviour that the system cannot verify.
 
-Alerting is a user-experience concern, not a clinical record.
+Consuming systems may implement alerting by:
+
+1. Tracking their own render/presentation state externally (not in VPR)
+2. Comparing message timestamps to their last-viewed records
+3. Presenting unread indicators in their user interface
+
+This approach:
+
+- Avoids false certainty about human understanding
+- Reduces legal and clinical ambiguity
+- Maintains truthful audit trails
+- Enables consistent patient experience across systems
+
+Alerting is a **user-experience concern**, not a clinical record.
+
+---
+
+## Thread Lifecycle
+
+Messaging threads follow a defined lifecycle:
+
+### Creation
+
+Threads are created via `CoordinationService::create_thread()`:
+
+- Generates timestamp-prefixed thread ID
+- Creates `communications/<thread-id>/` directory
+- Writes initial `messages.md` (optionally with first message)
+- Writes `ledger.yaml` with participant list and policies
+- Commits atomically to Git
+
+### Message Addition
+
+Messages are added via `CoordinationService::add_message()`:
+
+- Generates unique message UUID
+- Appends to `messages.md` (preserves immutability)
+- Commits with structured message and care location
+- Returns the message ID for reference
+
+### Metadata Updates
+
+Thread metadata is updated via `CoordinationService::update_thread_ledger()`:
+
+- Modifies `ledger.yaml` (participants, status, policies)
+- Git commit records the change
+- Audit log tracks all modifications
+
+### Status Transitions
+
+Threads can transition between states:
+
+- **Open** → **Closed**: Thread completed, no new messages accepted
+- **Closed** → **Archived**: Thread moved to archive, hidden from default views
+- **Open** → **Archived**: Direct archival without closing
+
+### Deletion
+
+Threads are **never deleted**:
+
+- Immutability is preserved
+- Audit trail remains complete
+- Archival is used instead of deletion
+- Git history retains full record
+
+---
+
+---
+
+## Implementation Details
+
+### Initialization
+
+Coordination repositories are initialized with:
+
+```rust
+CoordinationService::new(cfg)
+    .initialise(author, care_location, clinical_id)
+```
+
+This creates:
+
+- Sharded directory structure: `coordination/<s1>/<s2>/<uuid>/`
+- `COORDINATION_STATUS.yaml` with link to clinical record
+- Git repository with initial commit
+- Lifecycle state set to `active`
+
+### Thread Creation
+
+Messaging threads are created with:
+
+```rust
+service.create_thread(
+    &author,
+    care_location,
+    participants,
+    initial_message
+)
+```
+
+This:
+
+- Generates timestamp-prefixed thread ID via `TimestampIdGenerator`
+- Creates `communications/<thread-id>/` directory
+- Writes `messages.md` with optional initial message
+- Writes `ledger.yaml` with participant list and policies
+- Commits both files atomically to Git
+
+### Adding Messages
+
+Messages are appended with:
+
+```rust
+service.add_message(
+    &author,
+    care_location,
+    thread_id,
+    message_content
+)
+```
+
+This:
+
+- Generates unique message UUID
+- Appends to `messages.md` (preserves immutability)
+- Commits with structured message and care location
+- Returns the message ID
+
+### Type Safety
+
+The `CoordinationService` uses type-state pattern:
+
+- `CoordinationService<Uninitialised>` - Can only call `initialise()`
+- `CoordinationService<Initialised>` - Can call thread and message operations
+
+This prevents operations on non-existent repositories at compile time.
+
+### Error Handling
+
+Operations return `PatientResult<T>` with comprehensive error types:
+
+- Author validation errors
+- Git operation failures
+- File I/O errors
+- FHIR wire format validation errors
+- UUID parsing errors
+
+Cleanup is attempted on initialization failure to prevent partial repositories.
 
 ---
 
@@ -309,3 +541,12 @@ The following were deliberately excluded:
 - workflow or task semantics (these may be added later using FHIR-aligned Task concepts)
 
 These exclusions reduce legal ambiguity, false certainty, and unintended clinical inference.
+
+---
+
+## References
+
+- [Coordination Index](index.md)
+- [FHIR Integration](fhir.md)
+- [FHIR Communication Resource](https://hl7.org/fhir/communication.html)
+- [VPR Architecture Overview](../overview.md)

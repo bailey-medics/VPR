@@ -81,18 +81,18 @@ impl CoordinationService<Uninitialised> {
 
     /// Initializes a new coordination repository for a patient.
     ///
-    /// Unlike clinical.rs, this does NOT copy from a template.
-    /// It simply:
-    /// - Creates UUID and sharded directory structure
-    /// - Creates coordination/{shard1}/{shard2}/{uuid}/ directory
-    /// - Initializes Git repository
-    /// - Creates initial commit with metadata
+    /// Creates:
+    /// - UUID and sharded directory structure
+    /// - coordination/{shard1}/{shard2}/{uuid}/ directory
+    /// - COORDINATION_STATUS.yaml linking to clinical record
+    /// - Git repository with initial commit
     ///
     /// Consumes self and returns CoordinationService<Initialised>.
     pub fn initialise(
         self,
         author: Author,
         care_location: String,
+        clinical_id: Uuid,
     ) -> PatientResult<CoordinationService<Initialised>> {
         author.validate_commit_author()?;
 
@@ -111,17 +111,29 @@ impl CoordinationService<Uninitialised> {
             // Initialize Git repository
             let repo = VersionedFileService::init(&patient_dir)?;
 
-            // Create initial .gitkeep file to allow empty commit
-            let gitkeep_path = patient_dir.join(".gitkeep");
-            fs::write(&gitkeep_path, b"").map_err(PatientError::FileWrite)?;
+            // Create COORDINATION_STATUS.yaml with link to clinical record
+            let status_data = fhir::CoordinationStatusData {
+                coordination_id: coordination_uuid.uuid(),
+                clinical_id,
+                status: fhir::StatusInfo {
+                    lifecycle_state: fhir::LifecycleState::Active,
+                    record_open: true,
+                    record_queryable: true,
+                    record_modifiable: true,
+                },
+            };
+
+            let status_yaml = fhir::CoordinationStatus::render(&status_data)?;
+            let status_path = patient_dir.join("COORDINATION_STATUS.yaml");
+            fs::write(&status_path, status_yaml).map_err(PatientError::FileWrite)?;
 
             // Initial commit
             repo.write_and_commit_files(
                 &author,
                 &commit_message,
                 &[FileToWrite {
-                    relative_path: Path::new(".gitkeep"),
-                    content: "",
+                    relative_path: Path::new("COORDINATION_STATUS.yaml"),
+                    content: &fs::read_to_string(&status_path).map_err(PatientError::FileRead)?,
                     old_content: None,
                 }],
             )?;
