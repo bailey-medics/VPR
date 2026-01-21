@@ -33,13 +33,6 @@ pub struct CoordinationStatusData {
     /// Reference to the associated clinical record (UUID).
     pub clinical_id: Uuid,
 
-    /// Status information including lifecycle state and permissions.
-    pub status: StatusInfo,
-}
-
-/// Status information for a coordination record.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct StatusInfo {
     /// Current lifecycle state of the coordination record.
     pub lifecycle_state: LifecycleState,
 
@@ -193,12 +186,10 @@ fn wire_to_domain(wire: CoordinationStatusWire) -> Result<CoordinationStatusData
     Ok(CoordinationStatusData {
         coordination_id,
         clinical_id,
-        status: StatusInfo {
-            lifecycle_state: wire.status.lifecycle_state,
-            record_open: wire.status.record_open,
-            record_queryable: wire.status.record_queryable,
-            record_modifiable: wire.status.record_modifiable,
-        },
+        lifecycle_state: wire.status.lifecycle_state,
+        record_open: wire.status.record_open,
+        record_queryable: wire.status.record_queryable,
+        record_modifiable: wire.status.record_modifiable,
     })
 }
 
@@ -208,10 +199,10 @@ fn domain_to_wire(data: &CoordinationStatusData) -> CoordinationStatusWire {
         coordination_id: data.coordination_id.to_string(),
         clinical_id: data.clinical_id.to_string(),
         status: StatusWire {
-            lifecycle_state: data.status.lifecycle_state.clone(),
-            record_open: data.status.record_open,
-            record_queryable: data.status.record_queryable,
-            record_modifiable: data.status.record_modifiable,
+            lifecycle_state: data.lifecycle_state.clone(),
+            record_open: data.record_open,
+            record_queryable: data.record_queryable,
+            record_modifiable: data.record_modifiable,
         },
     }
 }
@@ -331,15 +322,15 @@ status:
 "#;
 
         let active = CoordinationStatus::parse(base).expect("should parse active");
-        assert_eq!(active.status.lifecycle_state, LifecycleState::Active);
+        assert_eq!(active.lifecycle_state, LifecycleState::Active);
 
         let suspended = base.replace("lifecycle_state: active", "lifecycle_state: suspended");
         let result = CoordinationStatus::parse(&suspended).expect("should parse suspended");
-        assert_eq!(result.status.lifecycle_state, LifecycleState::Suspended);
+        assert_eq!(result.lifecycle_state, LifecycleState::Suspended);
 
         let closed = base.replace("lifecycle_state: active", "lifecycle_state: closed");
         let result = CoordinationStatus::parse(&closed).expect("should parse closed");
-        assert_eq!(result.status.lifecycle_state, LifecycleState::Closed);
+        assert_eq!(result.lifecycle_state, LifecycleState::Closed);
     }
 
     #[test]
@@ -354,10 +345,10 @@ status:
 "#;
 
         let result = CoordinationStatus::parse(input).expect("should parse mixed permissions");
-        assert_eq!(result.status.lifecycle_state, LifecycleState::Suspended);
-        assert!(!result.status.record_open);
-        assert!(result.status.record_queryable);
-        assert!(!result.status.record_modifiable);
+        assert_eq!(result.lifecycle_state, LifecycleState::Suspended);
+        assert!(!result.record_open);
+        assert!(result.record_queryable);
+        assert!(!result.record_modifiable);
     }
 
     #[test]
@@ -380,9 +371,9 @@ status:
             result.clinical_id.to_string(),
             "a4f91c6d-3b2e-4c5f-9d7a-1e8b6c0a9f12"
         );
-        assert_eq!(result.status.lifecycle_state, LifecycleState::Active);
-        assert!(result.status.record_open);
-        assert!(result.status.record_queryable);
-        assert!(result.status.record_modifiable);
+        assert_eq!(result.lifecycle_state, LifecycleState::Active);
+        assert!(result.record_open);
+        assert!(result.record_queryable);
+        assert!(result.record_modifiable);
     }
 }

@@ -5,6 +5,7 @@
 
 use crate::{
     author::Author, error::PatientResult, repositories::clinical::ClinicalService,
+    repositories::coordination::CoordinationService,
     repositories::demographics::DemographicsService,
 };
 
@@ -15,6 +16,8 @@ pub struct FullRecord {
     pub demographics_uuid: String,
     /// The UUID of the clinical record.
     pub clinical_uuid: String,
+    /// The UUID of the coordination record.
+    pub coordination_uuid: String,
 }
 
 /// Pure patient data operations - no API concerns
@@ -81,14 +84,21 @@ impl PatientService {
         // Link clinical to demographics
         clinical_service.link_to_demographics(
             &author,
-            care_location,
+            care_location.clone(),
             &demographics_uuid,
             namespace,
         )?;
 
+        // Initialise coordination record linked to clinical
+        let coordination_service = CoordinationService::new(self.cfg.clone());
+        let coordination_service =
+            coordination_service.initialise(author, care_location, clinical_uuid)?;
+        let coordination_uuid = coordination_service.coordination_id();
+
         Ok(FullRecord {
             demographics_uuid,
             clinical_uuid: clinical_uuid.simple().to_string(),
+            coordination_uuid: coordination_uuid.to_string(),
         })
     }
 }

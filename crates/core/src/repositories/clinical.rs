@@ -21,6 +21,9 @@ use crate::paths::clinical::letter::LetterPaths;
 use crate::repositories::shared::{
     copy_dir_recursive, create_uuid_and_shard_dir, validate_template, TemplateDirKind,
 };
+
+#[cfg(test)]
+use crate::repositories::shared::create_uuid_and_shard_dir_with_source;
 use crate::versioned_files::{
     ClinicalDomain, FileToWrite, VersionedFileService, VprCommitAction, VprCommitDomain,
     VprCommitMessage,
@@ -232,9 +235,10 @@ impl ClinicalService<Uninitialised> {
         )?;
 
         let clinical_dir = self.clinical_dir();
-        let (clinical_uuid, patient_dir) =
-            create_uuid_and_shard_dir(&clinical_dir, ShardableUuid::new)?;
+        let (clinical_uuid, patient_dir) = create_uuid_and_shard_dir(&clinical_dir)?;
 
+        // Here we catch errors when creating the clinical record, so we can
+        // attempt to clean up the partially created directory and files.
         let result: PatientResult<Uuid> = (|| {
             let repo = VersionedFileService::init(&patient_dir)?;
 
@@ -370,8 +374,8 @@ impl ClinicalService<Initialised> {
         let yaml_content =
             EhrStatus::render(rm_version, Some(&previous_data), None, external_reference)?;
 
-        let repo = VersionedFileService::open(&patient_dir)?;
-        repo.write_and_commit_files(
+        VersionedFileService::write_and_commit_files(
+            &patient_dir,
             author,
             &msg,
             &[FileToWrite {
@@ -465,8 +469,7 @@ impl ClinicalService<Initialised> {
             },
         ];
 
-        let repo = VersionedFileService::open(&patient_dir)?;
-        repo.write_and_commit_files(author, &msg, &files_to_write)?;
+        VersionedFileService::write_and_commit_files(&patient_dir, author, &msg, &files_to_write)?;
 
         Ok(timestamp_id.to_string())
     }
@@ -642,8 +645,9 @@ mod tests {
             .expect("uuid should be canonical")];
         let mut iter = uuids.into_iter();
 
-        let (uuid, patient_dir) = create_uuid_and_shard_dir(&clinical_dir, || iter.next().unwrap())
-            .expect("allocation should succeed");
+        let (uuid, patient_dir) =
+            create_uuid_and_shard_dir_with_source(&clinical_dir, || iter.next().unwrap())
+                .expect("allocation should succeed");
 
         assert_eq!(uuid.to_string(), "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
         assert_eq!(
@@ -675,8 +679,9 @@ mod tests {
         ];
         let mut iter = uuids.into_iter();
 
-        let (uuid, patient_dir) = create_uuid_and_shard_dir(&clinical_dir, || iter.next().unwrap())
-            .expect("allocation should succeed");
+        let (uuid, patient_dir) =
+            create_uuid_and_shard_dir_with_source(&clinical_dir, || iter.next().unwrap())
+                .expect("allocation should succeed");
 
         assert_eq!(uuid.to_string(), second);
         assert_eq!(
@@ -713,7 +718,7 @@ mod tests {
             .collect::<Vec<_>>();
         let mut iter = uuids.into_iter();
 
-        let err = create_uuid_and_shard_dir(&clinical_dir, || iter.next().unwrap())
+        let err = create_uuid_and_shard_dir_with_source(&clinical_dir, || iter.next().unwrap())
             .expect_err("allocation should fail");
 
         match err {
@@ -739,7 +744,7 @@ mod tests {
             .expect("uuid should be canonical")];
         let mut iter = uuids.into_iter();
 
-        let err = create_uuid_and_shard_dir(&clinical_dir, || iter.next().unwrap())
+        let err = create_uuid_and_shard_dir_with_source(&clinical_dir, || iter.next().unwrap())
             .expect_err("allocation should fail when parent dir creation fails");
 
         assert!(matches!(err, PatientError::PatientDirCreation(_)));

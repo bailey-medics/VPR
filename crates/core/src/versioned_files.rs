@@ -909,37 +909,42 @@ impl VersionedFileService {
 
     /// Writes multiple files and commits them to Git with rollback on failure.
     ///
-    /// This method creates any necessary parent directories, writes all files,
-    /// and commits them in a single Git commit. All operations are wrapped in a closure
-    /// to enable automatic rollback if any operation fails. On error:
+    /// Opens an existing Git repository, creates any necessary parent directories,
+    /// writes all files, and commits them in a single Git commit. All operations are
+    /// wrapped in a closure to enable automatic rollback if any operation fails. On error:
     /// - Files that previously existed are restored to their previous state
     /// - New files are removed
     /// - Any directories created during this operation are removed
     ///
     /// # Arguments
     ///
+    /// * `repo_path` - Path to the existing Git repository (patient directory).
     /// * `author` - The author information for the Git commit.
     /// * `msg` - The commit message structure containing domain, action, and location.
     /// * `files` - Slice of [`FileToWrite`] structs describing files to write.
     ///
     /// # Returns
     ///
-    /// Returns `Ok(())` if directory creation, all file writes, and Git commit succeed.
+    /// Returns `Ok(())` if repository opening, directory creation, all file writes,
+    /// and Git commit succeed.
     ///
     /// # Errors
     ///
     /// Returns a `PatientError` if:
+    /// - Repository opening fails (various Git-related error variants)
     /// - Parent directory creation fails ([`PatientError::FileWrite`])
     /// - Any file write fails ([`PatientError::FileWrite`])
     /// - The Git commit fails (various Git-related error variants)
     ///
     /// On error, attempts to rollback all files and any newly created directories.
     pub(crate) fn write_and_commit_files(
-        &self,
+        repo_path: &Path,
         author: &Author,
         msg: &VprCommitMessage,
         files: &[FileToWrite],
     ) -> PatientResult<()> {
+        let repo = Self::open(repo_path)?;
+
         let mut created_dirs: Vec<PathBuf> = Vec::new();
         let mut written_files: Vec<(PathBuf, Option<String>)> = Vec::new();
 
@@ -947,10 +952,10 @@ impl VersionedFileService {
             // Collect all unique parent directories needed
             let mut dirs_needed = std::collections::HashSet::new();
             for file in files {
-                let full_path = self.workdir.join(file.relative_path);
+                let full_path = repo.workdir.join(file.relative_path);
                 if let Some(parent) = full_path.parent() {
                     let mut current = parent;
-                    while current != self.workdir && !current.exists() {
+                    while current != repo.workdir && !current.exists() {
                         dirs_needed.insert(current.to_path_buf());
                         if let Some(parent_of_current) = current.parent() {
                             current = parent_of_current;
@@ -973,7 +978,7 @@ impl VersionedFileService {
 
             // Write all files
             for file in files {
-                let full_path = self.workdir.join(file.relative_path);
+                let full_path = repo.workdir.join(file.relative_path);
                 let old_content = file.old_content.map(|s| s.to_string());
 
                 std::fs::write(&full_path, file.content).map_err(PatientError::FileWrite)?;
@@ -985,7 +990,7 @@ impl VersionedFileService {
                 .iter()
                 .map(|f| f.relative_path.to_path_buf())
                 .collect();
-            self.commit_paths(author, msg, &paths)?;
+            repo.commit_paths(author, msg, &paths)?;
 
             Ok(())
         })();
@@ -1011,6 +1016,84 @@ impl VersionedFileService {
                 }
 
                 Err(write_error)
+            }
+        }
+    }
+
+    /// Initialise a Git repository, commit initial files, and clean up on failure.
+    ///
+    /// This method encapsulates the common pattern of:
+    /// 1. Initialising a Git repository in a new directory
+    /// 2. Writing and committing initial files
+    /// 3. Automatically removing the entire directory if any error occurs
+    ///
+    /// This ensures atomic repository creation - either the repository is fully
+    /// initialised with its initial commit, or the directory is completely removed.
+    /// This is critical for maintaining consistency in patient record storage.
+    ///
+    /// # Arguments
+    ///
+    /// * `patient_dir` - Path where the Git repository should be created. This entire
+    ///   directory will be removed if initialisation fails.
+    /// * `author` - The author information for the initial Git commit.
+    /// * `message` - The commit message structure containing domain, action, and location.
+    /// * `files` - Slice of [`FileToWrite`] structs describing initial files to write.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if repository initialisation, file writes, and commit succeed.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `PatientError` if:
+    /// - Repository initialisation fails ([`PatientError::GitInit`])
+    /// - File writes fail ([`PatientError::FileWrite`])
+    /// - Git commit fails (various Git-related error variants)
+    ///
+    /// On error, attempts to remove the entire `patient_dir` directory. If cleanup also
+    /// fails, returns [`PatientError::CleanupAfterInitialiseFailed`] with both the
+    /// original error and the cleanup error.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let files = [FileToWrite {
+    ///     relative_path: Path::new("STATUS.yaml"),
+    ///     content: &status_yaml,
+    ///     old_content: None,
+    /// }];
+    ///
+    /// VersionedFileService::init_and_commit_with_cleanup(
+    ///     &patient_dir,
+    ///     &author,
+    ///     &commit_message,
+    ///     &files,
+    /// )?;
+    /// ```
+    pub(crate) fn init_and_commit_with_cleanup(
+        patient_dir: &Path,
+        author: &Author,
+        message: &VprCommitMessage,
+        files: &[FileToWrite],
+    ) -> PatientResult<()> {
+        let result: PatientResult<()> = (|| {
+            let _repo = Self::init(patient_dir)?;
+            Self::write_and_commit_files(patient_dir, author, message, files)?;
+            Ok(())
+        })();
+
+        match result {
+            Ok(()) => Ok(()),
+            Err(init_error) => {
+                // Attempt cleanup - remove entire patient_dir
+                if let Err(cleanup_err) = std::fs::remove_dir_all(patient_dir) {
+                    return Err(PatientError::CleanupAfterInitialiseFailed {
+                        path: patient_dir.to_path_buf(),
+                        init_error: Box::new(init_error),
+                        cleanup_error: cleanup_err,
+                    });
+                }
+                Err(init_error)
             }
         }
     }

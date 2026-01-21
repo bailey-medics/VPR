@@ -2,7 +2,7 @@
 //!
 //! This module manages care coordination records, focusing on asynchronous
 //! clinical communication and task management between clinicians, patients, and
-//! other authorized participants.
+//! other authorised participants.
 //!
 //! ## Architecture
 //!
@@ -22,19 +22,13 @@ use crate::versioned_files::{
     VprCommitMessage,
 };
 use crate::ShardableUuid;
+use fhir::{CoordinationStatus, CoordinationStatusData, LifecycleState};
 use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use uuid::Uuid;
-use vpr_uuid::TimestampIdGenerator;
+use vpr_uuid::{TimestampId, TimestampIdGenerator};
 use CoordinationDomain::*;
-
-#[cfg(test)]
-use std::collections::HashSet;
-
-#[cfg(test)]
-use std::sync::{LazyLock, Mutex};
 
 // ============================================================================
 // TYPE-STATE MARKERS
@@ -51,9 +45,9 @@ pub struct Uninitialised;
 ///
 /// Indicates a valid coordination repository with a known UUID.
 /// Enables operations like creating threads and adding messages.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct Initialised {
-    coordination_id: Uuid,
+    coordination_id: ShardableUuid,
 }
 
 // ============================================================================
@@ -79,7 +73,7 @@ impl CoordinationService<Uninitialised> {
         }
     }
 
-    /// Initializes a new coordination repository for a patient.
+    /// Initialises a new coordination repository for a patient.
     ///
     /// Creates:
     /// - UUID and sharded directory structure
@@ -103,62 +97,39 @@ impl CoordinationService<Uninitialised> {
             care_location,
         )?;
 
-        let coordination_dir = self.coordination_dir();
-        let (coordination_uuid, patient_dir) =
-            create_uuid_and_shard_dir(&coordination_dir, ShardableUuid::new)?;
+        let coordination_root_dir = self.coordination_root_dir();
+        let (coordination_uuid, patient_dir) = create_uuid_and_shard_dir(&coordination_root_dir)?;
 
-        let result: PatientResult<Uuid> = (|| {
-            // Initialize Git repository
-            let repo = VersionedFileService::init(&patient_dir)?;
-
-            // Create COORDINATION_STATUS.yaml with link to clinical record
-            let status_data = fhir::CoordinationStatusData {
-                coordination_id: coordination_uuid.uuid(),
-                clinical_id,
-                status: fhir::StatusInfo {
-                    lifecycle_state: fhir::LifecycleState::Active,
-                    record_open: true,
-                    record_queryable: true,
-                    record_modifiable: true,
-                },
-            };
-
-            let status_yaml = fhir::CoordinationStatus::render(&status_data)?;
-            let status_path = patient_dir.join("COORDINATION_STATUS.yaml");
-            fs::write(&status_path, status_yaml).map_err(PatientError::FileWrite)?;
-
-            // Initial commit
-            repo.write_and_commit_files(
-                &author,
-                &commit_message,
-                &[FileToWrite {
-                    relative_path: Path::new("COORDINATION_STATUS.yaml"),
-                    content: &fs::read_to_string(&status_path).map_err(PatientError::FileRead)?,
-                    old_content: None,
-                }],
-            )?;
-
-            Ok(coordination_uuid.uuid())
-        })();
-
-        let coordination_id = match result {
-            Ok(id) => id,
-            Err(e) => {
-                // Attempt cleanup
-                if let Err(cleanup_err) = remove_patient_dir_all(&patient_dir) {
-                    return Err(PatientError::CleanupAfterInitialiseFailed {
-                        path: patient_dir,
-                        init_error: Box::new(e),
-                        cleanup_error: cleanup_err,
-                    });
-                }
-                return Err(e);
-            }
+        // Create COORDINATION_STATUS.yaml contents with link to clinical record
+        let status_data = CoordinationStatusData {
+            coordination_id: coordination_uuid.uuid(),
+            clinical_id,
+            lifecycle_state: LifecycleState::Active,
+            record_open: true,
+            record_queryable: true,
+            record_modifiable: true,
         };
+
+        let status_yaml = CoordinationStatus::render(&status_data)?;
+
+        let status_file = FileToWrite {
+            relative_path: Path::new("COORDINATION_STATUS.yaml"),
+            content: &status_yaml,
+            old_content: None,
+        };
+
+        VersionedFileService::init_and_commit_with_cleanup(
+            &patient_dir,
+            &author,
+            &commit_message,
+            &[status_file],
+        )?;
 
         Ok(CoordinationService {
             cfg: self.cfg,
-            state: Initialised { coordination_id },
+            state: Initialised {
+                coordination_id: coordination_uuid,
+            },
         })
     }
 }
@@ -168,13 +139,15 @@ impl CoordinationService<Initialised> {
     pub fn with_id(cfg: Arc<CoreConfig>, coordination_id: Uuid) -> Self {
         Self {
             cfg,
-            state: Initialised { coordination_id },
+            state: Initialised {
+                coordination_id: ShardableUuid::from_uuid(coordination_id),
+            },
         }
     }
 
     /// Returns the coordination UUID.
-    pub fn coordination_id(&self) -> Uuid {
-        self.state.coordination_id
+    pub fn coordination_id(&self) -> &ShardableUuid {
+        &self.state.coordination_id
     }
 }
 
@@ -183,23 +156,46 @@ impl CoordinationService<Initialised> {
 // ============================================================================
 
 impl CoordinationService<Initialised> {
-    /// Creates a new messaging thread.
+    /// Creates a new messaging thread in the coordination repository.
+    ///
+    /// Creates a new communication thread for asynchronous messaging between care team
+    /// participants. The thread is initialised with metadata (participants, policies,
+    /// visibility) and optionally an initial message.
     ///
     /// Creates:
-    /// - communications/{thread_id}/ directory
-    /// - messages.md with header/metadata
-    /// - ledger.yaml with participants, status, policies
+    /// - `communications/{thread_id}/` directory
+    /// - `ledger.yaml` with participants, status, policies, and visibility settings
+    /// - `messages.md` with optional initial message
+    /// - Git commit with thread creation
     ///
-    /// Thread ID format: YYYYMMDDTHHMMSS.sssZ-UUID
+    /// Thread ID format: `YYYYMMDDTHHMMSS.sssZ-UUID` (timestamp-based for ordering).
     ///
-    /// Returns the thread_id string.
+    /// # Arguments
+    ///
+    /// * `author` - The author creating the thread (validated for commit permissions)
+    /// * `care_location` - The care location context for the Git commit message
+    /// * `authors` - Initial list of thread participants with roles
+    /// * `initial_message` - Optional first message to include when creating the thread
+    ///
+    /// # Returns
+    ///
+    /// The generated thread ID on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PatientError` if:
+    /// - Author validation fails - [`PatientError::InvalidInput`], [`PatientError::MissingCommitAuthor`]
+    /// - Thread ID generation fails - [`PatientError::TimestampIdError`]
+    /// - Directory creation fails - [`PatientError::PatientDirCreation`]
+    /// - Ledger serialization fails - [`PatientError::InvalidInput`]
+    /// - File write or Git commit fails - [`PatientError::FileWrite`], various Git errors
     pub fn create_thread(
         &self,
         author: &Author,
         care_location: String,
-        participants: Vec<ThreadParticipant>,
+        authors: Vec<MessageAuthor>,
         initial_message: Option<MessageContent>,
-    ) -> PatientResult<String> {
+    ) -> PatientResult<TimestampId> {
         author.validate_commit_author()?;
 
         let msg = VprCommitMessage::new(
@@ -209,13 +205,8 @@ impl CoordinationService<Initialised> {
             care_location,
         )?;
 
-        let thread_id = generate_thread_id()?;
-        let coordination_uuid = ShardableUuid::parse(&self.coordination_id().simple().to_string())?;
-        let patient_dir = self.coordination_patient_dir(&coordination_uuid);
-        let thread_dir = thread_dir(&patient_dir, &thread_id);
-
-        // Create thread directory
-        fs::create_dir_all(&thread_dir).map_err(PatientError::PatientDirCreation)?;
+        let thread_id = TimestampIdGenerator::generate(None)?;
+        let coordination_dir = self.coordination_dir(self.coordination_id());
 
         // Create initial messages.md
         let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
@@ -229,11 +220,11 @@ impl CoordinationService<Initialised> {
 
         // Create ledger.yaml
         let ledger = ThreadLedger {
-            thread_id: thread_id.clone(),
+            thread_id: thread_id.to_string(),
             status: ThreadStatus::Open,
             created_at: now.clone(),
             last_updated_at: now,
-            participants,
+            participants: authors,
             visibility: Visibility {
                 sensitivity: SensitivityLevel::Standard,
                 restricted: false,
@@ -245,32 +236,30 @@ impl CoordinationService<Initialised> {
         };
         let ledger_content = serialize_ledger(&ledger)?;
 
-        // Write files and commit
-        let messages_path = thread_dir.join("messages.md");
-        let ledger_path = thread_dir.join("ledger.yaml");
-
-        let messages_relative = messages_path
-            .strip_prefix(&patient_dir)
-            .map_err(|_| PatientError::InvalidInput("Invalid path prefix".to_string()))?;
-        let ledger_relative = ledger_path
-            .strip_prefix(&patient_dir)
-            .map_err(|_| PatientError::InvalidInput("Invalid path prefix".to_string()))?;
+        // Construct relative paths directly
+        let thread_relative_dir = Path::new("communications").join(thread_id.to_string());
+        let messages_relative = thread_relative_dir.join("messages.md");
+        let ledger_relative = thread_relative_dir.join("ledger.yaml");
 
         let files_to_write = [
             FileToWrite {
-                relative_path: messages_relative,
+                relative_path: &messages_relative,
                 content: &messages_content,
                 old_content: None,
             },
             FileToWrite {
-                relative_path: ledger_relative,
+                relative_path: &ledger_relative,
                 content: &ledger_content,
                 old_content: None,
             },
         ];
 
-        let repo = VersionedFileService::open(&patient_dir)?;
-        repo.write_and_commit_files(author, &msg, &files_to_write)?;
+        VersionedFileService::write_and_commit_files(
+            &coordination_dir,
+            author,
+            &msg,
+            &files_to_write,
+        )?;
 
         Ok(thread_id)
     }
@@ -287,11 +276,10 @@ impl CoordinationService<Initialised> {
         &self,
         author: &Author,
         care_location: String,
-        thread_id: &str,
+        thread_id: &TimestampId,
         message: MessageContent,
     ) -> PatientResult<String> {
         author.validate_commit_author()?;
-        validate_thread_id(thread_id)?;
 
         let msg = VprCommitMessage::new(
             VprCommitDomain::Coordination(Messaging),
@@ -300,9 +288,8 @@ impl CoordinationService<Initialised> {
             care_location,
         )?;
 
-        let coordination_uuid = ShardableUuid::parse(&self.coordination_id().simple().to_string())?;
-        let patient_dir = self.coordination_patient_dir(&coordination_uuid);
-        let thread_dir = thread_dir(&patient_dir, thread_id);
+        let coordination_dir = self.coordination_dir(self.coordination_id());
+        let thread_dir = thread_dir(&coordination_dir, &thread_id.to_string());
         let messages_path = thread_dir.join("messages.md");
 
         if !messages_path.exists() {
@@ -333,10 +320,10 @@ impl CoordinationService<Initialised> {
 
         // Write and commit
         let messages_relative = messages_path
-            .strip_prefix(&patient_dir)
+            .strip_prefix(&coordination_dir)
             .map_err(|_| PatientError::InvalidInput("Invalid path prefix".to_string()))?;
         let ledger_relative = ledger_path
-            .strip_prefix(&patient_dir)
+            .strip_prefix(&coordination_dir)
             .map_err(|_| PatientError::InvalidInput("Invalid path prefix".to_string()))?;
 
         let files_to_write = [
@@ -352,8 +339,12 @@ impl CoordinationService<Initialised> {
             },
         ];
 
-        let repo = VersionedFileService::open(&patient_dir)?;
-        repo.write_and_commit_files(author, &msg, &files_to_write)?;
+        VersionedFileService::write_and_commit_files(
+            &coordination_dir,
+            author,
+            &msg,
+            &files_to_write,
+        )?;
 
         Ok(message_id.to_string())
     }
@@ -364,12 +355,9 @@ impl CoordinationService<Initialised> {
     /// - Thread metadata from ledger.yaml
     /// - All messages parsed from messages.md
     /// - Correction relationships resolved
-    pub fn read_thread(&self, thread_id: &str) -> PatientResult<Thread> {
-        validate_thread_id(thread_id)?;
-
-        let coordination_uuid = ShardableUuid::parse(&self.coordination_id().simple().to_string())?;
-        let patient_dir = self.coordination_patient_dir(&coordination_uuid);
-        let thread_dir = thread_dir(&patient_dir, thread_id);
+    pub fn read_thread(&self, thread_id: &TimestampId) -> PatientResult<Thread> {
+        let coordination_dir = self.coordination_dir(self.coordination_id());
+        let thread_dir = thread_dir(&coordination_dir, &thread_id.to_string());
         let messages_path = thread_dir.join("messages.md");
         let ledger_path = thread_dir.join("ledger.yaml");
 
@@ -405,11 +393,10 @@ impl CoordinationService<Initialised> {
         &self,
         author: &Author,
         care_location: String,
-        thread_id: &str,
+        thread_id: &TimestampId,
         ledger_update: LedgerUpdate,
     ) -> PatientResult<()> {
         author.validate_commit_author()?;
-        validate_thread_id(thread_id)?;
 
         let msg = VprCommitMessage::new(
             VprCommitDomain::Coordination(Messaging),
@@ -418,9 +405,8 @@ impl CoordinationService<Initialised> {
             care_location,
         )?;
 
-        let coordination_uuid = ShardableUuid::parse(&self.coordination_id().simple().to_string())?;
-        let patient_dir = self.coordination_patient_dir(&coordination_uuid);
-        let thread_dir = thread_dir(&patient_dir, thread_id);
+        let coordination_dir = self.coordination_dir(self.coordination_id());
+        let thread_dir = thread_dir(&coordination_dir, &thread_id.to_string());
         let ledger_path = thread_dir.join("ledger.yaml");
 
         if !ledger_path.exists() {
@@ -439,9 +425,7 @@ impl CoordinationService<Initialised> {
             ledger.participants.extend(add_participants);
         }
         if let Some(remove_ids) = ledger_update.remove_participants {
-            ledger
-                .participants
-                .retain(|p| !remove_ids.contains(&p.participant_id));
+            ledger.participants.retain(|p| !remove_ids.contains(&p.id));
         }
         if let Some(status) = ledger_update.set_status {
             ledger.status = status;
@@ -457,11 +441,11 @@ impl CoordinationService<Initialised> {
         ledger.last_updated_at =
             chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
 
-        // Serialize and write
+        // Serialise and write
         let new_content = serialize_ledger(&ledger)?;
 
         let ledger_relative = ledger_path
-            .strip_prefix(&patient_dir)
+            .strip_prefix(&coordination_dir)
             .map_err(|_| PatientError::InvalidInput("Invalid path prefix".to_string()))?;
 
         let files_to_write = [FileToWrite {
@@ -470,8 +454,12 @@ impl CoordinationService<Initialised> {
             old_content: Some(&ledger_content),
         }];
 
-        let repo = VersionedFileService::open(&patient_dir)?;
-        repo.write_and_commit_files(author, &msg, &files_to_write)?;
+        VersionedFileService::write_and_commit_files(
+            &coordination_dir,
+            author,
+            &msg,
+            &files_to_write,
+        )?;
 
         Ok(())
     }
@@ -481,17 +469,17 @@ impl CoordinationService<Initialised> {
 // DATA STRUCTURES
 // ============================================================================
 
-/// Represents a participant in a messaging thread.
+/// Represents a message author in a messaging thread.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct ThreadParticipant {
-    pub participant_id: Uuid,
-    pub display_name: String,
-    pub role: ParticipantRole,
+pub struct MessageAuthor {
+    pub id: Uuid,
+    pub name: String,
+    pub role: AuthorRole,
 }
 
-/// Role of a participant in care coordination.
+/// Role of a message author in care coordination.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum ParticipantRole {
+pub enum AuthorRole {
     Clinician,
     CareAdministrator,
     Patient,
@@ -502,20 +490,11 @@ pub enum ParticipantRole {
 /// Content of a message to be added to a thread.
 #[derive(Clone, Debug)]
 pub struct MessageContent {
-    pub message_type: MessageType,
+    pub author_role: AuthorRole,
     pub author_id: Uuid,
     pub author_display_name: String,
     pub body: String,           // Markdown content
     pub corrects: Option<Uuid>, // For correction messages
-}
-
-/// Type of message in the thread.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MessageType {
-    Clinician,
-    Patient,
-    System,
-    Correction,
 }
 
 /// Complete thread data (messages + ledger).
@@ -531,7 +510,7 @@ pub struct Thread {
 pub struct Message {
     pub message_id: Uuid,
     pub timestamp: String, // ISO 8601
-    pub message_type: MessageType,
+    pub author_role: AuthorRole,
     pub author_id: Uuid,
     pub author_display_name: String,
     pub body: String, // Markdown content
@@ -545,7 +524,7 @@ pub struct ThreadLedger {
     pub status: ThreadStatus,
     pub created_at: String,
     pub last_updated_at: String,
-    pub participants: Vec<ThreadParticipant>,
+    pub participants: Vec<MessageAuthor>,
     pub visibility: Visibility,
     pub policies: Policies,
 }
@@ -583,7 +562,7 @@ pub struct Policies {
 /// Update to apply to a thread ledger.
 #[derive(Clone, Debug, Default)]
 pub struct LedgerUpdate {
-    pub add_participants: Option<Vec<ThreadParticipant>>,
+    pub add_participants: Option<Vec<MessageAuthor>>,
     pub remove_participants: Option<Vec<Uuid>>,
     pub set_status: Option<ThreadStatus>,
     pub set_visibility: Option<Visibility>,
@@ -592,15 +571,15 @@ pub struct LedgerUpdate {
 
 impl<S> CoordinationService<S> {
     /// Returns the path to the coordination records directory.
-    fn coordination_dir(&self) -> PathBuf {
+    fn coordination_root_dir(&self) -> PathBuf {
         let data_dir = self.cfg.patient_data_dir().to_path_buf();
         data_dir.join(COORDINATION_DIR_NAME)
     }
 
     /// Returns the path to a specific patient's coordination record directory.
-    fn coordination_patient_dir(&self, coordination_uuid: &ShardableUuid) -> PathBuf {
-        let coordination_dir = self.coordination_dir();
-        coordination_uuid.sharded_dir(&coordination_dir)
+    fn coordination_dir(&self, coordination_uuid: &ShardableUuid) -> PathBuf {
+        let coordination_root_dir = self.coordination_root_dir();
+        coordination_uuid.sharded_dir(&coordination_root_dir)
     }
 }
 
@@ -608,50 +587,33 @@ impl<S> CoordinationService<S> {
 // HELPER FUNCTIONS
 // ============================================================================
 
-/// Generates a new thread ID using TimestampIdGenerator.
-///
-/// Format: YYYYMMDDTHHMMSS.sssZ-UUID
-fn generate_thread_id() -> PatientResult<String> {
-    let timestamp_id = TimestampIdGenerator::generate(None)?;
-    Ok(timestamp_id.to_string())
-}
-
 /// Generates a new message ID (UUID v4).
 fn generate_message_id() -> Uuid {
     Uuid::new_v4()
 }
 
-/// Validates thread ID format.
-fn validate_thread_id(thread_id: &str) -> PatientResult<()> {
-    // Validate using TimestampId parsing
-    use std::str::FromStr;
-    let _timestamp_id = vpr_uuid::TimestampId::from_str(thread_id)?;
-    Ok(())
-}
-
 /// Returns path to a specific thread directory.
-fn thread_dir(coordination_patient_dir: &Path, thread_id: &str) -> PathBuf {
-    coordination_patient_dir
-        .join("communications")
-        .join(thread_id)
+fn thread_dir(coordination_dir: &Path, thread_id: &str) -> PathBuf {
+    coordination_dir.join("communications").join(thread_id)
 }
 
 /// Formats a message for appending to messages.md.
 fn format_message(message: &MessageContent, message_id: Uuid, timestamp: &str) -> String {
-    let message_type_str = match message.message_type {
-        MessageType::Clinician => "clinician",
-        MessageType::Patient => "patient",
-        MessageType::System => "system",
-        MessageType::Correction => "correction",
+    let role_str = match message.author_role {
+        AuthorRole::Clinician => "clinician",
+        AuthorRole::CareAdministrator => "careadministrator",
+        AuthorRole::Patient => "patient",
+        AuthorRole::PatientAssociate => "patientassociate",
+        AuthorRole::System => "system",
     };
 
     let mut output = format!(
-        "**Message ID:** `{}`  \n**Timestamp:** {}  \n**Author ID:** `{}`  \n**Author:** {}  \n**Role:** {}  \n",
+        "**Message ID:** `{}`  \n**Timestamp:** {}  \n**Author ID:** `{}`  \n**Author name:** {}  \n**Author role:** {}  \n",
         message_id,
         timestamp,
         message.author_id,
         message.author_display_name,
-        message_type_str
+        role_str
     );
 
     if let Some(corrects_id) = message.corrects {
@@ -673,7 +635,7 @@ fn parse_messages_md(content: &str) -> PatientResult<Vec<Message>> {
         if lines[i].starts_with("**Message ID:**") {
             // Parse metadata
             let mut message_id: Option<Uuid> = None;
-            let mut message_type: Option<MessageType> = None;
+            let mut author_role: Option<AuthorRole> = None;
             let mut timestamp: Option<String> = None;
             let mut author_id: Option<Uuid> = None;
             let mut author_display_name: Option<String> = None;
@@ -689,17 +651,18 @@ fn parse_messages_md(content: &str) -> PatientResult<Vec<Message>> {
                         Some(Uuid::parse_str(id_str).map_err(|e| {
                             PatientError::InvalidInput(format!("Invalid UUID: {}", e))
                         })?);
-                } else if line.starts_with("**Role:**") {
-                    let type_str = line.trim_start_matches("**Role:** ").trim();
-                    message_type = Some(match type_str {
-                        "clinician" => MessageType::Clinician,
-                        "patient" => MessageType::Patient,
-                        "system" => MessageType::System,
-                        "correction" => MessageType::Correction,
+                } else if line.starts_with("**Author role:**") {
+                    let role_str = line.trim_start_matches("**Author role:** ").trim();
+                    author_role = Some(match role_str {
+                        "clinician" => AuthorRole::Clinician,
+                        "careadministrator" => AuthorRole::CareAdministrator,
+                        "patient" => AuthorRole::Patient,
+                        "patientassociate" => AuthorRole::PatientAssociate,
+                        "system" => AuthorRole::System,
                         _ => {
                             return Err(PatientError::InvalidInput(format!(
-                                "Invalid message type: {}",
-                                type_str
+                                "Invalid author role: {}",
+                                role_str
                             )))
                         }
                     });
@@ -717,9 +680,12 @@ fn parse_messages_md(content: &str) -> PatientResult<Vec<Message>> {
                         Some(Uuid::parse_str(id_str).map_err(|e| {
                             PatientError::InvalidInput(format!("Invalid UUID: {}", e))
                         })?);
-                } else if line.starts_with("**Author:**") {
-                    author_display_name =
-                        Some(line.trim_start_matches("**Author:** ").trim().to_string());
+                } else if line.starts_with("**Author name:**") {
+                    author_display_name = Some(
+                        line.trim_start_matches("**Author name:** ")
+                            .trim()
+                            .to_string(),
+                    );
                 } else if line.starts_with("**Corrects:**") {
                     let id_str = line
                         .trim_start_matches("**Corrects:** `")
@@ -747,9 +713,9 @@ fn parse_messages_md(content: &str) -> PatientResult<Vec<Message>> {
             let body = body_lines.join("\n").trim().to_string();
 
             // Construct message
-            if let (Some(msg_id), Some(msg_type), Some(ts), Some(auth_id), Some(auth_name)) = (
+            if let (Some(msg_id), Some(role), Some(ts), Some(auth_id), Some(auth_name)) = (
                 message_id,
-                message_type,
+                author_role,
                 timestamp,
                 author_id,
                 author_display_name,
@@ -757,7 +723,7 @@ fn parse_messages_md(content: &str) -> PatientResult<Vec<Message>> {
                 messages.push(Message {
                     message_id: msg_id,
                     timestamp: ts,
-                    message_type: msg_type,
+                    author_role: role,
                     author_id: auth_id,
                     author_display_name: auth_name,
                     body,
@@ -771,7 +737,7 @@ fn parse_messages_md(content: &str) -> PatientResult<Vec<Message>> {
     Ok(messages)
 }
 
-/// Serializes ThreadLedger to YAML for ledger.yaml.
+/// Serialises ThreadLedger to YAML for ledger.yaml.
 fn serialize_ledger(ledger: &ThreadLedger) -> PatientResult<String> {
     // Convert ThreadLedger to fhir::LedgerData
     let ledger_data = fhir::LedgerData {
@@ -794,14 +760,14 @@ fn serialize_ledger(ledger: &ThreadLedger) -> PatientResult<String> {
             .participants
             .iter()
             .map(|p| fhir::LedgerParticipant {
-                participant_id: p.participant_id,
-                display_name: p.display_name.clone(),
+                participant_id: p.id,
+                display_name: p.name.clone(),
                 role: match p.role {
-                    ParticipantRole::Clinician => fhir::ParticipantRole::Clinician,
-                    ParticipantRole::CareAdministrator => fhir::ParticipantRole::CareAdministrator,
-                    ParticipantRole::Patient => fhir::ParticipantRole::Patient,
-                    ParticipantRole::PatientAssociate => fhir::ParticipantRole::PatientAssociate,
-                    ParticipantRole::System => fhir::ParticipantRole::System,
+                    AuthorRole::Clinician => fhir::ParticipantRole::Clinician,
+                    AuthorRole::CareAdministrator => fhir::ParticipantRole::CareAdministrator,
+                    AuthorRole::Patient => fhir::ParticipantRole::Patient,
+                    AuthorRole::PatientAssociate => fhir::ParticipantRole::PatientAssociate,
+                    AuthorRole::System => fhir::ParticipantRole::System,
                 },
                 organisation: None,
             })
@@ -821,14 +787,14 @@ fn serialize_ledger(ledger: &ThreadLedger) -> PatientResult<String> {
     };
 
     fhir::Messaging::ledger_render(&ledger_data)
-        .map_err(|e| PatientError::InvalidInput(format!("Failed to serialize ledger: {}", e)))
+        .map_err(|e| PatientError::InvalidInput(format!("Failed to serialise ledger: {}", e)))
 }
 
-/// Deserializes ledger.yaml into ThreadLedger.
+/// Deserialises ledger.yaml into ThreadLedger.
 fn deserialize_ledger(content: &str) -> PatientResult<ThreadLedger> {
     // Parse using fhir::Messaging
     let ledger_data = fhir::Messaging::ledger_parse(content)
-        .map_err(|e| PatientError::InvalidInput(format!("Failed to deserialize ledger: {}", e)))?;
+        .map_err(|e| PatientError::InvalidInput(format!("Failed to deserialise ledger: {}", e)))?;
 
     // Convert fhir::LedgerData to ThreadLedger
     Ok(ThreadLedger {
@@ -847,15 +813,15 @@ fn deserialize_ledger(content: &str) -> PatientResult<ThreadLedger> {
         participants: ledger_data
             .participants
             .iter()
-            .map(|p| ThreadParticipant {
-                participant_id: p.participant_id,
-                display_name: p.display_name.clone(),
+            .map(|p| MessageAuthor {
+                id: p.participant_id,
+                name: p.display_name.clone(),
                 role: match p.role {
-                    fhir::ParticipantRole::Clinician => ParticipantRole::Clinician,
-                    fhir::ParticipantRole::CareAdministrator => ParticipantRole::CareAdministrator,
-                    fhir::ParticipantRole::Patient => ParticipantRole::Patient,
-                    fhir::ParticipantRole::PatientAssociate => ParticipantRole::PatientAssociate,
-                    fhir::ParticipantRole::System => ParticipantRole::System,
+                    fhir::ParticipantRole::Clinician => AuthorRole::Clinician,
+                    fhir::ParticipantRole::CareAdministrator => AuthorRole::CareAdministrator,
+                    fhir::ParticipantRole::Patient => AuthorRole::Patient,
+                    fhir::ParticipantRole::PatientAssociate => AuthorRole::PatientAssociate,
+                    fhir::ParticipantRole::System => AuthorRole::System,
                 },
             })
             .collect(),
@@ -873,37 +839,7 @@ fn deserialize_ledger(content: &str) -> PatientResult<ThreadLedger> {
         },
     })
 }
-#[cfg(test)]
-static FORCE_CLEANUP_ERROR_FOR_THREADS: LazyLock<Mutex<HashSet<std::thread::ThreadId>>> =
-    LazyLock::new(|| Mutex::new(HashSet::new()));
 
-#[cfg(test)]
-#[allow(dead_code)]
-fn force_cleanup_error_for_current_thread() {
-    let mut guard = FORCE_CLEANUP_ERROR_FOR_THREADS
-        .lock()
-        .expect("FORCE_CLEANUP_ERROR_FOR_THREADS mutex poisoned");
-    guard.insert(std::thread::current().id());
-}
-
-/// Removes a patient directory and all its contents.
-///
-/// This is a wrapper around [`std::fs::remove_dir_all`] with test instrumentation.
-fn remove_patient_dir_all(patient_dir: &Path) -> io::Result<()> {
-    #[cfg(test)]
-    {
-        let current_id = std::thread::current().id();
-        let mut guard = FORCE_CLEANUP_ERROR_FOR_THREADS
-            .lock()
-            .expect("FORCE_CLEANUP_ERROR_FOR_THREADS mutex poisoned");
-
-        if guard.remove(&current_id) {
-            return Err(io::Error::other("forced cleanup error"));
-        }
-    }
-
-    fs::remove_dir_all(patient_dir)
-}
 // ============================================================================
 // TESTS
 // ============================================================================
