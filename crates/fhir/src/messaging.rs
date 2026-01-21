@@ -69,11 +69,11 @@ pub struct LedgerParticipant {
     /// Unique identifier for this participant (UUID).
     pub participant_id: Uuid,
 
-    /// Role of this participant in the conversation.
-    pub role: ParticipantRole,
-
     /// Human-readable display name for this participant.
     pub display_name: String,
+
+    /// Role of this participant in the conversation.
+    pub role: ParticipantRole,
 
     /// Optional organisation affiliation.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -218,8 +218,8 @@ struct Ledger {
 #[serde(deny_unknown_fields)]
 struct Participant {
     pub participant_id: String,
-    pub role: ParticipantRole,
     pub display_name: String,
+    pub role: ParticipantRole,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub organisation: Option<String>,
 }
@@ -266,8 +266,8 @@ fn wire_to_domain(wire: Ledger) -> Result<LedgerData, FhirError> {
 
         participants.push(LedgerParticipant {
             participant_id,
-            role: p.role.clone(),
             display_name: p.display_name.clone(),
+            role: p.role.clone(),
             organisation: p.organisation.clone(),
         });
     }
@@ -301,8 +301,8 @@ fn domain_to_wire(data: &LedgerData) -> Ledger {
             .iter()
             .map(|p| Participant {
                 participant_id: p.participant_id.to_string(),
-                role: p.role.clone(),
                 display_name: p.display_name.clone(),
+                role: p.role.clone(),
                 organisation: p.organisation.clone(),
             })
             .collect(),
