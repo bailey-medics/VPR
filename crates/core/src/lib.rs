@@ -12,6 +12,7 @@
 pub mod author;
 pub mod config;
 pub mod constants;
+pub mod markdown;
 pub mod paths;
 pub mod repositories;
 pub mod versioned_files;
