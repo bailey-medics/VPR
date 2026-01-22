@@ -32,12 +32,82 @@ pub use ParticipantRole as AuthorRole;
 // Public domain-level types
 // ============================================================================
 
-/// Domain-level carrier for thread ledger data.
+/// Public API struct for thread ledger data with flattened fields.
 ///
-/// This struct represents the contextual and policy metadata for a messaging thread
-/// in a format that is independent of specific wire formats.
+/// This struct provides a flat structure suitable for API consumption,
+/// without nested visibility or policies objects.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LedgerData {
+    /// Unique identifier for this thread (timestamp-prefixed UUID).
+    pub thread_id: TimestampId,
+
+    /// Current status of the thread.
+    pub status: ThreadStatus,
+
+    /// Timestamp when the thread was created.
+    pub created_at: DateTime<Utc>,
+
+    /// Timestamp when the thread was last updated.
+    pub last_updated_at: DateTime<Utc>,
+
+    /// Participants in this thread with their roles and display information.
+    pub participants: Vec<MessageParticipant>,
+
+    /// Sensitivity level for this thread.
+    pub sensitivity: SensitivityLevel,
+
+    /// Whether access is restricted beyond normal rules.
+    pub restricted: bool,
+
+    /// Whether patient participation is allowed.
+    pub allow_patient_participation: bool,
+
+    /// Whether external organisations can participate.
+    pub allow_external_organisations: bool,
+}
+
+impl LedgerData {
+    /// Converts this flat structure to the nested LedgerDataNested format.
+    fn to_ledger_data_nested(&self) -> LedgerDataNested {
+        LedgerDataNested {
+            thread_id: self.thread_id.clone(),
+            status: self.status.clone(),
+            created_at: self.created_at,
+            last_updated_at: self.last_updated_at,
+            participants: self.participants.clone(),
+            visibility: LedgerVisibility {
+                sensitivity: self.sensitivity,
+                restricted: self.restricted,
+            },
+            policies: LedgerPolicies {
+                allow_patient_participation: self.allow_patient_participation,
+                allow_external_organisations: self.allow_external_organisations,
+            },
+        }
+    }
+
+    /// Creates a flat structure from the nested LedgerDataNested format.
+    fn from_ledger_data_nested(data: LedgerDataNested) -> Self {
+        Self {
+            thread_id: data.thread_id,
+            status: data.status,
+            created_at: data.created_at,
+            last_updated_at: data.last_updated_at,
+            participants: data.participants,
+            sensitivity: data.visibility.sensitivity,
+            restricted: data.visibility.restricted,
+            allow_patient_participation: data.policies.allow_patient_participation,
+            allow_external_organisations: data.policies.allow_external_organisations,
+        }
+    }
+}
+
+/// Internal nested carrier for thread ledger data.
+///
+/// This struct represents the contextual and policy metadata for a messaging thread
+/// with nested structures that match the YAML wire format.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct LedgerDataNested {
     /// Unique identifier for this thread (timestamp-prefixed UUID).
     pub thread_id: TimestampId,
 
@@ -104,6 +174,42 @@ pub enum ParticipantRole {
     System,
 }
 
+/// Sensitivity level for thread visibility.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SensitivityLevel {
+    /// Standard sensitivity - normal access controls apply.
+    Standard,
+    /// Confidential - restricted to care team only.
+    Confidential,
+    /// Restricted - highly sensitive, minimal access.
+    Restricted,
+}
+
+impl SensitivityLevel {
+    /// Parses a sensitivity level from its string representation.
+    pub fn parse(s: &str) -> Result<Self, FhirError> {
+        match s.to_lowercase().as_str() {
+            "standard" => Ok(Self::Standard),
+            "confidential" => Ok(Self::Confidential),
+            "restricted" => Ok(Self::Restricted),
+            _ => Err(FhirError::InvalidInput(format!(
+                "Invalid sensitivity level: {}",
+                s
+            ))),
+        }
+    }
+
+    /// Returns the string representation of this sensitivity level.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::Confidential => "confidential",
+            Self::Restricted => "restricted",
+        }
+    }
+}
+
 impl ParticipantRole {
     /// Parses a role from its string representation.
     ///
@@ -134,7 +240,7 @@ impl ParticipantRole {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LedgerVisibility {
     /// Sensitivity level (standard, confidential, restricted).
-    pub sensitivity: String,
+    pub sensitivity: SensitivityLevel,
 
     /// Whether access is restricted beyond normal rules.
     pub restricted: bool,
@@ -202,7 +308,8 @@ impl Messaging {
         };
 
         // Convert wire format to domain types
-        wire_to_domain(wire)
+        let ledger_data_nested = wire_to_domain(wire)?;
+        Ok(LedgerData::from_ledger_data_nested(ledger_data_nested))
     }
 
     /// Render a thread ledger as YAML text.
@@ -211,7 +318,7 @@ impl Messaging {
     ///
     /// # Arguments
     ///
-    /// * `data` - Ledger data containing all fields.
+    /// * `ledger` - Thread ledger data containing all fields.
     ///
     /// # Returns
     ///
@@ -220,8 +327,9 @@ impl Messaging {
     /// # Errors
     ///
     /// Returns [`FhirError`] if serialization fails.
-    pub fn ledger_render(data: &LedgerData) -> Result<String, FhirError> {
-        let wire: Ledger = domain_to_wire(data);
+    pub fn ledger_render(ledger: &LedgerData) -> Result<String, FhirError> {
+        let ledger_data = ledger.to_ledger_data_nested();
+        let wire: Ledger = domain_to_wire(&ledger_data);
         serde_yaml::to_string(&wire)
             .map_err(|e| FhirError::Translation(format!("Failed to serialize ledger: {e}")))
     }
@@ -279,7 +387,7 @@ struct Policies {
 /// Convert wire format ledger to domain types.
 ///
 /// This performs validation and conversion of string identifiers to proper types.
-fn wire_to_domain(wire: Ledger) -> Result<LedgerData, FhirError> {
+fn wire_to_domain(wire: Ledger) -> Result<LedgerDataNested, FhirError> {
     // Parse thread_id as TimestampId
     let thread_id = wire
         .thread_id
@@ -303,14 +411,14 @@ fn wire_to_domain(wire: Ledger) -> Result<LedgerData, FhirError> {
         });
     }
 
-    Ok(LedgerData {
+    Ok(LedgerDataNested {
         thread_id,
         status: wire.status,
         created_at: wire.created_at,
         last_updated_at: wire.last_updated_at,
         participants,
         visibility: LedgerVisibility {
-            sensitivity: wire.visibility.sensitivity,
+            sensitivity: SensitivityLevel::parse(&wire.visibility.sensitivity)?,
             restricted: wire.visibility.restricted,
         },
         policies: LedgerPolicies {
@@ -321,7 +429,7 @@ fn wire_to_domain(wire: Ledger) -> Result<LedgerData, FhirError> {
 }
 
 /// Convert domain types to wire format ledger.
-fn domain_to_wire(data: &LedgerData) -> Ledger {
+fn domain_to_wire(data: &LedgerDataNested) -> Ledger {
     Ledger {
         thread_id: data.thread_id.to_string(),
         status: data.status.clone(),
@@ -337,7 +445,7 @@ fn domain_to_wire(data: &LedgerData) -> Ledger {
             })
             .collect(),
         visibility: Visibility {
-            sensitivity: data.visibility.sensitivity.clone(),
+            sensitivity: data.visibility.sensitivity.as_str().to_string(),
             restricted: data.visibility.restricted,
         },
         policies: Policies {
@@ -504,8 +612,8 @@ policies:
         );
         assert_eq!(result.status, ThreadStatus::Open);
         assert!(result.participants.is_empty());
-        assert_eq!(result.visibility.sensitivity, "standard");
-        assert!(!result.visibility.restricted);
+        assert_eq!(result.sensitivity, SensitivityLevel::Standard);
+        assert!(!result.restricted);
     }
 
     #[test]

@@ -24,7 +24,10 @@ use crate::versioned_files::{
 };
 use crate::ShardableUuid;
 use chrono::Utc;
-use fhir::{CoordinationStatus, CoordinationStatusData, LifecycleState, MessageAuthor};
+use fhir::{
+    AuthorRole, CoordinationStatus, CoordinationStatusData, LedgerData, LifecycleState,
+    MessageAuthor, Messaging as FhirMessaging, SensitivityLevel, ThreadStatus as FhirThreadStatus,
+};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -210,12 +213,6 @@ impl CoordinationService<Initialised> {
 
         validate_message_authors(&message_authors)?;
 
-        if initial_message.body.trim().is_empty() {
-            return Err(PatientError::InvalidInput(
-                "Initial message body must not be empty".to_string(),
-            ));
-        }
-
         let thread_id = TimestampIdGenerator::generate(None)?;
         let coordination_dir = self.coordination_dir(self.coordination_id());
 
@@ -225,37 +222,29 @@ impl CoordinationService<Initialised> {
         let metadata = MessageMetadata {
             message_id,
             timestamp: now,
-            author: initial_message.author.clone(),
-            body: initial_message.body.clone(),
+            author: initial_message.author().clone(),
         };
 
         let markdown_service = MarkdownService::new();
         let messages_content =
-            markdown_service.new_thread_render("Messages", &metadata, initial_message.corrects)?;
+            markdown_service.new_thread_render("Messages", &metadata, initial_message.body())?;
 
-        let ledger_data = fhir::LedgerData {
+        let ledger = LedgerData {
             thread_id,
-            status: fhir::ThreadStatus::Open,
+            status: FhirThreadStatus::Open,
             created_at: now,
             last_updated_at: now,
             participants: message_authors.clone(),
-            visibility: fhir::LedgerVisibility {
-                sensitivity: "standard".to_string(),
-                restricted: false,
-            },
-            policies: fhir::LedgerPolicies {
-                allow_patient_participation: true,
-                allow_external_organisations: true,
-            },
+            sensitivity: SensitivityLevel::Standard,
+            restricted: false,
+            allow_patient_participation: true,
+            allow_external_organisations: true,
         };
 
-        let ledger_content = fhir::Messaging::ledger_render(&ledger_data).map_err(|e| {
-            PatientError::InvalidInput(format!("Failed to serialise ledger: {}", e))
-        })?;
+        let ledger_content = FhirMessaging::ledger_render(&ledger)?;
 
         // Construct relative paths directly
-        let thread_relative_dir =
-            Path::new("communications").join(ledger_data.thread_id.to_string());
+        let thread_relative_dir = Path::new("communications").join(ledger.thread_id.to_string());
         let messages_relative = thread_relative_dir.join("messages.md");
         let ledger_relative = thread_relative_dir.join("ledger.yaml");
 
@@ -279,7 +268,7 @@ impl CoordinationService<Initialised> {
             &files_to_write,
         )?;
 
-        Ok(ledger_data.thread_id)
+        Ok(ledger.thread_id)
     }
 
     /// Adds a message to an existing thread.
@@ -295,7 +284,7 @@ impl CoordinationService<Initialised> {
         author: &Author,
         care_location: String,
         thread_id: &TimestampId,
-        message: MessageContent,
+        new_message: MessageContent,
     ) -> PatientResult<String> {
         author.validate_commit_author()?;
 
@@ -306,8 +295,7 @@ impl CoordinationService<Initialised> {
             care_location,
         )?;
 
-        let coordination_dir = self.coordination_dir(self.coordination_id());
-        let thread_dir = thread_dir(&coordination_dir, &thread_id.to_string());
+        let thread_dir = self.thread_dir(thread_id);
         let messages_path = thread_dir.join("messages.md");
 
         if !messages_path.exists() {
@@ -325,77 +313,43 @@ impl CoordinationService<Initialised> {
         let metadata = MessageMetadata {
             message_id,
             timestamp: now,
-            author: message.author.clone(),
-            body: message.body.clone(),
+            author: new_message.author().clone(),
         };
 
         let markdown_service = MarkdownService::new();
-        let formatted_message =
-            markdown_service.message_render_from_metadata(&metadata, message.corrects)?;
-        let message_with_separator = format!("{}\n---\n\n", formatted_message);
+        let new_message_rendered = markdown_service.message_render(
+            &metadata,
+            new_message.body(),
+            new_message.corrects(),
+        )?;
 
         // Read existing content and append
         let existing_content =
             fs::read_to_string(&messages_path).map_err(PatientError::FileRead)?;
-        let new_content = format!("{}{}", existing_content, message_with_separator);
+        let messages_updated = format!("{}{}", existing_content, new_message_rendered);
 
         // Update ledger last_updated_at
         let ledger_path = thread_dir.join("ledger.yaml");
         let ledger_content = fs::read_to_string(&ledger_path).map_err(PatientError::FileRead)?;
-        let mut ledger = deserialize_ledger(&ledger_content)?;
-        ledger.last_updated_at = now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let mut ledger_data = FhirMessaging::ledger_parse(&ledger_content)?;
+        ledger_data.last_updated_at = now;
 
-        // Convert ThreadLedger to fhir::LedgerData and render
-        let ledger_data = fhir::LedgerData {
-            thread_id: ledger.thread_id.parse().map_err(|e| {
-                PatientError::InvalidInput(format!("Invalid thread_id format: {}", e))
-            })?,
-            status: match ledger.status {
-                ThreadStatus::Open => fhir::ThreadStatus::Open,
-                ThreadStatus::Closed => fhir::ThreadStatus::Closed,
-                ThreadStatus::Archived => fhir::ThreadStatus::Archived,
-            },
-            created_at: chrono::DateTime::parse_from_rfc3339(&ledger.created_at)
-                .map_err(|e| PatientError::InvalidInput(format!("Invalid created_at: {}", e)))?
-                .with_timezone(&Utc),
-            last_updated_at: chrono::DateTime::parse_from_rfc3339(&ledger.last_updated_at)
-                .map_err(|e| PatientError::InvalidInput(format!("Invalid last_updated_at: {}", e)))?
-                .with_timezone(&Utc),
-            participants: ledger.participants.clone(),
-            visibility: fhir::LedgerVisibility {
-                sensitivity: match ledger.visibility.sensitivity {
-                    SensitivityLevel::Standard => "standard".to_string(),
-                    SensitivityLevel::Confidential => "confidential".to_string(),
-                    SensitivityLevel::Restricted => "restricted".to_string(),
-                },
-                restricted: ledger.visibility.restricted,
-            },
-            policies: fhir::LedgerPolicies {
-                allow_patient_participation: ledger.policies.allow_patient_participation,
-                allow_external_organisations: ledger.policies.allow_external_organisations,
-            },
-        };
-
-        let updated_ledger_content = fhir::Messaging::ledger_render(&ledger_data).map_err(|e| {
-            PatientError::InvalidInput(format!("Failed to serialise ledger: {}", e))
-        })?;
+        let updated_ledger_content = FhirMessaging::ledger_render(&ledger_data)?;
 
         // Write and commit
-        let messages_relative = messages_path
-            .strip_prefix(&coordination_dir)
-            .map_err(|_| PatientError::InvalidInput("Invalid path prefix".to_string()))?;
-        let ledger_relative = ledger_path
-            .strip_prefix(&coordination_dir)
-            .map_err(|_| PatientError::InvalidInput("Invalid path prefix".to_string()))?;
+        let coordination_dir = self.coordination_dir(self.coordination_id());
+        let thread_relative_dir = Path::new("communications").join(thread_id.to_string());
+        let messages_relative = thread_relative_dir.join("messages.md");
+        let ledger_relative = thread_relative_dir.join("ledger.yaml");
 
         let files_to_write = [
             FileToWrite {
-                relative_path: messages_relative,
-                content: &new_content,
+                relative_path: &messages_relative,
+                content: &messages_updated,
                 old_content: Some(&existing_content),
             },
             FileToWrite {
-                relative_path: ledger_relative,
+                relative_path: &ledger_relative,
                 content: &updated_ledger_content,
                 old_content: Some(&ledger_content),
             },
@@ -418,8 +372,7 @@ impl CoordinationService<Initialised> {
     /// - All messages parsed from messages.md
     /// - Correction relationships resolved
     pub fn read_thread(&self, thread_id: &TimestampId) -> PatientResult<Thread> {
-        let coordination_dir = self.coordination_dir(self.coordination_id());
-        let thread_dir = thread_dir(&coordination_dir, &thread_id.to_string());
+        let thread_dir = self.thread_dir(thread_id);
         let messages_path = thread_dir.join("messages.md");
         let ledger_path = thread_dir.join("ledger.yaml");
 
@@ -436,7 +389,7 @@ impl CoordinationService<Initialised> {
         let ledger_content = fs::read_to_string(&ledger_path).map_err(PatientError::FileRead)?;
 
         let messages = parse_messages_md(&messages_content)?;
-        let ledger = deserialize_ledger(&ledger_content)?;
+        let ledger = FhirMessaging::ledger_parse(&ledger_content)?;
 
         Ok(Thread {
             thread_id: thread_id.to_string(),
@@ -467,8 +420,7 @@ impl CoordinationService<Initialised> {
             care_location,
         )?;
 
-        let coordination_dir = self.coordination_dir(self.coordination_id());
-        let thread_dir = thread_dir(&coordination_dir, &thread_id.to_string());
+        let thread_dir = self.thread_dir(thread_id);
         let ledger_path = thread_dir.join("ledger.yaml");
 
         if !ledger_path.exists() {
@@ -480,69 +432,40 @@ impl CoordinationService<Initialised> {
 
         // Read existing ledger
         let ledger_content = fs::read_to_string(&ledger_path).map_err(PatientError::FileRead)?;
-        let mut ledger = deserialize_ledger(&ledger_content)?;
+        let mut ledger_data = FhirMessaging::ledger_parse(&ledger_content)?;
 
         // Apply updates
         if let Some(add_participants) = ledger_update.add_participants {
-            ledger.participants.extend(add_participants);
+            ledger_data.participants.extend(add_participants);
         }
         if let Some(remove_ids) = ledger_update.remove_participants {
-            ledger.participants.retain(|p| !remove_ids.contains(&p.id));
+            ledger_data
+                .participants
+                .retain(|p| !remove_ids.contains(&p.id));
         }
         if let Some(status) = ledger_update.set_status {
-            ledger.status = status;
+            ledger_data.status = status;
         }
-        if let Some(visibility) = ledger_update.set_visibility {
-            ledger.visibility = visibility;
+        if let Some((sensitivity, restricted)) = ledger_update.set_visibility {
+            ledger_data.sensitivity = sensitivity;
+            ledger_data.restricted = restricted;
         }
-        if let Some(policies) = ledger_update.set_policies {
-            ledger.policies = policies;
+        if let Some((allow_patient, allow_external)) = ledger_update.set_policies {
+            ledger_data.allow_patient_participation = allow_patient;
+            ledger_data.allow_external_organisations = allow_external;
         }
 
         // Update timestamp
-        ledger.last_updated_at = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        ledger_data.last_updated_at = Utc::now();
 
-        // Convert ThreadLedger to fhir::LedgerData and render
-        let ledger_data = fhir::LedgerData {
-            thread_id: ledger.thread_id.parse().map_err(|e| {
-                PatientError::InvalidInput(format!("Invalid thread_id format: {}", e))
-            })?,
-            status: match ledger.status {
-                ThreadStatus::Open => fhir::ThreadStatus::Open,
-                ThreadStatus::Closed => fhir::ThreadStatus::Closed,
-                ThreadStatus::Archived => fhir::ThreadStatus::Archived,
-            },
-            created_at: chrono::DateTime::parse_from_rfc3339(&ledger.created_at)
-                .map_err(|e| PatientError::InvalidInput(format!("Invalid created_at: {}", e)))?
-                .with_timezone(&Utc),
-            last_updated_at: chrono::DateTime::parse_from_rfc3339(&ledger.last_updated_at)
-                .map_err(|e| PatientError::InvalidInput(format!("Invalid last_updated_at: {}", e)))?
-                .with_timezone(&Utc),
-            participants: ledger.participants.clone(),
-            visibility: fhir::LedgerVisibility {
-                sensitivity: match ledger.visibility.sensitivity {
-                    SensitivityLevel::Standard => "standard".to_string(),
-                    SensitivityLevel::Confidential => "confidential".to_string(),
-                    SensitivityLevel::Restricted => "restricted".to_string(),
-                },
-                restricted: ledger.visibility.restricted,
-            },
-            policies: fhir::LedgerPolicies {
-                allow_patient_participation: ledger.policies.allow_patient_participation,
-                allow_external_organisations: ledger.policies.allow_external_organisations,
-            },
-        };
+        let new_content = FhirMessaging::ledger_render(&ledger_data)?;
 
-        let new_content = fhir::Messaging::ledger_render(&ledger_data).map_err(|e| {
-            PatientError::InvalidInput(format!("Failed to serialise ledger: {}", e))
-        })?;
-
-        let ledger_relative = ledger_path
-            .strip_prefix(&coordination_dir)
-            .map_err(|_| PatientError::InvalidInput("Invalid path prefix".to_string()))?;
+        let coordination_dir = self.coordination_dir(self.coordination_id());
+        let thread_relative_dir = Path::new("communications").join(thread_id.to_string());
+        let ledger_relative = thread_relative_dir.join("ledger.yaml");
 
         let files_to_write = [FileToWrite {
-            relative_path: ledger_relative,
+            relative_path: &ledger_relative,
             content: &new_content,
             old_content: Some(&ledger_content),
         }];
@@ -565,16 +488,57 @@ impl CoordinationService<Initialised> {
 /// Content of a message to be added to a thread.
 #[derive(Clone, Debug)]
 pub struct MessageContent {
-    pub author: MessageAuthor,
-    pub body: String,
-    pub corrects: Option<Uuid>, // For correction messages
+    author: MessageAuthor,
+    body: String,
+    corrects: Option<Uuid>, // For correction messages
+}
+
+impl MessageContent {
+    /// Creates a new message with validated content.
+    ///
+    /// # Arguments
+    ///
+    /// * `author` - The author of the message
+    /// * `body` - The message body (must not be empty after trimming)
+    /// * `corrects` - Optional UUID of a message this corrects
+    ///
+    /// # Errors
+    ///
+    /// Returns `PatientError::InvalidInput` if the body is empty or only whitespace.
+    pub fn new(author: MessageAuthor, body: String, corrects: Option<Uuid>) -> PatientResult<Self> {
+        if body.trim().is_empty() {
+            return Err(PatientError::InvalidInput(
+                "Message body must not be empty".to_string(),
+            ));
+        }
+        Ok(Self {
+            author,
+            body,
+            corrects,
+        })
+    }
+
+    /// Returns a reference to the message author.
+    pub fn author(&self) -> &MessageAuthor {
+        &self.author
+    }
+
+    /// Returns the message body as a string slice.
+    pub fn body(&self) -> &str {
+        &self.body
+    }
+
+    /// Returns the UUID of the message this corrects, if any.
+    pub fn corrects(&self) -> Option<Uuid> {
+        self.corrects
+    }
 }
 
 /// Complete thread data (messages + ledger).
 #[derive(Clone, Debug)]
 pub struct Thread {
     pub thread_id: String,
-    pub ledger: ThreadLedger,
+    pub ledger: LedgerData,
     pub messages: Vec<Message>,
 }
 
@@ -588,56 +552,14 @@ pub struct Message {
     pub corrects: Option<Uuid>,
 }
 
-/// Thread context and policy metadata from ledger.yaml.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct ThreadLedger {
-    pub thread_id: String,
-    pub status: ThreadStatus,
-    pub created_at: String,
-    pub last_updated_at: String,
-    pub participants: Vec<MessageAuthor>,
-    pub visibility: Visibility,
-    pub policies: Policies,
-}
-
-/// Status of a messaging thread.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum ThreadStatus {
-    Open,
-    Closed,
-    Archived,
-}
-
-/// Visibility and sensitivity settings.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct Visibility {
-    pub sensitivity: SensitivityLevel,
-    pub restricted: bool,
-}
-
-/// Sensitivity classification.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum SensitivityLevel {
-    Standard,
-    Confidential,
-    Restricted,
-}
-
-/// Thread access and participation policies.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct Policies {
-    pub allow_patient_participation: bool,
-    pub allow_external_organisations: bool,
-}
-
 /// Update to apply to a thread ledger.
 #[derive(Clone, Debug, Default)]
 pub struct LedgerUpdate {
     pub add_participants: Option<Vec<MessageAuthor>>,
     pub remove_participants: Option<Vec<Uuid>>,
-    pub set_status: Option<ThreadStatus>,
-    pub set_visibility: Option<Visibility>,
-    pub set_policies: Option<Policies>,
+    pub set_status: Option<FhirThreadStatus>,
+    pub set_visibility: Option<(SensitivityLevel, bool)>,
+    pub set_policies: Option<(bool, bool)>,
 }
 
 impl<S> CoordinationService<S> {
@@ -654,6 +576,18 @@ impl<S> CoordinationService<S> {
     }
 }
 
+impl CoordinationService<Initialised> {
+    /// Returns the path to a specific thread directory.
+    ///
+    /// Combines coordination directory lookup with thread path construction.
+    fn thread_dir(&self, thread_id: &TimestampId) -> PathBuf {
+        let coordination_dir = self.coordination_dir(self.coordination_id());
+        coordination_dir
+            .join("communications")
+            .join(thread_id.to_string())
+    }
+}
+
 // ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
@@ -661,11 +595,6 @@ impl<S> CoordinationService<S> {
 /// Generates a new message ID (UUID v4).
 fn generate_message_id() -> Uuid {
     Uuid::new_v4()
-}
-
-/// Returns path to a specific thread directory.
-fn thread_dir(coordination_dir: &Path, thread_id: &str) -> PathBuf {
-    coordination_dir.join("communications").join(thread_id)
 }
 
 /// Validates that authors list is not empty and all author names contain content.
@@ -708,7 +637,7 @@ fn parse_messages_md(content: &str) -> PatientResult<Vec<Message>> {
         if lines[i].starts_with("**Message ID:**") {
             // Parse metadata
             let mut message_id: Option<Uuid> = None;
-            let mut author_role: Option<fhir::AuthorRole> = None;
+            let mut author_role: Option<AuthorRole> = None;
             let mut timestamp: Option<String> = None;
             let mut author_id: Option<Uuid> = None;
             let mut author_name: Option<String> = None;
@@ -717,9 +646,7 @@ fn parse_messages_md(content: &str) -> PatientResult<Vec<Message>> {
             while i < lines.len() && lines[i].starts_with("**") {
                 let line = lines[i];
                 if line.starts_with("**Message ID:**") {
-                    let id_str = line
-                        .trim_start_matches("**Message ID:** `")
-                        .trim_end_matches("`  ");
+                    let id_str = line.trim_start_matches("**Message ID:** ").trim();
                     message_id =
                         Some(Uuid::parse_str(id_str).map_err(|e| {
                             PatientError::InvalidInput(format!("Invalid UUID: {}", e))
@@ -737,9 +664,7 @@ fn parse_messages_md(content: &str) -> PatientResult<Vec<Message>> {
                             .to_string(),
                     );
                 } else if line.starts_with("**Author ID:**") {
-                    let id_str = line
-                        .trim_start_matches("**Author ID:** `")
-                        .trim_end_matches("`  ");
+                    let id_str = line.trim_start_matches("**Author ID:** ").trim();
                     author_id =
                         Some(Uuid::parse_str(id_str).map_err(|e| {
                             PatientError::InvalidInput(format!("Invalid UUID: {}", e))
@@ -751,9 +676,7 @@ fn parse_messages_md(content: &str) -> PatientResult<Vec<Message>> {
                             .to_string(),
                     );
                 } else if line.starts_with("**Corrects:**") {
-                    let id_str = line
-                        .trim_start_matches("**Corrects:** `")
-                        .trim_end_matches("`  ");
+                    let id_str = line.trim_start_matches("**Corrects:** ").trim();
                     corrects =
                         Some(Uuid::parse_str(id_str).map_err(|e| {
                             PatientError::InvalidInput(format!("Invalid UUID: {}", e))
@@ -799,92 +722,605 @@ fn parse_messages_md(content: &str) -> PatientResult<Vec<Message>> {
     Ok(messages)
 }
 
-/// Deserialises ledger.yaml into ThreadLedger.
-fn deserialize_ledger(content: &str) -> PatientResult<ThreadLedger> {
-    // Parse using fhir::Messaging
-    let ledger_data = fhir::Messaging::ledger_parse(content)
-        .map_err(|e| PatientError::InvalidInput(format!("Failed to deserialise ledger: {}", e)))?;
-
-    // Convert fhir::LedgerData to ThreadLedger
-    Ok(ThreadLedger {
-        thread_id: ledger_data.thread_id.to_string(),
-        status: match ledger_data.status {
-            fhir::ThreadStatus::Open => ThreadStatus::Open,
-            fhir::ThreadStatus::Closed => ThreadStatus::Closed,
-            fhir::ThreadStatus::Archived => ThreadStatus::Archived,
-        },
-        created_at: ledger_data
-            .created_at
-            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
-        last_updated_at: ledger_data
-            .last_updated_at
-            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
-        participants: ledger_data
-            .participants
-            .iter()
-            .map(|p| MessageAuthor {
-                id: p.id,
-                name: p.name.clone(),
-                role: p.role,
-            })
-            .collect(),
-        visibility: Visibility {
-            sensitivity: match ledger_data.visibility.sensitivity.as_str() {
-                "confidential" => SensitivityLevel::Confidential,
-                "restricted" => SensitivityLevel::Restricted,
-                _ => SensitivityLevel::Standard,
-            },
-            restricted: ledger_data.visibility.restricted,
-        },
-        policies: Policies {
-            allow_patient_participation: ledger_data.policies.allow_patient_participation,
-            allow_external_organisations: ledger_data.policies.allow_external_organisations,
-        },
-    })
-}
-
 // ============================================================================
 // TESTS
 // ============================================================================
 
-// #[cfg(test)]
-// mod tests {
-//     // Test initialise() creates coordination repo without template
-//     // Test initialise() creates Git repo and initial commit
-//     // Test initialise() validates author and care_location
-//     // Test initialise() cleans up on failure
-//     //
-//     // Test create_thread() creates directory structure
-//     // Test create_thread() generates valid thread_id
-//     // Test create_thread() writes messages.md and ledger.yaml
-//     // Test create_thread() commits to Git
-//     // Test create_thread() with initial message
-//     // Test create_thread() without initial message
-//     //
-//     // Test add_message() appends to messages.md
-//     // Test add_message() generates unique message_id
-//     // Test add_message() commits to Git
-//     // Test add_message() for clinician message
-//     // Test add_message() for patient message
-//     // Test add_message() for system message
-//     // Test add_message() for correction message with corrects field
-//     //
-//     // Test read_thread() parses messages.md correctly
-//     // Test read_thread() parses ledger.yaml correctly
-//     // Test read_thread() fails gracefully if thread doesn't exist
-//     // Test read_thread() handles empty threads (no messages)
-//     //
-//     // Test update_thread_ledger() adds participants
-//     // Test update_thread_ledger() removes participants
-//     // Test update_thread_ledger() changes status
-//     // Test update_thread_ledger() updates visibility
-//     // Test update_thread_ledger() updates policies
-//     // Test update_thread_ledger() commits to Git
-//     //
-//     // Test message immutability (cannot edit/delete)
-//     // Test thread_id format validation
-//     // Test message_id uniqueness
-//     // Test correction message references
-//     // Test concurrent message additions
-//     // Test cryptographic signing of commits
-// }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn setup_test_env() -> (TempDir, TempDir, Arc<CoreConfig>, Author) {
+        let temp_dir = TempDir::new().unwrap();
+        let template_dir = TempDir::new().unwrap();
+
+        let cfg = Arc::new(
+            CoreConfig::new(
+                temp_dir.path().to_path_buf(),
+                template_dir.path().to_path_buf(),
+                openehr::RmVersion::rm_1_1_0,
+                "test-namespace".to_string(),
+            )
+            .unwrap(),
+        );
+
+        let author = Author {
+            name: "Dr. Test".to_string(),
+            role: "Clinician".to_string(),
+            email: "test@example.com".to_string(),
+            registrations: vec![],
+            signature: None,
+            certificate: None,
+        };
+
+        (temp_dir, template_dir, cfg, author)
+    }
+
+    fn create_test_participants() -> Vec<MessageAuthor> {
+        vec![
+            MessageAuthor {
+                id: Uuid::new_v4(),
+                name: "Dr. Smith".to_string(),
+                role: fhir::AuthorRole::Clinician,
+            },
+            MessageAuthor {
+                id: Uuid::new_v4(),
+                name: "Patient John".to_string(),
+                role: fhir::AuthorRole::Patient,
+            },
+        ]
+    }
+
+    #[test]
+    fn test_initialise_creates_coordination_repo() {
+        let (_temp, _template, cfg, author) = setup_test_env();
+        let clinical_id = Uuid::new_v4();
+
+        let result = CoordinationService::new(cfg.clone()).initialise(
+            author,
+            "Test Location".to_string(),
+            clinical_id,
+        );
+
+        assert!(result.is_ok());
+        let service = result.unwrap();
+        let coord_dir = service.coordination_dir(service.coordination_id());
+        assert!(coord_dir.exists());
+        assert!(coord_dir.join(".git").exists());
+    }
+
+    #[test]
+    fn test_initialise_validates_author() {
+        let (_temp, _template, cfg, _author) = setup_test_env();
+        let clinical_id = Uuid::new_v4();
+
+        let invalid_author = Author {
+            name: "".to_string(),
+            role: "Clinician".to_string(),
+            email: "test@example.com".to_string(),
+            registrations: vec![],
+            signature: None,
+            certificate: None,
+        };
+
+        let result = CoordinationService::new(cfg.clone()).initialise(
+            invalid_author,
+            "Test Location".to_string(),
+            clinical_id,
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_thread_create_with_initial_message() {
+        let (_temp, _template, cfg, author) = setup_test_env();
+        let clinical_id = Uuid::new_v4();
+
+        let service = CoordinationService::new(cfg.clone())
+            .initialise(author.clone(), "Test Location".to_string(), clinical_id)
+            .unwrap();
+
+        let participants = create_test_participants();
+        let initial_message = MessageContent::new(
+            participants[0].clone(),
+            "Initial thread message".to_string(),
+            None,
+        )
+        .unwrap();
+
+        let result = service.thread_create(
+            &author,
+            "Test Location".to_string(),
+            participants.clone(),
+            initial_message,
+        );
+
+        assert!(result.is_ok());
+        let thread_id = result.unwrap();
+
+        // Verify thread directory exists
+        let coord_dir = service.coordination_dir(service.coordination_id());
+        let thread_dir = coord_dir.join("communications").join(thread_id.to_string());
+        assert!(thread_dir.exists());
+        assert!(thread_dir.join("messages.md").exists());
+        assert!(thread_dir.join("ledger.yaml").exists());
+
+        // Verify messages.md contains initial message
+        let messages_content = fs::read_to_string(thread_dir.join("messages.md")).unwrap();
+        assert!(messages_content.contains("Initial thread message"));
+    }
+
+    #[test]
+    fn test_thread_create_validates_empty_body() {
+        let (_temp, _template, cfg, author) = setup_test_env();
+        let clinical_id = Uuid::new_v4();
+
+        let _service = CoordinationService::new(cfg.clone())
+            .initialise(author.clone(), "Test Location".to_string(), clinical_id)
+            .unwrap();
+
+        let participants = create_test_participants();
+        let result = MessageContent::new(
+            participants[0].clone(),
+            "   ".to_string(), // Empty after trim
+            None,
+        );
+
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), PatientError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn test_validate_message_authors_empty_list() {
+        let result = validate_message_authors(&[]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_message_authors_empty_name() {
+        let authors = vec![MessageAuthor {
+            id: Uuid::new_v4(),
+            name: "   ".to_string(),
+            role: fhir::AuthorRole::Clinician,
+        }];
+
+        let result = validate_message_authors(&authors);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_message_authors_valid() {
+        let authors = create_test_participants();
+        let result = validate_message_authors(&authors);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_message_add_appends_to_thread() {
+        let (_temp, _template, cfg, author) = setup_test_env();
+        let clinical_id = Uuid::new_v4();
+
+        let service = CoordinationService::new(cfg.clone())
+            .initialise(author.clone(), "Test Location".to_string(), clinical_id)
+            .unwrap();
+
+        let participants = create_test_participants();
+        let initial_message =
+            MessageContent::new(participants[0].clone(), "First message".to_string(), None)
+                .unwrap();
+
+        let thread_id = service
+            .thread_create(
+                &author,
+                "Test Location".to_string(),
+                participants.clone(),
+                initial_message,
+            )
+            .unwrap();
+
+        // Add second message
+        let second_message = MessageContent::new(
+            participants[1].clone(),
+            "Second message from patient".to_string(),
+            None,
+        )
+        .unwrap();
+
+        let result = service.message_add(
+            &author,
+            "Test Location".to_string(),
+            &thread_id,
+            second_message,
+        );
+
+        assert!(result.is_ok());
+
+        // Read thread and verify both messages
+        let thread = service.read_thread(&thread_id).unwrap();
+        assert_eq!(thread.messages.len(), 2);
+        assert_eq!(thread.messages[0].body, "First message");
+        assert_eq!(thread.messages[1].body, "Second message from patient");
+    }
+
+    #[test]
+    fn test_message_add_with_correction() {
+        let (_temp, _template, cfg, author) = setup_test_env();
+        let clinical_id = Uuid::new_v4();
+
+        let service = CoordinationService::new(cfg.clone())
+            .initialise(author.clone(), "Test Location".to_string(), clinical_id)
+            .unwrap();
+
+        let participants = create_test_participants();
+        let initial_message = MessageContent::new(
+            participants[0].clone(),
+            "Original message with typo".to_string(),
+            None,
+        )
+        .unwrap();
+
+        let thread_id = service
+            .thread_create(
+                &author,
+                "Test Location".to_string(),
+                participants.clone(),
+                initial_message,
+            )
+            .unwrap();
+
+        let thread = service.read_thread(&thread_id).unwrap();
+        let original_msg_id = thread.messages[0].message_id;
+
+        // Add correction message
+        let correction = MessageContent::new(
+            participants[0].clone(),
+            "Corrected message without typo".to_string(),
+            Some(original_msg_id),
+        )
+        .unwrap();
+
+        let result =
+            service.message_add(&author, "Test Location".to_string(), &thread_id, correction);
+        assert!(result.is_ok());
+
+        // Verify correction is recorded
+        let thread = service.read_thread(&thread_id).unwrap();
+        assert_eq!(thread.messages.len(), 2);
+        assert_eq!(thread.messages[1].corrects, Some(original_msg_id));
+    }
+
+    #[test]
+    fn test_message_add_to_nonexistent_thread() {
+        let (_temp, _template, cfg, author) = setup_test_env();
+        let clinical_id = Uuid::new_v4();
+
+        let service = CoordinationService::new(cfg.clone())
+            .initialise(author.clone(), "Test Location".to_string(), clinical_id)
+            .unwrap();
+
+        let fake_thread_id = TimestampIdGenerator::generate(None).unwrap();
+        let participants = create_test_participants();
+        let message = MessageContent::new(
+            participants[0].clone(),
+            "Message to nowhere".to_string(),
+            None,
+        )
+        .unwrap();
+
+        let result = service.message_add(
+            &author,
+            "Test Location".to_string(),
+            &fake_thread_id,
+            message,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_read_thread_returns_complete_data() {
+        let (_temp, _template, cfg, author) = setup_test_env();
+        let clinical_id = Uuid::new_v4();
+
+        let service = CoordinationService::new(cfg.clone())
+            .initialise(author.clone(), "Test Location".to_string(), clinical_id)
+            .unwrap();
+
+        let participants = create_test_participants();
+        let initial_message =
+            MessageContent::new(participants[0].clone(), "Test message".to_string(), None).unwrap();
+
+        let thread_id = service
+            .thread_create(
+                &author,
+                "Test Location".to_string(),
+                participants.clone(),
+                initial_message,
+            )
+            .unwrap();
+
+        let thread = service.read_thread(&thread_id).unwrap();
+
+        assert_eq!(thread.thread_id, thread_id.to_string());
+        assert_eq!(thread.ledger.participants.len(), 2);
+        assert_eq!(thread.messages.len(), 1);
+        assert_eq!(thread.ledger.status, FhirThreadStatus::Open);
+    }
+
+    #[test]
+    fn test_read_thread_nonexistent() {
+        let (_temp, _template, cfg, author) = setup_test_env();
+        let clinical_id = Uuid::new_v4();
+
+        let service = CoordinationService::new(cfg.clone())
+            .initialise(author.clone(), "Test Location".to_string(), clinical_id)
+            .unwrap();
+
+        let fake_thread_id = TimestampIdGenerator::generate(None).unwrap();
+        let result = service.read_thread(&fake_thread_id);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_update_thread_ledger_add_participants() {
+        let (_temp, _template, cfg, author) = setup_test_env();
+        let clinical_id = Uuid::new_v4();
+
+        let service = CoordinationService::new(cfg.clone())
+            .initialise(author.clone(), "Test Location".to_string(), clinical_id)
+            .unwrap();
+
+        let participants = create_test_participants();
+        let initial_message =
+            MessageContent::new(participants[0].clone(), "Test".to_string(), None).unwrap();
+
+        let thread_id = service
+            .thread_create(
+                &author,
+                "Test Location".to_string(),
+                participants,
+                initial_message,
+            )
+            .unwrap();
+
+        // Add new participant
+        let new_participant = MessageAuthor {
+            id: Uuid::new_v4(),
+            name: "Nurse Jane".to_string(),
+            role: fhir::AuthorRole::Clinician,
+        };
+
+        let update = LedgerUpdate {
+            add_participants: Some(vec![new_participant.clone()]),
+            ..Default::default()
+        };
+
+        let result =
+            service.update_thread_ledger(&author, "Test Location".to_string(), &thread_id, update);
+        assert!(result.is_ok());
+
+        // Verify participant was added
+        let thread = service.read_thread(&thread_id).unwrap();
+        assert_eq!(thread.ledger.participants.len(), 3);
+        assert!(thread
+            .ledger
+            .participants
+            .iter()
+            .any(|p| p.name == "Nurse Jane"));
+    }
+
+    #[test]
+    fn test_update_thread_ledger_remove_participants() {
+        let (_temp, _template, cfg, author) = setup_test_env();
+        let clinical_id = Uuid::new_v4();
+
+        let service = CoordinationService::new(cfg.clone())
+            .initialise(author.clone(), "Test Location".to_string(), clinical_id)
+            .unwrap();
+
+        let participants = create_test_participants();
+        let remove_id = participants[1].id;
+        let initial_message =
+            MessageContent::new(participants[0].clone(), "Test".to_string(), None).unwrap();
+
+        let thread_id = service
+            .thread_create(
+                &author,
+                "Test Location".to_string(),
+                participants,
+                initial_message,
+            )
+            .unwrap();
+
+        // Remove participant
+        let update = LedgerUpdate {
+            remove_participants: Some(vec![remove_id]),
+            ..Default::default()
+        };
+
+        let result =
+            service.update_thread_ledger(&author, "Test Location".to_string(), &thread_id, update);
+        assert!(result.is_ok());
+
+        // Verify participant was removed
+        let thread = service.read_thread(&thread_id).unwrap();
+        assert_eq!(thread.ledger.participants.len(), 1);
+        assert!(!thread.ledger.participants.iter().any(|p| p.id == remove_id));
+    }
+
+    #[test]
+    fn test_update_thread_ledger_change_status() {
+        let (_temp, _template, cfg, author) = setup_test_env();
+        let clinical_id = Uuid::new_v4();
+
+        let service = CoordinationService::new(cfg.clone())
+            .initialise(author.clone(), "Test Location".to_string(), clinical_id)
+            .unwrap();
+
+        let participants = create_test_participants();
+        let initial_message =
+            MessageContent::new(participants[0].clone(), "Test".to_string(), None).unwrap();
+
+        let thread_id = service
+            .thread_create(
+                &author,
+                "Test Location".to_string(),
+                participants,
+                initial_message,
+            )
+            .unwrap();
+
+        // Close the thread
+        let update = LedgerUpdate {
+            set_status: Some(FhirThreadStatus::Closed),
+            ..Default::default()
+        };
+
+        let result =
+            service.update_thread_ledger(&author, "Test Location".to_string(), &thread_id, update);
+        assert!(result.is_ok());
+
+        // Verify status changed
+        let thread = service.read_thread(&thread_id).unwrap();
+        assert_eq!(thread.ledger.status, FhirThreadStatus::Closed);
+    }
+
+    #[test]
+    fn test_update_thread_ledger_change_visibility() {
+        let (_temp, _template, cfg, author) = setup_test_env();
+        let clinical_id = Uuid::new_v4();
+
+        let service = CoordinationService::new(cfg.clone())
+            .initialise(author.clone(), "Test Location".to_string(), clinical_id)
+            .unwrap();
+
+        let participants = create_test_participants();
+        let initial_message =
+            MessageContent::new(participants[0].clone(), "Test".to_string(), None).unwrap();
+
+        let thread_id = service
+            .thread_create(
+                &author,
+                "Test Location".to_string(),
+                participants,
+                initial_message,
+            )
+            .unwrap();
+
+        // Change visibility
+        let update = LedgerUpdate {
+            set_visibility: Some((SensitivityLevel::Confidential, true)),
+            ..Default::default()
+        };
+
+        let result =
+            service.update_thread_ledger(&author, "Test Location".to_string(), &thread_id, update);
+        assert!(result.is_ok());
+
+        // Verify visibility changed
+        let thread = service.read_thread(&thread_id).unwrap();
+        assert_eq!(thread.ledger.sensitivity, SensitivityLevel::Confidential);
+        assert!(thread.ledger.restricted);
+    }
+
+    #[test]
+    fn test_update_thread_ledger_change_policies() {
+        let (_temp, _template, cfg, author) = setup_test_env();
+        let clinical_id = Uuid::new_v4();
+
+        let service = CoordinationService::new(cfg.clone())
+            .initialise(author.clone(), "Test Location".to_string(), clinical_id)
+            .unwrap();
+
+        let participants = create_test_participants();
+        let initial_message =
+            MessageContent::new(participants[0].clone(), "Test".to_string(), None).unwrap();
+
+        let thread_id = service
+            .thread_create(
+                &author,
+                "Test Location".to_string(),
+                participants,
+                initial_message,
+            )
+            .unwrap();
+
+        // Change policies
+        let update = LedgerUpdate {
+            set_policies: Some((false, false)),
+            ..Default::default()
+        };
+
+        let result =
+            service.update_thread_ledger(&author, "Test Location".to_string(), &thread_id, update);
+        assert!(result.is_ok());
+
+        // Verify policies changed
+        let thread = service.read_thread(&thread_id).unwrap();
+        assert!(!thread.ledger.allow_patient_participation);
+        assert!(!thread.ledger.allow_external_organisations);
+    }
+
+    #[test]
+    fn test_parse_messages_md_multiple_messages() {
+        let content = r#"**Message ID:** 550e8400-e29b-41d4-a716-446655440000
+**Author role:** clinician
+**Timestamp:** 2026-01-22T10:30:00Z
+**Author ID:** 550e8400-e29b-41d4-a716-446655440001
+**Author name:** Dr. Smith
+
+First message body
+
+---
+
+**Message ID:** 550e8400-e29b-41d4-a716-446655440002
+**Author role:** patient
+**Timestamp:** 2026-01-22T11:30:00Z
+**Author ID:** 550e8400-e29b-41d4-a716-446655440003
+**Author name:** Patient John
+
+Second message body
+
+---
+"#;
+
+        let messages = parse_messages_md(content).unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].body, "First message body");
+        assert_eq!(messages[1].body, "Second message body");
+        assert_eq!(messages[0].author.name, "Dr. Smith");
+        assert_eq!(messages[1].author.name, "Patient John");
+    }
+
+    #[test]
+    fn test_parse_messages_md_with_correction() {
+        let content = r#"**Message ID:** 550e8400-e29b-41d4-a716-446655440000
+**Author role:** clinician
+**Timestamp:** 2026-01-22T10:30:00Z
+**Author ID:** 550e8400-e29b-41d4-a716-446655440001
+**Author name:** Dr. Smith
+**Corrects:** 550e8400-e29b-41d4-a716-446655440099
+
+Corrected message body
+
+---
+"#;
+
+        let messages = parse_messages_md(content).unwrap();
+        assert_eq!(messages.len(), 1);
+        assert!(messages[0].corrects.is_some());
+        assert_eq!(
+            messages[0].corrects.unwrap().to_string(),
+            "550e8400-e29b-41d4-a716-446655440099"
+        );
+    }
+
+    #[test]
+    fn test_message_id_generation_is_unique() {
+        let id1 = generate_message_id();
+        let id2 = generate_message_id();
+        assert_ne!(id1, id2);
+    }
+}

@@ -910,11 +910,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         role: AuthorRole::System,
                     });
 
-                MessageContent {
-                    author: message_author,
-                    body,
-                    corrects: None,
-                }
+                MessageContent::new(message_author, body, None)
+                    .expect("Message body should not be empty")
             });
 
             let coordination_service =
@@ -1006,15 +1003,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 None
             };
 
-            let message = MessageContent {
-                author: MessageAuthor {
+            let message = MessageContent::new(
+                MessageAuthor {
                     id: author_id,
                     name: message_author_name,
                     role: author_role,
                 },
-                body: message_body,
-                corrects: corrects_id,
-            };
+                message_body,
+                corrects_id,
+            )
+            .expect("Message body should not be empty");
 
             let thread_id_parsed = match thread_id.parse::<TimestampId>() {
                 Ok(id) => id,
