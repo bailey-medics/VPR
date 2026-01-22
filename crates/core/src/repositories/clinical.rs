@@ -25,7 +25,7 @@ use crate::repositories::shared::{
 #[cfg(test)]
 use crate::repositories::shared::create_uuid_and_shard_dir_with_source;
 use crate::versioned_files::{
-    ClinicalDomain, FileToWrite, VersionedFileService, VprCommitAction, VprCommitDomain,
+    ClinicalDomain::Record, FileToWrite, VersionedFileService, VprCommitAction, VprCommitDomain,
     VprCommitMessage,
 };
 use crate::ShardableUuid;
@@ -39,7 +39,6 @@ use std::{
     sync::Arc,
 };
 use vpr_uuid::TimestampIdGenerator;
-use ClinicalDomain::*;
 
 #[cfg(test)]
 use std::io::ErrorKind;
