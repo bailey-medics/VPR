@@ -16,7 +16,7 @@ use vpr_core::{
     repositories::demographics::DemographicsService,
     repositories::shared::{resolve_clinical_template_dir, validate_template, TemplateDirKind},
     versioned_files::VersionedFileService,
-    Author, AuthorRegistration, CoreConfig, PatientService, ShardableUuid,
+    Author, AuthorRegistration, CoreConfig, PatientService, ShardableUuid, TimestampId,
 };
 
 use base64::{engine::general_purpose, Engine as _};
@@ -813,7 +813,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             match coordination_service.initialise(author, care_location, clinical_id) {
                 Ok(service) => println!(
                     "Initialised coordination with UUID: {}",
-                    service.coordination_id().simple()
+                    service.coordination_id()
                 ),
                 Err(e) => eprintln!("Error initialising coordination: {}", e),
             }
@@ -1018,9 +1018,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 corrects: corrects_id,
             };
 
+            let thread_id_parsed = match thread_id.parse::<TimestampId>() {
+                Ok(id) => id,
+                Err(e) => {
+                    eprintln!("Invalid thread ID format: {}", e);
+                    return Ok(());
+                }
+            };
+
             let coordination_service =
                 CoordinationService::with_id(cfg.clone(), coordination_uuid_parsed);
-            match coordination_service.add_message(&author, care_location, &thread_id, message) {
+            match coordination_service.add_message(
+                &author,
+                care_location,
+                &thread_id_parsed,
+                message,
+            ) {
                 Ok(message_id) => println!("Added message with ID: {}", message_id),
                 Err(e) => eprintln!("Error adding message: {}", e),
             }
@@ -1037,9 +1050,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
+            let thread_id_parsed = match thread_id.parse::<TimestampId>() {
+                Ok(id) => id,
+                Err(e) => {
+                    eprintln!("Invalid thread ID format: {}", e);
+                    return Ok(());
+                }
+            };
+
             let coordination_service =
                 CoordinationService::with_id(cfg.clone(), coordination_uuid_parsed);
-            match coordination_service.read_thread(&thread_id) {
+            match coordination_service.read_thread(&thread_id_parsed) {
                 Ok(thread) => {
                     println!("Thread ID: {}", thread.thread_id);
                     println!("Status: {:?}", thread.ledger.status);
