@@ -214,6 +214,7 @@ impl CoordinationService<Initialised> {
 
         // Add initial message if provided
         if let Some(msg_content) = initial_message {
+            // TODO why a helper function here?
             let message_id = generate_message_id();
             messages_content.push_str(&format_message(&msg_content, message_id, &now));
         }
@@ -608,7 +609,7 @@ fn format_message(message: &MessageContent, message_id: Uuid, timestamp: &str) -
     };
 
     let mut output = format!(
-        "**Message ID:** `{}`  \n**Timestamp:** {}  \n**Author ID:** `{}`  \n**Author name:** {}  \n**Author role:** {}  \n",
+        "**Message ID:** `{}`  \n**Timestamp:** {}  \n**Author ID:** `{}`  \n**Author name:** {}  \n**Author role:** **{}**  \n",
         message_id,
         timestamp,
         message.author_id,
