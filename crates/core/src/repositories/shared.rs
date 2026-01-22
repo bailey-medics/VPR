@@ -96,9 +96,11 @@ impl TemplateDirKind {
 
 /// Creates a unique sharded directory within the base records directory.
 ///
-/// This function generates UUIDs using the provided source function and attempts to create
-/// a corresponding sharded directory. It guards against UUID collisions or pre-existing
-/// directories by retrying up to 5 times with different UUIDs.
+/// This is the simple production API that generates UUIDs internally.
+/// Creates a unique sharded directory with a custom UUID source.
+///
+/// This version accepts a UUID generator for testing collision handling.
+/// Production code should use `create_uuid_and_shard_dir()` instead.
 ///
 /// # Arguments
 ///
@@ -114,7 +116,7 @@ impl TemplateDirKind {
 /// Returns a `PatientError::PatientDirCreation` if:
 /// - directory creation fails after 5 attempts,
 /// - parent directory creation fails.
-pub(crate) fn create_uuid_and_shard_dir(
+pub(crate) fn create_uuid_and_shard_dir_with_source(
     base_dir: &Path,
     mut uuid_source: impl FnMut() -> ShardableUuid,
 ) -> PatientResult<(ShardableUuid, PathBuf)> {
@@ -143,6 +145,30 @@ pub(crate) fn create_uuid_and_shard_dir(
         ErrorKind::AlreadyExists,
         "failed to allocate a unique patient directory after 5 attempts",
     )))
+}
+
+/// Creates a unique sharded directory using an auto-generated UUID.
+///
+/// Simple wrapper for production use that generates UUIDs internally.
+/// For testing with deterministic UUIDs, use `create_uuid_and_shard_dir_with_source()`.
+///
+/// # Arguments
+///
+/// * `base_dir` - The base records directory.
+///
+/// # Returns
+///
+/// Returns a tuple of the allocated `ShardableUuid` and the `PathBuf` to the created directory.
+///
+/// # Errors
+///
+/// Returns a `PatientError::PatientDirCreation` if:
+/// - directory creation fails after 5 attempts,
+/// - parent directory creation fails.
+pub(crate) fn create_uuid_and_shard_dir(
+    base_dir: &Path,
+) -> PatientResult<(ShardableUuid, PathBuf)> {
+    create_uuid_and_shard_dir_with_source(base_dir, ShardableUuid::new)
 }
 
 /// Recursively copies a directory and its contents to a destination.

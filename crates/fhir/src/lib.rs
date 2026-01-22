@@ -20,7 +20,7 @@ pub use coordination_status::CoordinationStatus;
 pub use messaging::Messaging;
 
 // Re-export public domain-level types
-pub use coordination_status::{CoordinationStatusData, LifecycleState, StatusInfo};
+pub use coordination_status::{CoordinationStatusData, LifecycleState};
 pub use messaging::{
     LedgerData, LedgerParticipant, LedgerPolicies, LedgerVisibility, ParticipantRole, ThreadStatus,
 };

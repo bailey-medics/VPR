@@ -110,6 +110,23 @@ impl ShardableUuid {
         )))
     }
 
+    /// Creates a `ShardableUuid` from an existing `uuid::Uuid`.
+    ///
+    /// This constructor wraps a `Uuid` that is already known to be valid,
+    /// avoiding the overhead of string parsing and validation. Use this when
+    /// converting internal `Uuid` values that are already validated.
+    ///
+    /// # Arguments
+    ///
+    /// * `uuid` - A valid UUID to wrap.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `ShardableUuid` wrapping the provided UUID.
+    pub fn from_uuid(uuid: Uuid) -> Self {
+        Self(uuid)
+    }
+
     /// Returns the UUID as a `uuid::Uuid`.
     ///
     /// This method provides access to the underlying `uuid::Uuid` for operations

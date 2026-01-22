@@ -12,13 +12,11 @@ use vpr_core::{
     config::rm_system_version_from_env_value,
     constants,
     repositories::clinical::ClinicalService,
-    repositories::coordination::{
-        CoordinationService, MessageContent, MessageType, ParticipantRole, ThreadParticipant,
-    },
+    repositories::coordination::{AuthorRole, CoordinationService, MessageAuthor, MessageContent},
     repositories::demographics::DemographicsService,
     repositories::shared::{resolve_clinical_template_dir, validate_template, TemplateDirKind},
     versioned_files::VersionedFileService,
-    Author, AuthorRegistration, CoreConfig, PatientService, ShardableUuid,
+    Author, AuthorRegistration, CoreConfig, PatientService, ShardableUuid, TimestampId,
 };
 
 use base64::{engine::general_purpose, Engine as _};
@@ -634,8 +632,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 namespace,
             ) {
                 Ok(record) => println!(
-                    "Initialised full record - Demographics UUID: {}, Clinical UUID: {}",
-                    record.demographics_uuid, record.clinical_uuid
+                    "Initialised full record - Demographics UUID: {}, Clinical UUID: {}, Coordination UUID: {}",
+                    record.demographics_uuid, record.clinical_uuid, record.coordination_uuid
                 ),
                 Err(e) => eprintln!("Error initialising full record: {}", e),
             }
@@ -815,7 +813,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             match coordination_service.initialise(author, care_location, clinical_id) {
                 Ok(service) => println!(
                     "Initialised coordination with UUID: {}",
-                    service.coordination_id().simple()
+                    service.coordination_id()
                 ),
                 Err(e) => eprintln!("Error initialising coordination: {}", e),
             }
@@ -873,15 +871,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 };
 
                 let role = match participant[i + 1].to_lowercase().as_str() {
-                    "clinician" => ParticipantRole::Clinician,
+                    "clinician" => AuthorRole::Clinician,
                     "careadministrator" | "care_administrator" | "care-administrator" => {
-                        ParticipantRole::CareAdministrator
+                        AuthorRole::CareAdministrator
                     }
-                    "patient" => ParticipantRole::Patient,
+                    "patient" => AuthorRole::Patient,
                     "patientassociate" | "patient_associate" | "patient-associate" => {
-                        ParticipantRole::PatientAssociate
+                        AuthorRole::PatientAssociate
                     }
-                    "system" => ParticipantRole::System,
+                    "system" => AuthorRole::System,
                     _ => {
                         eprintln!("Invalid role: must be clinician, careadministrator, patient, patientassociate, or system");
                         return Ok(());
@@ -890,9 +888,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 let display_name = participant[i + 2].clone();
 
-                participants.push(ThreadParticipant {
-                    participant_id,
-                    display_name,
+                participants.push(MessageAuthor {
+                    id: participant_id,
+                    name: display_name,
                     role,
                 });
 
@@ -900,17 +898,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             let initial_msg = initial_message.map(|body| {
-                // Use first participant as message author if available
-                let (author_id, author_name) = if let Some(p) = participants.first() {
-                    (p.participant_id, p.display_name.clone())
-                } else {
-                    (uuid::Uuid::new_v4(), "System".to_string())
-                };
+                // Find thread author in participants to get their role
+                let author_role = participants
+                    .iter()
+                    .find(|p| p.name == author.name)
+                    .map(|p| p.role)
+                    .unwrap_or(AuthorRole::System);
+
+                // Find thread author UUID in participants
+                let author_id = participants
+                    .iter()
+                    .find(|p| p.name == author.name)
+                    .map(|p| p.id)
+                    .unwrap_or_else(uuid::Uuid::new_v4);
 
                 MessageContent {
-                    message_type: MessageType::System,
+                    author_role,
                     author_id,
-                    author_display_name: author_name,
+                    author_display_name: author.name.clone(),
                     body,
                     corrects: None,
                 }
@@ -967,14 +972,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
-            let msg_type = match message_type.to_lowercase().as_str() {
-                "clinician" => MessageType::Clinician,
-                "patient" => MessageType::Patient,
-                "system" => MessageType::System,
-                "correction" => MessageType::Correction,
+            let author_role = match message_type.to_lowercase().as_str() {
+                "clinician" => AuthorRole::Clinician,
+                "careadministrator" | "care_administrator" | "care-administrator" => {
+                    AuthorRole::CareAdministrator
+                }
+                "patient" => AuthorRole::Patient,
+                "patientassociate" | "patient_associate" | "patient-associate" => {
+                    AuthorRole::PatientAssociate
+                }
+                "system" => AuthorRole::System,
                 _ => {
                     eprintln!(
-                        "Invalid message type: must be clinician, patient, system, or correction"
+                        "Invalid author role: must be clinician, careadministrator, patient, patientassociate, or system"
                     );
                     return Ok(());
                 }
@@ -1001,16 +1011,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             let message = MessageContent {
-                message_type: msg_type,
+                author_role,
                 author_id,
                 author_display_name: message_author_name,
                 body: message_body,
                 corrects: corrects_id,
             };
 
+            let thread_id_parsed = match thread_id.parse::<TimestampId>() {
+                Ok(id) => id,
+                Err(e) => {
+                    eprintln!("Invalid thread ID format: {}", e);
+                    return Ok(());
+                }
+            };
+
             let coordination_service =
                 CoordinationService::with_id(cfg.clone(), coordination_uuid_parsed);
-            match coordination_service.add_message(&author, care_location, &thread_id, message) {
+            match coordination_service.add_message(
+                &author,
+                care_location,
+                &thread_id_parsed,
+                message,
+            ) {
                 Ok(message_id) => println!("Added message with ID: {}", message_id),
                 Err(e) => eprintln!("Error adding message: {}", e),
             }
@@ -1027,9 +1050,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
+            let thread_id_parsed = match thread_id.parse::<TimestampId>() {
+                Ok(id) => id,
+                Err(e) => {
+                    eprintln!("Invalid thread ID format: {}", e);
+                    return Ok(());
+                }
+            };
+
             let coordination_service =
                 CoordinationService::with_id(cfg.clone(), coordination_uuid_parsed);
-            match coordination_service.read_thread(&thread_id) {
+            match coordination_service.read_thread(&thread_id_parsed) {
                 Ok(thread) => {
                     println!("Thread ID: {}", thread.thread_id);
                     println!("Status: {:?}", thread.ledger.status);
@@ -1037,16 +1068,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("Last Updated: {}", thread.ledger.last_updated_at);
                     println!("\nParticipants:");
                     for p in &thread.ledger.participants {
-                        println!(
-                            "  - {} ({:?}): {}",
-                            p.participant_id, p.role, p.display_name
-                        );
+                        println!("  - {} ({:?}): {}", p.id, p.role, p.name);
                     }
                     println!("\nMessages ({}):", thread.messages.len());
                     for msg in &thread.messages {
                         println!("  ---");
                         println!("  ID: {}", msg.message_id);
-                        println!("  Type: {:?}", msg.message_type);
+                        println!("  Role: {:?}", msg.author_role);
                         println!("  Timestamp: {}", msg.timestamp);
                         println!("  Author: {} ({})", msg.author_display_name, msg.author_id);
                         if let Some(corrects) = msg.corrects {
