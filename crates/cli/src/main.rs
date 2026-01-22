@@ -7,12 +7,13 @@
 #![allow(rustdoc::invalid_html_tags)]
 
 use clap::{Parser, Subcommand};
+use fhir::{AuthorRole, MessageAuthor};
 use vpr_certificates::Certificate;
 use vpr_core::{
     config::rm_system_version_from_env_value,
     constants,
     repositories::clinical::ClinicalService,
-    repositories::coordination::{AuthorRole, CoordinationService, MessageAuthor, MessageContent},
+    repositories::coordination::{CoordinationService, MessageContent},
     repositories::demographics::DemographicsService,
     repositories::shared::{resolve_clinical_template_dir, validate_template, TemplateDirKind},
     versioned_files::VersionedFileService,
@@ -898,24 +899,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             let initial_msg = initial_message.map(|body| {
-                // Find thread author in participants to get their role
-                let author_role = participants
+                // Find thread author in participants to get their info
+                let message_author = participants
                     .iter()
                     .find(|p| p.name == author.name)
-                    .map(|p| p.role)
-                    .unwrap_or(AuthorRole::System);
-
-                // Find thread author UUID in participants
-                let author_id = participants
-                    .iter()
-                    .find(|p| p.name == author.name)
-                    .map(|p| p.id)
-                    .unwrap_or_else(uuid::Uuid::new_v4);
+                    .cloned()
+                    .unwrap_or_else(|| MessageAuthor {
+                        id: uuid::Uuid::new_v4(),
+                        name: author.name.clone(),
+                        role: AuthorRole::System,
+                    });
 
                 MessageContent {
-                    author_role,
-                    author_id,
-                    author_display_name: author.name.clone(),
+                    author: message_author,
                     body,
                     corrects: None,
                 }
@@ -923,11 +919,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let coordination_service =
                 CoordinationService::with_id(cfg.clone(), coordination_uuid_parsed);
-            match coordination_service.create_thread(
+            match coordination_service.thread_create(
                 &author,
                 care_location,
                 participants,
-                initial_msg,
+                initial_msg.unwrap(),
             ) {
                 Ok(thread_id) => println!("Created thread with ID: {}", thread_id),
                 Err(e) => eprintln!("Error creating thread: {}", e),
@@ -1011,9 +1007,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             let message = MessageContent {
-                author_role,
-                author_id,
-                author_display_name: message_author_name,
+                author: MessageAuthor {
+                    id: author_id,
+                    name: message_author_name,
+                    role: author_role,
+                },
                 body: message_body,
                 corrects: corrects_id,
             };
@@ -1028,7 +1026,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let coordination_service =
                 CoordinationService::with_id(cfg.clone(), coordination_uuid_parsed);
-            match coordination_service.add_message(
+            match coordination_service.message_add(
                 &author,
                 care_location,
                 &thread_id_parsed,
@@ -1074,9 +1072,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     for msg in &thread.messages {
                         println!("  ---");
                         println!("  ID: {}", msg.message_id);
-                        println!("  Role: {:?}", msg.author_role);
+                        println!("  Role: {:?}", msg.author.role);
                         println!("  Timestamp: {}", msg.timestamp);
-                        println!("  Author: {} ({})", msg.author_display_name, msg.author_id);
+                        println!("  Author: {} ({})", msg.author.name, msg.author.id);
                         if let Some(corrects) = msg.corrects {
                             println!("  Corrects: {}", corrects);
                         }

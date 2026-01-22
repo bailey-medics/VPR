@@ -6,6 +6,37 @@
 //! unintended markdown interpretation.
 
 use crate::error::{PatientError, PatientResult};
+use chrono::{DateTime, Utc};
+use fhir::{AuthorRole, MessageAuthor};
+use uuid::Uuid;
+
+/// Generic message structure for parsing.
+///
+/// Each message contains strongly-typed metadata and body content.
+/// Messages are typically separated by horizontal rules in the markdown file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Message {
+    /// Strongly-typed message metadata
+    pub metadata: MessageMetadata,
+    /// Main body content (unescaped)
+    pub body: String,
+}
+
+/// Represents a single message within a coordination thread with strong typing.
+///
+/// Each message contains structured metadata and body content.
+/// Messages are typically separated by horizontal rules in the markdown file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MessageMetadata {
+    /// Unique identifier for this message
+    pub message_id: Uuid,
+    /// ISO 8601 timestamp when the message was created
+    pub timestamp: DateTime<Utc>,
+    /// Message author with identity, name, and role
+    pub author: MessageAuthor,
+    /// Main body content (unescaped)
+    pub body: String,
+}
 
 /// Service for markdown validation and sanitisation.
 #[derive(Debug, Clone)]
@@ -17,87 +48,385 @@ impl MarkdownService {
         Self
     }
 
-    /// Validates and sanitises markdown content for coordination thread messages.
+    /// Creates the initial message for a new coordination thread with level-1 header.
     ///
-    /// Constructs properly formatted markdown from optional header, metadata variables,
-    /// and prose content. Validates header format and escapes markdown syntax in prose
-    /// to prevent unintended formatting whilst preserving readability.
-    ///
-    /// Prose escaping rules:
-    /// - `#` at line start → `\#` (prevents headers)
-    /// - Triple backticks → `\`\`\`` (prevents code blocks)
-    /// - Standalone `---`, `***`, `___` → escaped (prevents horizontal rules)
+    /// Constructs the first message in a thread with a required level-1 markdown header,
+    /// metadata, and prose content. The header keeps markdown linters satisfied
+    /// and provides thread context.
     ///
     /// # Arguments
     ///
-    /// * `header` - Optional markdown header (must start with '#')
-    /// * `variables` - Metadata pairs formatted as `**Key:** Value` lines
-    /// * `prose` - User-provided content with markdown syntax escaped (must not be empty)
+    /// * `header` - Thread title (will be formatted as level-1 header)
+    /// * `metadata` - Message metadata containing ID, timestamp, author details, role, and body
+    /// * `corrects` - Optional UUID of message being corrected
     ///
     /// # Errors
     ///
     /// Returns `PatientError::InvalidInput` if:
-    /// - Header is provided but does not start with '#'
-    /// - Prose is empty
-    pub fn message_prepare(
+    /// - Header is empty
+    /// - Body is empty
+    pub fn new_thread_render(
         &self,
-        header: Option<&str>,
-        variables: Vec<(&str, &str)>,
-        prose: &str,
+        header: &str,
+        metadata: &MessageMetadata,
+        corrects: Option<Uuid>,
     ) -> PatientResult<String> {
-        // Validate prose is not empty
-        if prose.trim().is_empty() {
+        if header.trim().is_empty() {
             return Err(PatientError::InvalidInput(
-                "Prose content must not be empty".to_string(),
+                "Thread header must not be empty".to_string(),
+            ));
+        }
+
+        // Delegate to message_render_from_metadata for formatting
+        let message_content = self.message_render_from_metadata(metadata, corrects)?;
+
+        // Prepend the header
+        let final_message = format!("# {}\n\n{}", header.trim(), message_content);
+
+        Ok(final_message)
+    }
+
+    /// Validates and sanitises markdown content for coordination thread messages from MessageMetadata.
+    ///
+    /// Constructs properly formatted markdown from message metadata.
+    /// Escapes markdown syntax in body to prevent unintended formatting whilst preserving
+    /// readability.
+    ///
+    /// # Arguments
+    ///
+    /// * `metadata` - Message metadata containing ID, timestamp, author details, role, and body
+    /// * `corrects` - Optional UUID of message being corrected
+    ///
+    /// # Errors
+    ///
+    /// Returns `PatientError::InvalidInput` if body is empty.
+    pub fn message_render_from_metadata(
+        &self,
+        metadata: &MessageMetadata,
+        corrects: Option<Uuid>,
+    ) -> PatientResult<String> {
+        if metadata.body.trim().is_empty() {
+            return Err(PatientError::InvalidInput(
+                "Body content must not be empty".to_string(),
             ));
         }
 
         let mut output = String::new();
 
-        // Validate and add header
-        if let Some(h) = header {
-            let trimmed = h.trim();
-            if !trimmed.is_empty() {
-                if !trimmed.starts_with('#') {
-                    return Err(PatientError::InvalidInput(
-                        "Header must start with '#' for markdown formatting".to_string(),
-                    ));
-                }
-                output.push_str(trimmed);
-                output.push_str("\n\n");
-            }
+        // Format metadata as bold key-value pairs
+        output.push_str(&format!("**Message ID:** {}\n", metadata.message_id));
+        output.push_str(&format!(
+            "**Timestamp:** {}\n",
+            metadata
+                .timestamp
+                .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+        ));
+        output.push_str(&format!("**Author ID:** {}\n", metadata.author.id));
+        output.push_str(&format!("**Author name:** {}\n", metadata.author.name));
+
+        let role_str = serde_json::to_string(&metadata.author.role)
+            .map_err(|e| PatientError::InvalidInput(format!("Invalid role: {}", e)))?
+            .trim_matches('"')
+            .to_string();
+        output.push_str(&format!("**Author role:** {}\n", role_str));
+
+        if let Some(corrects_id) = corrects {
+            output.push_str(&format!("**Corrects:** {}\n", corrects_id));
         }
 
-        // Format variables as bold key-value pairs
-        if !variables.is_empty() {
-            for (key, value) in &variables {
-                output.push_str(&format!("**{}:** {}\n", key, value));
-            }
-            output.push('\n');
-        }
+        output.push('\n');
 
-        // Escape and append prose
-        let sanitised_prose = self.escape_prose(prose);
-        output.push_str(&sanitised_prose);
+        // Escape and append body
+        let sanitised_body = self.escape_body(&metadata.body);
+        output.push_str(&sanitised_body);
 
         Ok(output)
     }
 
-    /// Escapes markdown formatting characters in prose content.
+    /// Validates and sanitises markdown content for coordination thread messages.
+    ///
+    /// Constructs properly formatted markdown from metadata variables and body content.
+    /// Escapes markdown syntax in body to prevent unintended formatting whilst preserving
+    /// readability. Use `new_thread_render` to create the first message with a thread header.
+    ///
+    /// Body escaping rules:
+    /// - `#` at line start → `\#` (prevents headers)
+    /// - Triple backticks → `\`\`\`` (prevents code blocks)
+    /// - Standalone `---`, `***`, `___` → escaped (prevents horizontal rules)
+    ///
+    /// Message format produced:
+    /// ```markdown
+    /// **Variable1:** Value1
+    /// **Variable2:** Value2
+    ///
+    /// Body content here
+    /// ```
+    ///
+    /// # Arguments
+    ///
+    /// * `variables` - Metadata pairs formatted as `**Key:** Value` lines
+    /// * `body` - User-provided content with markdown syntax escaped (must not be empty)
+    ///
+    /// # Errors
+    ///
+    /// Returns `PatientError::InvalidInput` if body is empty.
+    pub fn message_render(
+        &self,
+        variables: Vec<(&str, &str)>,
+        body: &str,
+    ) -> PatientResult<String> {
+        if variables.is_empty() {
+            return Err(PatientError::InvalidInput(
+                "Variables must not be empty".to_string(),
+            ));
+        }
+
+        // Validate that no keys or values are empty
+        for (key, value) in &variables {
+            if key.trim().is_empty() {
+                return Err(PatientError::InvalidInput(
+                    "Variable key must not be empty".to_string(),
+                ));
+            }
+            if value.trim().is_empty() {
+                return Err(PatientError::InvalidInput(
+                    "Variable value must not be empty".to_string(),
+                ));
+            }
+        }
+
+        if body.trim().is_empty() {
+            return Err(PatientError::InvalidInput(
+                "Body content must not be empty".to_string(),
+            ));
+        }
+
+        let mut output = String::new();
+
+        // Format variables as bold key-value pairs
+        for (key, value) in &variables {
+            output.push_str(&format!("**{}:** {}\n", key, value));
+        }
+        output.push('\n');
+
+        // Escape and append body
+        let sanitised_body = self.escape_body(body);
+        output.push_str(&sanitised_body);
+
+        Ok(output)
+    }
+
+    /// Parses a markdown thread file into structured messages.
+    ///
+    /// Reads a complete coordination thread from markdown format, splitting on horizontal
+    /// rules (`---`) to separate individual messages. Each message is parsed to extract
+    /// variables and body content with markdown escaping reversed. The thread-level
+    /// header (level-1) is ignored as it's not part of individual messages.
+    ///
+    /// Thread format expected:
+    /// ```markdown
+    /// # Thread Title
+    ///
+    /// **Variable1:** Value1
+    /// **Variable2:** Value2
+    ///
+    /// Body content here
+    ///
+    /// ---
+    ///
+    /// **Variable1:** Value1
+    ///
+    /// Next message
+    /// ...
+    /// ```
+    ///
+    /// # Arguments
+    ///
+    /// * `content` - Complete markdown content from messages.md file
+    ///
+    /// # Returns
+    ///
+    /// Vector of parsed `Message` structures with strong typing.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PatientError::InvalidInput` if content cannot be parsed correctly.
+    pub fn thread_parse(&self, content: &str) -> PatientResult<Vec<Message>> {
+        if content.trim().is_empty() {
+            return Err(PatientError::InvalidInput(
+                "Thread content must not be empty".to_string(),
+            ));
+        }
+
+        let mut messages = Vec::new();
+
+        // Split by unescaped horizontal rules (---) that appear on their own line
+        let raw_sections: Vec<&str> = content.split("\n---\n").collect();
+
+        for section in raw_sections {
+            let trimmed = section.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            let message = self.message_parse(trimmed)?;
+            messages.push(message);
+        }
+
+        Ok(messages)
+    }
+
+    /// Parses a single message section into a structured `Message`.
+    ///
+    /// Extracts variables (lines matching `**Key:** Value`) and body content.
+    /// Unescapes markdown syntax in body for display. Skips level-1 headers
+    /// as they belong to the thread, not individual messages.
+    ///
+    /// # Arguments
+    ///
+    /// * `section` - Single message content (between horizontal rules or from start)
+    ///
+    /// # Returns
+    ///
+    /// Parsed `Message` with metadata and unescaped body.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PatientError::InvalidInput` if message format is invalid.
+    fn message_parse(&self, section: &str) -> PatientResult<Message> {
+        let lines: Vec<&str> = section.lines().collect();
+
+        let mut variables: Vec<(String, String)> = Vec::new();
+        let mut body_lines: Vec<&str> = Vec::new();
+
+        // State tracking: 0 = looking for variables, 1 = in body
+        let mut state = 0;
+        let mut i = 0;
+
+        while i < lines.len() {
+            let line = lines[i];
+            let trimmed = line.trim();
+
+            // Skip level-1 headers (thread title) and following blank line
+            if trimmed.starts_with("# ") && !trimmed.starts_with("##") {
+                i += 1;
+                if i < lines.len() && lines[i].trim().is_empty() {
+                    i += 1;
+                }
+                continue;
+            }
+
+            // State 0: Looking for variables
+            if state == 0 {
+                if trimmed.starts_with("**") && trimmed.contains(":**") {
+                    if let Some(colon_pos) = trimmed.find(":**") {
+                        let key = trimmed[2..colon_pos].trim().to_string();
+                        let value = trimmed[colon_pos + 3..].trim().to_string();
+                        variables.push((key, value));
+                        i += 1;
+                        continue;
+                    }
+                } else if trimmed.is_empty() && !variables.is_empty() {
+                    // Blank line after variables, transition to body
+                    state = 1;
+                    i += 1;
+                    continue;
+                } else if trimmed.is_empty() {
+                    // Skip leading blank lines
+                    i += 1;
+                    continue;
+                } else if !trimmed.is_empty() {
+                    // Non-variable content, must be body starting
+                    state = 1;
+                }
+            }
+
+            // State 1: Collecting body
+            if state == 1 {
+                body_lines.push(line);
+                i += 1;
+            } else {
+                i += 1;
+            }
+        }
+
+        // Join body lines and unescape
+        let body_text = body_lines.join("\n");
+        let body = if body_text.trim().is_empty() {
+            return Err(PatientError::InvalidInput(
+                "Message must contain body content".to_string(),
+            ));
+        } else {
+            self.unescape_body(&body_text)
+        };
+
+        // Parse variables into MessageMetadata
+        let mut message_id = None;
+        let mut timestamp = None;
+        let mut author_id = None;
+        let mut author_name = None;
+        let mut author_role = None;
+
+        for (key, value) in &variables {
+            match key.as_str() {
+                "Message ID" => message_id = Uuid::parse_str(value).ok(),
+                "Timestamp" => {
+                    timestamp = DateTime::parse_from_rfc3339(value)
+                        .ok()
+                        .map(|dt| dt.with_timezone(&Utc))
+                }
+                "Author ID" => author_id = Uuid::parse_str(value).ok(),
+                "Author" => author_name = Some(value.clone()),
+                "Role" => {
+                    author_role = AuthorRole::parse(value)
+                        .map_err(|e| PatientError::InvalidInput(e.to_string()))
+                        .ok();
+                }
+                _ => {}
+            }
+        }
+
+        let metadata = MessageMetadata {
+            message_id: message_id.ok_or_else(|| {
+                PatientError::InvalidInput("Missing or invalid Message ID".to_string())
+            })?,
+            timestamp: timestamp.ok_or_else(|| {
+                PatientError::InvalidInput("Missing or invalid Timestamp".to_string())
+            })?,
+            author: MessageAuthor {
+                id: author_id.ok_or_else(|| {
+                    PatientError::InvalidInput("Missing or invalid Author ID".to_string())
+                })?,
+                name: author_name
+                    .ok_or_else(|| PatientError::InvalidInput("Missing Author".to_string()))?,
+                role: author_role.ok_or_else(|| {
+                    PatientError::InvalidInput("Missing or invalid Role".to_string())
+                })?,
+            },
+            body: body.clone(),
+        };
+
+        Ok(Message { metadata, body })
+    }
+}
+
+// Helper methods for escaping and unescaping body content
+impl MarkdownService {
+    /// Escapes markdown formatting characters in body content.
     ///
     /// Prevents unintended markdown interpretation by escaping line-start `#`,
     /// triple backticks, and standalone horizontal rule patterns.
     ///
     /// # Arguments
     ///
-    /// * `prose` - User-provided text content to escape
+    /// * `body` - User-provided text content to escape
     ///
     /// # Returns
     ///
-    /// Escaped prose with markdown syntax characters preceded by backslashes.
-    fn escape_prose(&self, prose: &str) -> String {
+    /// Escaped body with markdown syntax characters preceded by backslashes.
+    fn escape_body(&self, body: &str) -> String {
         let mut result = String::new();
-        let lines: Vec<&str> = prose.lines().collect();
+        let lines: Vec<&str> = body.lines().collect();
 
         for (i, line) in lines.iter().enumerate() {
             let trimmed = line.trim();
@@ -124,21 +453,21 @@ impl MarkdownService {
         result
     }
 
-    /// Unescapes markdown formatting characters in prose content.
+    /// Unescapes markdown formatting characters in body content.
     ///
-    /// Reverses escaping applied by `escape_prose`, restoring original markdown
+    /// Reverses escaping applied by `escape_body`, restoring original markdown
     /// syntax characters for display or further processing.
     ///
     /// # Arguments
     ///
-    /// * `prose` - Escaped text content to restore
+    /// * `body` - Escaped text content to restore
     ///
     /// # Returns
     ///
-    /// Unescaped prose with backslash escapes removed from markdown syntax.
-    pub fn unescape_prose(&self, prose: &str) -> String {
+    /// Unescaped body with backslash escapes removed from markdown syntax.
+    fn unescape_body(&self, body: &str) -> String {
         let mut result = String::new();
-        let lines: Vec<&str> = prose.lines().collect();
+        let lines: Vec<&str> = body.lines().collect();
 
         for (i, line) in lines.iter().enumerate() {
             let trimmed = line.trim();
@@ -177,51 +506,69 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_message_prepare_with_header_and_prose() {
+    fn test_thread_start_with_body() {
         let service = MarkdownService::new();
-        let result = service
-            .message_prepare(Some("# Title"), vec![], "Plain text content")
-            .unwrap();
-        assert_eq!(result, "# Title\n\nPlain text content");
+        let metadata = MessageMetadata {
+            message_id: Uuid::nil(),
+            timestamp: DateTime::parse_from_rfc3339("2026-01-22T10:30:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+            author: MessageAuthor {
+                id: Uuid::nil(),
+                name: "Test Author".to_string(),
+                role: AuthorRole::Clinician,
+            },
+            body: "Plain text content".to_string(),
+        };
+        let result = service.new_thread_render("Title", &metadata, None).unwrap();
+        assert!(result.starts_with("# Title\n\n"));
+        assert!(result.contains("Plain text content"));
     }
 
     #[test]
-    fn test_message_prepare_escapes_hash_in_prose() {
+    fn test_message_prepare_escapes_hash_in_body() {
         let service = MarkdownService::new();
-        let prose = "Patient #12345 has condition\n# This should be escaped";
-        let result = service.message_prepare(None, vec![], prose).unwrap();
+        let body = "Patient #12345 has condition\n# This should be escaped";
+        let result = service
+            .message_render(vec![("Key", "Value")], body)
+            .unwrap();
         assert_eq!(
             result,
-            "Patient #12345 has condition\n\\# This should be escaped"
+            "**Key:** Value\n\nPatient #12345 has condition\n\\# This should be escaped"
         );
     }
 
     #[test]
     fn test_message_prepare_escapes_code_blocks() {
         let service = MarkdownService::new();
-        let prose = "Example code: ```python\nprint('hello')\n```";
-        let result = service.message_prepare(None, vec![], prose).unwrap();
+        let body = "Example code: ```python\nprint('hello')\n```";
+        let result = service
+            .message_render(vec![("Key", "Value")], body)
+            .unwrap();
         assert_eq!(
             result,
-            "Example code: \\`\\`\\`python\nprint('hello')\n\\`\\`\\`"
+            "**Key:** Value\n\nExample code: \\`\\`\\`python\nprint('hello')\n\\`\\`\\`"
         );
     }
 
     #[test]
     fn test_message_prepare_escapes_horizontal_rules() {
         let service = MarkdownService::new();
-        let prose = "Line 1\n---\nLine 2\n***\nLine 3\n___";
-        let result = service.message_prepare(None, vec![], prose).unwrap();
-        assert_eq!(result, "Line 1\n\\---\nLine 2\n\\***\nLine 3\n\\___");
+        let body = "Line 1\n---\nLine 2\n***\nLine 3\n___";
+        let result = service
+            .message_render(vec![("Key", "Value")], body)
+            .unwrap();
+        assert_eq!(
+            result,
+            "**Key:** Value\n\nLine 1\n\\---\nLine 2\n\\***\nLine 3\n\\___"
+        );
     }
 
     #[test]
     fn test_message_prepare_with_variables() {
         let service = MarkdownService::new();
         let variables = vec![("Status", "Active"), ("Priority", "High")];
-        let result = service
-            .message_prepare(None, variables, "Some content")
-            .unwrap();
+        let result = service.message_render(variables, "Some content").unwrap();
         assert_eq!(
             result,
             "**Status:** Active\n**Priority:** High\n\nSome content"
@@ -229,59 +576,87 @@ mod tests {
     }
 
     #[test]
-    fn test_message_prepare_header_without_hash_fails() {
+    fn test_thread_start_empty_header_fails() {
         let service = MarkdownService::new();
-        let result = service.message_prepare(Some("Not a header"), vec![], "content");
+        let metadata = MessageMetadata {
+            message_id: Uuid::nil(),
+            timestamp: DateTime::parse_from_rfc3339("2026-01-22T10:30:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+            author: MessageAuthor {
+                id: Uuid::nil(),
+                name: "Test".to_string(),
+                role: AuthorRole::System,
+            },
+            body: "content".to_string(),
+        };
+        let result = service.new_thread_render("", &metadata, None);
         assert!(result.is_err());
     }
+
     #[test]
-    fn test_message_prepare_empty_prose_fails() {
+    fn test_message_render_empty_variables_fails() {
         let service = MarkdownService::new();
-        let result = service.message_prepare(None, vec![], "");
+        let result = service.message_render(vec![], "content");
         assert!(result.is_err());
-        let result2 = service.message_prepare(None, vec![], "   ");
+    }
+
+    #[test]
+    fn test_message_prepare_empty_body_fails() {
+        let service = MarkdownService::new();
+        let result = service.message_render(vec![("Key", "Value")], "");
+        assert!(result.is_err());
+        let result2 = service.message_render(vec![("Key", "Value")], "   ");
         assert!(result2.is_err());
     }
     #[test]
-    fn test_message_prepare_full_example() {
+    fn test_thread_start_full_example() {
         let service = MarkdownService::new();
-        let variables = vec![("Patient ID", "12345"), ("Severity", "Medium")];
-        let prose = "Patient #12345 presented with symptoms.\n# Important note\nSee details.";
+        let body = "Patient #12345 presented with symptoms.\n# Important note\nSee details.";
+        let metadata = MessageMetadata {
+            message_id: Uuid::nil(),
+            timestamp: DateTime::parse_from_rfc3339("2026-01-22T10:30:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+            author: MessageAuthor {
+                id: Uuid::nil(),
+                name: "Test Author".to_string(),
+                role: AuthorRole::Clinician,
+            },
+            body: body.to_string(),
+        };
 
         let result = service
-            .message_prepare(Some("## Clinical Update"), variables, prose)
+            .new_thread_render("Clinical Update", &metadata, None)
             .unwrap();
 
-        let expected = "## Clinical Update\n\n\
-                       **Patient ID:** 12345\n\
-                       **Severity:** Medium\n\n\
-                       Patient #12345 presented with symptoms.\n\
-                       \\# Important note\n\
-                       See details.";
-        assert_eq!(result, expected);
+        assert!(result.starts_with("# Clinical Update\n\n"));
+        assert!(result.contains("Patient #12345 presented with symptoms."));
+        assert!(result.contains("\\# Important note"));
+        assert!(result.contains("See details."));
     }
 
     #[test]
-    fn test_unescape_prose_hash() {
+    fn test_unescape_body_hash() {
         let service = MarkdownService::new();
         let escaped = "Patient #12345 has condition\n\\# This was escaped";
-        let result = service.unescape_prose(escaped);
+        let result = service.unescape_body(escaped);
         assert_eq!(result, "Patient #12345 has condition\n# This was escaped");
     }
 
     #[test]
-    fn test_unescape_prose_code_blocks() {
+    fn test_unescape_body_code_blocks() {
         let service = MarkdownService::new();
         let escaped = "Example code: \\`\\`\\`python\nprint('hello')\n\\`\\`\\`";
-        let result = service.unescape_prose(escaped);
+        let result = service.unescape_body(escaped);
         assert_eq!(result, "Example code: ```python\nprint('hello')\n```");
     }
 
     #[test]
-    fn test_unescape_prose_horizontal_rules() {
+    fn test_unescape_body_horizontal_rules() {
         let service = MarkdownService::new();
         let escaped = "Line 1\n\\---\nLine 2\n\\***\nLine 3\n\\___";
-        let result = service.unescape_prose(escaped);
+        let result = service.unescape_body(escaped);
         assert_eq!(result, "Line 1\n---\nLine 2\n***\nLine 3\n___");
     }
 
@@ -289,8 +664,150 @@ mod tests {
     fn test_escape_unescape_roundtrip() {
         let service = MarkdownService::new();
         let original = "Patient #12345\n# Important\n---\n```code```";
-        let escaped = service.escape_prose(original);
-        let unescaped = service.unescape_prose(&escaped);
+        let escaped = service.escape_body(original);
+        let unescaped = service.unescape_body(&escaped);
         assert_eq!(unescaped, original);
+    }
+
+    #[test]
+    fn test_parse_thread_single_message_with_all_fields() {
+        let service = MarkdownService::new();
+        let content = "# Thread Title\n\n**Message ID:** 550e8400-e29b-41d4-a716-446655440000\n**Timestamp:** 2026-01-22T10:30:00Z\n**Author ID:** 550e8400-e29b-41d4-a716-446655440001\n**Author:** Dr Smith\n**Role:** Clinician\n\nPatient presented with symptoms.";
+
+        let messages = service.thread_parse(content).unwrap();
+        assert_eq!(messages.len(), 1);
+
+        let msg = &messages[0];
+        assert_eq!(msg.metadata.author.name, "Dr Smith");
+        assert_eq!(msg.metadata.author.role, AuthorRole::Clinician);
+        assert_eq!(msg.body, "Patient presented with symptoms.");
+    }
+
+    #[test]
+    fn test_parse_thread_single_message_body_only() {
+        let service = MarkdownService::new();
+        let content = "**Message ID:** 550e8400-e29b-41d4-a716-446655440000\n**Timestamp:** 2026-01-22T10:30:00Z\n**Author ID:** 550e8400-e29b-41d4-a716-446655440001\n**Author:** System\n**Role:** System\n\nSimple body content.";
+
+        let messages = service.thread_parse(content).unwrap();
+        assert_eq!(messages.len(), 1);
+
+        let msg = &messages[0];
+        assert_eq!(msg.metadata.author.name, "System");
+        assert_eq!(msg.body, "Simple body content.");
+    }
+
+    #[test]
+    fn test_parse_thread_multiple_messages() {
+        let service = MarkdownService::new();
+        let content = "# Thread Title\n\n**Status:** Active\n\nFirst content\n\n---\n\n**Status:** Completed\n\nSecond content";
+
+        let messages = service.thread_parse(content).unwrap();
+        assert_eq!(messages.len(), 2);
+
+        assert_eq!(messages[0].body, "First content");
+        assert_eq!(messages[1].body, "Second content");
+    }
+
+    #[test]
+    fn test_parse_thread_unescapes_body() {
+        let service = MarkdownService::new();
+        let content = "# Thread Title\n\n**Author:** Dr Jones\n\nPatient presented.\n\\# Important note\n\\`\\`\\`code\\`\\`\\`";
+
+        let messages = service.thread_parse(content).unwrap();
+        assert_eq!(messages.len(), 1);
+
+        assert_eq!(
+            messages[0].body,
+            "Patient presented.\n# Important note\n```code```"
+        );
+    }
+
+    #[test]
+    fn test_parse_thread_empty_content() {
+        let service = MarkdownService::new();
+        let result = service.thread_parse("");
+        assert!(result.is_err());
+
+        let result2 = service.thread_parse("   \n  \n  ");
+        assert!(result2.is_err());
+    }
+
+    #[test]
+    fn test_parse_thread_message_without_body_fails() {
+        let service = MarkdownService::new();
+        let content = "# Thread Title\n\n**Variable:** Value";
+
+        let result = service.thread_parse(content);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_thread_roundtrip() {
+        let service = MarkdownService::new();
+
+        // Create a message
+        let msg_id = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        let author_id = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440001").unwrap();
+        let body = "Patient #12345 update\n# Important\n```code```";
+        let metadata = MessageMetadata {
+            message_id: msg_id,
+            timestamp: DateTime::parse_from_rfc3339("2026-01-22T10:30:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+            author: MessageAuthor {
+                id: author_id,
+                name: "Dr Smith".to_string(),
+                role: AuthorRole::Clinician,
+            },
+            body: body.to_string(),
+        };
+        let created = service
+            .new_thread_render("Clinical Note", &metadata, None)
+            .unwrap();
+
+        // Parse it back
+        let parsed = service.thread_parse(&created).unwrap();
+        assert_eq!(parsed.len(), 1);
+
+        let msg = &parsed[0];
+        assert_eq!(msg.metadata.author.name, "Dr Smith");
+        assert_eq!(msg.metadata.author.role, AuthorRole::Clinician);
+        assert_eq!(msg.body, body);
+    }
+
+    #[test]
+    fn test_parse_thread_multiple_messages_roundtrip() {
+        let service = MarkdownService::new();
+
+        // Create first message with new_thread_render
+        let metadata1 = MessageMetadata {
+            message_id: Uuid::nil(),
+            timestamp: DateTime::parse_from_rfc3339("2026-01-22T10:30:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+            author: MessageAuthor {
+                id: Uuid::nil(),
+                name: "Author 1".to_string(),
+                role: AuthorRole::Clinician,
+            },
+            body: "First message content".to_string(),
+        };
+        let msg1 = service
+            .new_thread_render("Care Coordination", &metadata1, None)
+            .unwrap();
+
+        // Create second message with message_render
+        let msg2 = service
+            .message_render(vec![("ID", "2")], "Second message content")
+            .unwrap();
+
+        // Combine with separator
+        let thread = format!("{}\n\n---\n\n{}", msg1, msg2);
+
+        // Parse back
+        let parsed = service.thread_parse(&thread).unwrap();
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].body, "First message content");
+        assert_eq!(parsed[1].body, "Second message content");
     }
 }

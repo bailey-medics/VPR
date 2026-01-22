@@ -16,13 +16,15 @@ use crate::author::Author;
 use crate::config::CoreConfig;
 use crate::constants::COORDINATION_DIR_NAME;
 use crate::error::{PatientError, PatientResult};
+use crate::markdown::{MarkdownService, MessageMetadata};
 use crate::repositories::shared::create_uuid_and_shard_dir;
 use crate::versioned_files::{
     CoordinationDomain, FileToWrite, VersionedFileService, VprCommitAction, VprCommitDomain,
     VprCommitMessage,
 };
 use crate::ShardableUuid;
-use fhir::{CoordinationStatus, CoordinationStatusData, LifecycleState};
+use chrono::Utc;
+use fhir::{CoordinationStatus, CoordinationStatusData, LifecycleState, MessageAuthor};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -175,7 +177,7 @@ impl CoordinationService<Initialised> {
     /// * `author` - The author creating the thread (validated for commit permissions)
     /// * `care_location` - The care location context for the Git commit message
     /// * `authors` - Initial list of thread participants with roles
-    /// * `initial_message` - Optional first message to include when creating the thread
+    /// * `initial_message` - Initial message to include when creating the thread (required)
     ///
     /// # Returns
     ///
@@ -189,12 +191,13 @@ impl CoordinationService<Initialised> {
     /// - Directory creation fails - [`PatientError::PatientDirCreation`]
     /// - Ledger serialization fails - [`PatientError::InvalidInput`]
     /// - File write or Git commit fails - [`PatientError::FileWrite`], various Git errors
-    pub fn create_thread(
+    /// - Initial message body is empty - [`PatientError::InvalidInput`]
+    pub fn thread_create(
         &self,
         author: &Author,
         care_location: String,
-        authors: Vec<MessageAuthor>,
-        initial_message: Option<MessageContent>,
+        message_authors: Vec<MessageAuthor>,
+        initial_message: MessageContent,
     ) -> PatientResult<TimestampId> {
         author.validate_commit_author()?;
 
@@ -205,40 +208,54 @@ impl CoordinationService<Initialised> {
             care_location,
         )?;
 
+        validate_message_authors(&message_authors)?;
+
+        if initial_message.body.trim().is_empty() {
+            return Err(PatientError::InvalidInput(
+                "Initial message body must not be empty".to_string(),
+            ));
+        }
+
         let thread_id = TimestampIdGenerator::generate(None)?;
         let coordination_dir = self.coordination_dir(self.coordination_id());
 
-        // Create initial messages.md
-        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-        let mut messages_content = "# Messages\n\n".to_string();
+        let now = Utc::now();
+        let message_id = generate_message_id();
 
-        // Add initial message if provided
-        if let Some(msg_content) = initial_message {
-            // TODO why a helper function here?
-            let message_id = generate_message_id();
-            messages_content.push_str(&format_message(&msg_content, message_id, &now));
-        }
+        let metadata = MessageMetadata {
+            message_id,
+            timestamp: now,
+            author: initial_message.author.clone(),
+            body: initial_message.body.clone(),
+        };
 
-        // Create ledger.yaml
-        let ledger = ThreadLedger {
-            thread_id: thread_id.to_string(),
-            status: ThreadStatus::Open,
-            created_at: now.clone(),
+        let markdown_service = MarkdownService::new();
+        let messages_content =
+            markdown_service.new_thread_render("Messages", &metadata, initial_message.corrects)?;
+
+        let ledger_data = fhir::LedgerData {
+            thread_id,
+            status: fhir::ThreadStatus::Open,
+            created_at: now,
             last_updated_at: now,
-            participants: authors,
-            visibility: Visibility {
-                sensitivity: SensitivityLevel::Standard,
+            participants: message_authors.clone(),
+            visibility: fhir::LedgerVisibility {
+                sensitivity: "standard".to_string(),
                 restricted: false,
             },
-            policies: Policies {
+            policies: fhir::LedgerPolicies {
                 allow_patient_participation: true,
                 allow_external_organisations: true,
             },
         };
-        let ledger_content = serialize_ledger(&ledger)?;
+
+        let ledger_content = fhir::Messaging::ledger_render(&ledger_data).map_err(|e| {
+            PatientError::InvalidInput(format!("Failed to serialise ledger: {}", e))
+        })?;
 
         // Construct relative paths directly
-        let thread_relative_dir = Path::new("communications").join(thread_id.to_string());
+        let thread_relative_dir =
+            Path::new("communications").join(ledger_data.thread_id.to_string());
         let messages_relative = thread_relative_dir.join("messages.md");
         let ledger_relative = thread_relative_dir.join("ledger.yaml");
 
@@ -262,7 +279,7 @@ impl CoordinationService<Initialised> {
             &files_to_write,
         )?;
 
-        Ok(thread_id)
+        Ok(ledger_data.thread_id)
     }
 
     /// Adds a message to an existing thread.
@@ -273,7 +290,7 @@ impl CoordinationService<Initialised> {
     /// - Correction reference if applicable
     ///
     /// Atomic operation: write + Git commit.
-    pub fn add_message(
+    pub fn message_add(
         &self,
         author: &Author,
         care_location: String,
@@ -302,22 +319,66 @@ impl CoordinationService<Initialised> {
 
         // Generate message ID and timestamp
         let message_id = generate_message_id();
-        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let now = Utc::now();
 
-        // Format message
-        let formatted_message = format_message(&message, message_id, &now);
+        // Format message using MarkdownService
+        let metadata = MessageMetadata {
+            message_id,
+            timestamp: now,
+            author: message.author.clone(),
+            body: message.body.clone(),
+        };
+
+        let markdown_service = MarkdownService::new();
+        let formatted_message =
+            markdown_service.message_render_from_metadata(&metadata, message.corrects)?;
+        let message_with_separator = format!("{}\n---\n\n", formatted_message);
 
         // Read existing content and append
         let existing_content =
             fs::read_to_string(&messages_path).map_err(PatientError::FileRead)?;
-        let new_content = format!("{}{}", existing_content, formatted_message);
+        let new_content = format!("{}{}", existing_content, message_with_separator);
 
         // Update ledger last_updated_at
         let ledger_path = thread_dir.join("ledger.yaml");
         let ledger_content = fs::read_to_string(&ledger_path).map_err(PatientError::FileRead)?;
         let mut ledger = deserialize_ledger(&ledger_content)?;
-        ledger.last_updated_at = now.clone();
-        let updated_ledger_content = serialize_ledger(&ledger)?;
+        ledger.last_updated_at = now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+
+        // Convert ThreadLedger to fhir::LedgerData and render
+        let ledger_data = fhir::LedgerData {
+            thread_id: ledger.thread_id.parse().map_err(|e| {
+                PatientError::InvalidInput(format!("Invalid thread_id format: {}", e))
+            })?,
+            status: match ledger.status {
+                ThreadStatus::Open => fhir::ThreadStatus::Open,
+                ThreadStatus::Closed => fhir::ThreadStatus::Closed,
+                ThreadStatus::Archived => fhir::ThreadStatus::Archived,
+            },
+            created_at: chrono::DateTime::parse_from_rfc3339(&ledger.created_at)
+                .map_err(|e| PatientError::InvalidInput(format!("Invalid created_at: {}", e)))?
+                .with_timezone(&Utc),
+            last_updated_at: chrono::DateTime::parse_from_rfc3339(&ledger.last_updated_at)
+                .map_err(|e| PatientError::InvalidInput(format!("Invalid last_updated_at: {}", e)))?
+                .with_timezone(&Utc),
+            participants: ledger.participants.clone(),
+            visibility: fhir::LedgerVisibility {
+                sensitivity: match ledger.visibility.sensitivity {
+                    SensitivityLevel::Standard => "standard".to_string(),
+                    SensitivityLevel::Confidential => "confidential".to_string(),
+                    SensitivityLevel::Restricted => "restricted".to_string(),
+                },
+                restricted: ledger.visibility.restricted,
+            },
+            policies: fhir::LedgerPolicies {
+                allow_patient_participation: ledger.policies.allow_patient_participation,
+                allow_external_organisations: ledger.policies.allow_external_organisations,
+            },
+        };
+
+        let updated_ledger_content = fhir::Messaging::ledger_render(&ledger_data).map_err(|e| {
+            PatientError::InvalidInput(format!("Failed to serialise ledger: {}", e))
+        })?;
 
         // Write and commit
         let messages_relative = messages_path
@@ -439,11 +500,42 @@ impl CoordinationService<Initialised> {
         }
 
         // Update timestamp
-        ledger.last_updated_at =
-            chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        ledger.last_updated_at = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
 
-        // Serialise and write
-        let new_content = serialize_ledger(&ledger)?;
+        // Convert ThreadLedger to fhir::LedgerData and render
+        let ledger_data = fhir::LedgerData {
+            thread_id: ledger.thread_id.parse().map_err(|e| {
+                PatientError::InvalidInput(format!("Invalid thread_id format: {}", e))
+            })?,
+            status: match ledger.status {
+                ThreadStatus::Open => fhir::ThreadStatus::Open,
+                ThreadStatus::Closed => fhir::ThreadStatus::Closed,
+                ThreadStatus::Archived => fhir::ThreadStatus::Archived,
+            },
+            created_at: chrono::DateTime::parse_from_rfc3339(&ledger.created_at)
+                .map_err(|e| PatientError::InvalidInput(format!("Invalid created_at: {}", e)))?
+                .with_timezone(&Utc),
+            last_updated_at: chrono::DateTime::parse_from_rfc3339(&ledger.last_updated_at)
+                .map_err(|e| PatientError::InvalidInput(format!("Invalid last_updated_at: {}", e)))?
+                .with_timezone(&Utc),
+            participants: ledger.participants.clone(),
+            visibility: fhir::LedgerVisibility {
+                sensitivity: match ledger.visibility.sensitivity {
+                    SensitivityLevel::Standard => "standard".to_string(),
+                    SensitivityLevel::Confidential => "confidential".to_string(),
+                    SensitivityLevel::Restricted => "restricted".to_string(),
+                },
+                restricted: ledger.visibility.restricted,
+            },
+            policies: fhir::LedgerPolicies {
+                allow_patient_participation: ledger.policies.allow_patient_participation,
+                allow_external_organisations: ledger.policies.allow_external_organisations,
+            },
+        };
+
+        let new_content = fhir::Messaging::ledger_render(&ledger_data).map_err(|e| {
+            PatientError::InvalidInput(format!("Failed to serialise ledger: {}", e))
+        })?;
 
         let ledger_relative = ledger_path
             .strip_prefix(&coordination_dir)
@@ -470,31 +562,11 @@ impl CoordinationService<Initialised> {
 // DATA STRUCTURES
 // ============================================================================
 
-/// Represents a message author in a messaging thread.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct MessageAuthor {
-    pub id: Uuid,
-    pub name: String,
-    pub role: AuthorRole,
-}
-
-/// Role of a message author in care coordination.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum AuthorRole {
-    Clinician,
-    CareAdministrator,
-    Patient,
-    PatientAssociate,
-    System,
-}
-
 /// Content of a message to be added to a thread.
 #[derive(Clone, Debug)]
 pub struct MessageContent {
-    pub author_role: AuthorRole,
-    pub author_id: Uuid,
-    pub author_display_name: String,
-    pub body: String,           // Markdown content
+    pub author: MessageAuthor,
+    pub body: String,
     pub corrects: Option<Uuid>, // For correction messages
 }
 
@@ -511,9 +583,7 @@ pub struct Thread {
 pub struct Message {
     pub message_id: Uuid,
     pub timestamp: String, // ISO 8601
-    pub author_role: AuthorRole,
-    pub author_id: Uuid,
-    pub author_display_name: String,
+    pub author: MessageAuthor,
     pub body: String, // Markdown content
     pub corrects: Option<Uuid>,
 }
@@ -578,9 +648,9 @@ impl<S> CoordinationService<S> {
     }
 
     /// Returns the path to a specific patient's coordination record directory.
-    fn coordination_dir(&self, coordination_uuid: &ShardableUuid) -> PathBuf {
+    fn coordination_dir(&self, coordination_id: &ShardableUuid) -> PathBuf {
         let coordination_root_dir = self.coordination_root_dir();
-        coordination_uuid.sharded_dir(&coordination_root_dir)
+        coordination_id.sharded_dir(&coordination_root_dir)
     }
 }
 
@@ -598,31 +668,33 @@ fn thread_dir(coordination_dir: &Path, thread_id: &str) -> PathBuf {
     coordination_dir.join("communications").join(thread_id)
 }
 
-/// Formats a message for appending to messages.md.
-fn format_message(message: &MessageContent, message_id: Uuid, timestamp: &str) -> String {
-    let role_str = match message.author_role {
-        AuthorRole::Clinician => "clinician",
-        AuthorRole::CareAdministrator => "careadministrator",
-        AuthorRole::Patient => "patient",
-        AuthorRole::PatientAssociate => "patientassociate",
-        AuthorRole::System => "system",
-    };
-
-    let mut output = format!(
-        "**Message ID:** `{}`  \n**Timestamp:** {}  \n**Author ID:** `{}`  \n**Author name:** {}  \n**Author role:** **{}**  \n",
-        message_id,
-        timestamp,
-        message.author_id,
-        message.author_display_name,
-        role_str
-    );
-
-    if let Some(corrects_id) = message.corrects {
-        output.push_str(&format!("**Corrects:** `{}`  \n", corrects_id));
+/// Validates that authors list is not empty and all author names contain content.
+///
+/// # Arguments
+///
+/// * `authors` - List of thread participants to validate
+///
+/// # Errors
+///
+/// Returns `PatientError::InvalidInput` if:
+/// - Authors list is empty
+/// - Any author name is empty or whitespace-only
+fn validate_message_authors(authors: &[MessageAuthor]) -> PatientResult<()> {
+    if authors.is_empty() {
+        return Err(PatientError::InvalidInput(
+            "Authors list must not be empty".to_string(),
+        ));
     }
 
-    output.push_str(&format!("\n{}\n\n---\n", message.body));
-    output
+    for author in authors {
+        if author.name.trim().is_empty() {
+            return Err(PatientError::InvalidInput(
+                "Author name must not be empty".to_string(),
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 /// Parses messages.md into structured Message objects.
@@ -636,10 +708,10 @@ fn parse_messages_md(content: &str) -> PatientResult<Vec<Message>> {
         if lines[i].starts_with("**Message ID:**") {
             // Parse metadata
             let mut message_id: Option<Uuid> = None;
-            let mut author_role: Option<AuthorRole> = None;
+            let mut author_role: Option<fhir::AuthorRole> = None;
             let mut timestamp: Option<String> = None;
             let mut author_id: Option<Uuid> = None;
-            let mut author_display_name: Option<String> = None;
+            let mut author_name: Option<String> = None;
             let mut corrects: Option<Uuid> = None;
 
             while i < lines.len() && lines[i].starts_with("**") {
@@ -654,19 +726,10 @@ fn parse_messages_md(content: &str) -> PatientResult<Vec<Message>> {
                         })?);
                 } else if line.starts_with("**Author role:**") {
                     let role_str = line.trim_start_matches("**Author role:** ").trim();
-                    author_role = Some(match role_str {
-                        "clinician" => AuthorRole::Clinician,
-                        "careadministrator" => AuthorRole::CareAdministrator,
-                        "patient" => AuthorRole::Patient,
-                        "patientassociate" => AuthorRole::PatientAssociate,
-                        "system" => AuthorRole::System,
-                        _ => {
-                            return Err(PatientError::InvalidInput(format!(
-                                "Invalid author role: {}",
-                                role_str
-                            )))
-                        }
-                    });
+                    author_role = Some(
+                        fhir::AuthorRole::parse(role_str)
+                            .map_err(|e| PatientError::InvalidInput(e.to_string()))?,
+                    );
                 } else if line.starts_with("**Timestamp:**") {
                     timestamp = Some(
                         line.trim_start_matches("**Timestamp:** ")
@@ -682,7 +745,7 @@ fn parse_messages_md(content: &str) -> PatientResult<Vec<Message>> {
                             PatientError::InvalidInput(format!("Invalid UUID: {}", e))
                         })?);
                 } else if line.starts_with("**Author name:**") {
-                    author_display_name = Some(
+                    author_name = Some(
                         line.trim_start_matches("**Author name:** ")
                             .trim()
                             .to_string(),
@@ -714,19 +777,17 @@ fn parse_messages_md(content: &str) -> PatientResult<Vec<Message>> {
             let body = body_lines.join("\n").trim().to_string();
 
             // Construct message
-            if let (Some(msg_id), Some(role), Some(ts), Some(auth_id), Some(auth_name)) = (
-                message_id,
-                author_role,
-                timestamp,
-                author_id,
-                author_display_name,
-            ) {
+            if let (Some(msg_id), Some(role), Some(ts), Some(auth_id), Some(auth_name)) =
+                (message_id, author_role, timestamp, author_id, author_name)
+            {
                 messages.push(Message {
                     message_id: msg_id,
                     timestamp: ts,
-                    author_role: role,
-                    author_id: auth_id,
-                    author_display_name: auth_name,
+                    author: MessageAuthor {
+                        id: auth_id,
+                        name: auth_name,
+                        role,
+                    },
                     body,
                     corrects,
                 });
@@ -736,59 +797,6 @@ fn parse_messages_md(content: &str) -> PatientResult<Vec<Message>> {
     }
 
     Ok(messages)
-}
-
-/// Serialises ThreadLedger to YAML for ledger.yaml.
-fn serialize_ledger(ledger: &ThreadLedger) -> PatientResult<String> {
-    // Convert ThreadLedger to fhir::LedgerData
-    let ledger_data = fhir::LedgerData {
-        thread_id: ledger
-            .thread_id
-            .parse()
-            .map_err(|e| PatientError::InvalidInput(format!("Invalid thread_id format: {}", e)))?,
-        status: match ledger.status {
-            ThreadStatus::Open => fhir::ThreadStatus::Open,
-            ThreadStatus::Closed => fhir::ThreadStatus::Closed,
-            ThreadStatus::Archived => fhir::ThreadStatus::Archived,
-        },
-        created_at: chrono::DateTime::parse_from_rfc3339(&ledger.created_at)
-            .map_err(|e| PatientError::InvalidInput(format!("Invalid created_at: {}", e)))?
-            .with_timezone(&chrono::Utc),
-        last_updated_at: chrono::DateTime::parse_from_rfc3339(&ledger.last_updated_at)
-            .map_err(|e| PatientError::InvalidInput(format!("Invalid last_updated_at: {}", e)))?
-            .with_timezone(&chrono::Utc),
-        participants: ledger
-            .participants
-            .iter()
-            .map(|p| fhir::LedgerParticipant {
-                participant_id: p.id,
-                display_name: p.name.clone(),
-                role: match p.role {
-                    AuthorRole::Clinician => fhir::ParticipantRole::Clinician,
-                    AuthorRole::CareAdministrator => fhir::ParticipantRole::CareAdministrator,
-                    AuthorRole::Patient => fhir::ParticipantRole::Patient,
-                    AuthorRole::PatientAssociate => fhir::ParticipantRole::PatientAssociate,
-                    AuthorRole::System => fhir::ParticipantRole::System,
-                },
-                organisation: None,
-            })
-            .collect(),
-        visibility: fhir::LedgerVisibility {
-            sensitivity: match ledger.visibility.sensitivity {
-                SensitivityLevel::Standard => "standard".to_string(),
-                SensitivityLevel::Confidential => "confidential".to_string(),
-                SensitivityLevel::Restricted => "restricted".to_string(),
-            },
-            restricted: ledger.visibility.restricted,
-        },
-        policies: fhir::LedgerPolicies {
-            allow_patient_participation: ledger.policies.allow_patient_participation,
-            allow_external_organisations: ledger.policies.allow_external_organisations,
-        },
-    };
-
-    fhir::Messaging::ledger_render(&ledger_data)
-        .map_err(|e| PatientError::InvalidInput(format!("Failed to serialise ledger: {}", e)))
 }
 
 /// Deserialises ledger.yaml into ThreadLedger.
@@ -815,15 +823,9 @@ fn deserialize_ledger(content: &str) -> PatientResult<ThreadLedger> {
             .participants
             .iter()
             .map(|p| MessageAuthor {
-                id: p.participant_id,
-                name: p.display_name.clone(),
-                role: match p.role {
-                    fhir::ParticipantRole::Clinician => AuthorRole::Clinician,
-                    fhir::ParticipantRole::CareAdministrator => AuthorRole::CareAdministrator,
-                    fhir::ParticipantRole::Patient => AuthorRole::Patient,
-                    fhir::ParticipantRole::PatientAssociate => AuthorRole::PatientAssociate,
-                    fhir::ParticipantRole::System => AuthorRole::System,
-                },
+                id: p.id,
+                name: p.name.clone(),
+                role: p.role,
             })
             .collect(),
         visibility: Visibility {

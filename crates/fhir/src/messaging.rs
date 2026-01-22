@@ -20,6 +20,15 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 // ============================================================================
+// Public exports for external use
+// ============================================================================
+// These re-exports provide messaging-focused naming conventions for external consumers
+// while maintaining FHIR-aligned internal naming (MessageParticipant, ParticipantRole).
+
+pub use MessageParticipant as MessageAuthor;
+pub use ParticipantRole as AuthorRole;
+
+// ============================================================================
 // Public domain-level types
 // ============================================================================
 
@@ -42,7 +51,7 @@ pub struct LedgerData {
     pub last_updated_at: DateTime<Utc>,
 
     /// Participants in this thread with their roles and display information.
-    pub participants: Vec<LedgerParticipant>,
+    pub participants: Vec<MessageParticipant>,
 
     /// Visibility and sensitivity settings for this thread.
     pub visibility: LedgerVisibility,
@@ -63,25 +72,24 @@ pub enum ThreadStatus {
     Archived,
 }
 
-/// A participant in a messaging thread.
+/// A message participant in a messaging thread.
+///
+/// This represents a participant in a messaging thread with their identity,
+/// display name, and role.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LedgerParticipant {
+pub struct MessageParticipant {
     /// Unique identifier for this participant (UUID).
-    pub participant_id: Uuid,
+    pub id: Uuid,
 
     /// Human-readable display name for this participant.
-    pub display_name: String,
+    pub name: String,
 
     /// Role of this participant in the conversation.
     pub role: ParticipantRole,
-
-    /// Optional organisation affiliation.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub organisation: Option<String>,
 }
 
 /// Role of a participant in a messaging thread.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ParticipantRole {
     /// Clinical staff member.
@@ -94,6 +102,32 @@ pub enum ParticipantRole {
     PatientAssociate,
     /// System-generated participant (for automated messages).
     System,
+}
+
+impl ParticipantRole {
+    /// Parses a role from its string representation.
+    ///
+    /// # Arguments
+    ///
+    /// * `s` - String representation of the role (case-insensitive)
+    ///
+    /// # Returns
+    ///
+    /// Returns the matching `ParticipantRole` variant.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FhirError::InvalidInput`] if the string does not match any known role.
+    pub fn parse(s: &str) -> Result<Self, FhirError> {
+        match s.to_lowercase().as_str() {
+            "clinician" => Ok(Self::Clinician),
+            "careadministrator" => Ok(Self::CareAdministrator),
+            "patient" => Ok(Self::Patient),
+            "patientassociate" => Ok(Self::PatientAssociate),
+            "system" => Ok(Self::System),
+            _ => Err(FhirError::InvalidInput(format!("Invalid role: {}", s))),
+        }
+    }
 }
 
 /// Visibility and sensitivity settings for a thread.
@@ -220,8 +254,6 @@ struct Participant {
     pub participant_id: String,
     pub display_name: String,
     pub role: ParticipantRole,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub organisation: Option<String>,
 }
 
 /// Wire representation of visibility settings.
@@ -264,11 +296,10 @@ fn wire_to_domain(wire: Ledger) -> Result<LedgerData, FhirError> {
             ))
         })?;
 
-        participants.push(LedgerParticipant {
-            participant_id,
-            display_name: p.display_name.clone(),
-            role: p.role.clone(),
-            organisation: p.organisation.clone(),
+        participants.push(MessageParticipant {
+            id: participant_id,
+            name: p.display_name.clone(),
+            role: p.role,
         });
     }
 
@@ -300,10 +331,9 @@ fn domain_to_wire(data: &LedgerData) -> Ledger {
             .participants
             .iter()
             .map(|p| Participant {
-                participant_id: p.participant_id.to_string(),
-                display_name: p.display_name.clone(),
-                role: p.role.clone(),
-                organisation: p.organisation.clone(),
+                participant_id: p.id.to_string(),
+                display_name: p.name.clone(),
+                role: p.role,
             })
             .collect(),
         visibility: Visibility {
@@ -488,7 +518,6 @@ participants:
   - participant_id: 4f8c2a1d-9e3b-4a7c-8f1e-6b0d2c5a9f12
     role: clinician
     display_name: Dr Jane Smith
-    organisation: Test Hospital
   - participant_id: a1d3c5e7-f9b2-4680-b2d4-f6e8c0a9d1e3
     role: patient
     display_name: John Doe
@@ -504,11 +533,6 @@ policies:
         assert_eq!(result.participants.len(), 2);
         assert_eq!(result.participants[0].role, ParticipantRole::Clinician);
         assert_eq!(result.participants[1].role, ParticipantRole::Patient);
-        assert_eq!(
-            result.participants[0].organisation,
-            Some("Test Hospital".to_string())
-        );
-        assert_eq!(result.participants[1].organisation, None);
     }
 
     #[test]
