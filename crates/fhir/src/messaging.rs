@@ -20,13 +20,22 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 // ============================================================================
+// Public exports for external use
+// ============================================================================
+// These re-exports provide messaging-focused naming conventions for external consumers
+// while maintaining FHIR-aligned internal naming (MessageParticipant, ParticipantRole).
+
+pub use MessageParticipant as MessageAuthor;
+pub use ParticipantRole as AuthorRole;
+
+// ============================================================================
 // Public domain-level types
 // ============================================================================
 
-/// Domain-level carrier for thread ledger data.
+/// Public API struct for thread ledger data with flattened fields.
 ///
-/// This struct represents the contextual and policy metadata for a messaging thread
-/// in a format that is independent of specific wire formats.
+/// This struct provides a flat structure suitable for API consumption,
+/// without nested visibility or policies objects.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LedgerData {
     /// Unique identifier for this thread (timestamp-prefixed UUID).
@@ -42,7 +51,77 @@ pub struct LedgerData {
     pub last_updated_at: DateTime<Utc>,
 
     /// Participants in this thread with their roles and display information.
-    pub participants: Vec<LedgerParticipant>,
+    pub participants: Vec<MessageParticipant>,
+
+    /// Sensitivity level for this thread.
+    pub sensitivity: SensitivityLevel,
+
+    /// Whether access is restricted beyond normal rules.
+    pub restricted: bool,
+
+    /// Whether patient participation is allowed.
+    pub allow_patient_participation: bool,
+
+    /// Whether external organisations can participate.
+    pub allow_external_organisations: bool,
+}
+
+impl LedgerData {
+    /// Converts this flat structure to the nested LedgerDataNested format.
+    fn to_ledger_data_nested(&self) -> LedgerDataNested {
+        LedgerDataNested {
+            thread_id: self.thread_id.clone(),
+            status: self.status.clone(),
+            created_at: self.created_at,
+            last_updated_at: self.last_updated_at,
+            participants: self.participants.clone(),
+            visibility: LedgerVisibility {
+                sensitivity: self.sensitivity,
+                restricted: self.restricted,
+            },
+            policies: LedgerPolicies {
+                allow_patient_participation: self.allow_patient_participation,
+                allow_external_organisations: self.allow_external_organisations,
+            },
+        }
+    }
+
+    /// Creates a flat structure from the nested LedgerDataNested format.
+    fn from_ledger_data_nested(data: LedgerDataNested) -> Self {
+        Self {
+            thread_id: data.thread_id,
+            status: data.status,
+            created_at: data.created_at,
+            last_updated_at: data.last_updated_at,
+            participants: data.participants,
+            sensitivity: data.visibility.sensitivity,
+            restricted: data.visibility.restricted,
+            allow_patient_participation: data.policies.allow_patient_participation,
+            allow_external_organisations: data.policies.allow_external_organisations,
+        }
+    }
+}
+
+/// Internal nested carrier for thread ledger data.
+///
+/// This struct represents the contextual and policy metadata for a messaging thread
+/// with nested structures that match the YAML wire format.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct LedgerDataNested {
+    /// Unique identifier for this thread (timestamp-prefixed UUID).
+    pub thread_id: TimestampId,
+
+    /// Current status of the thread.
+    pub status: ThreadStatus,
+
+    /// Timestamp when the thread was created.
+    pub created_at: DateTime<Utc>,
+
+    /// Timestamp when the thread was last updated.
+    pub last_updated_at: DateTime<Utc>,
+
+    /// Participants in this thread with their roles and display information.
+    pub participants: Vec<MessageParticipant>,
 
     /// Visibility and sensitivity settings for this thread.
     pub visibility: LedgerVisibility,
@@ -63,25 +142,24 @@ pub enum ThreadStatus {
     Archived,
 }
 
-/// A participant in a messaging thread.
+/// A message participant in a messaging thread.
+///
+/// This represents a participant in a messaging thread with their identity,
+/// display name, and role.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LedgerParticipant {
+pub struct MessageParticipant {
     /// Unique identifier for this participant (UUID).
-    pub participant_id: Uuid,
+    pub id: Uuid,
 
     /// Human-readable display name for this participant.
-    pub display_name: String,
+    pub name: String,
 
     /// Role of this participant in the conversation.
     pub role: ParticipantRole,
-
-    /// Optional organisation affiliation.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub organisation: Option<String>,
 }
 
 /// Role of a participant in a messaging thread.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ParticipantRole {
     /// Clinical staff member.
@@ -96,11 +174,73 @@ pub enum ParticipantRole {
     System,
 }
 
+/// Sensitivity level for thread visibility.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SensitivityLevel {
+    /// Standard sensitivity - normal access controls apply.
+    Standard,
+    /// Confidential - restricted to care team only.
+    Confidential,
+    /// Restricted - highly sensitive, minimal access.
+    Restricted,
+}
+
+impl SensitivityLevel {
+    /// Parses a sensitivity level from its string representation.
+    pub fn parse(s: &str) -> Result<Self, FhirError> {
+        match s.to_lowercase().as_str() {
+            "standard" => Ok(Self::Standard),
+            "confidential" => Ok(Self::Confidential),
+            "restricted" => Ok(Self::Restricted),
+            _ => Err(FhirError::InvalidInput(format!(
+                "Invalid sensitivity level: {}",
+                s
+            ))),
+        }
+    }
+
+    /// Returns the string representation of this sensitivity level.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::Confidential => "confidential",
+            Self::Restricted => "restricted",
+        }
+    }
+}
+
+impl ParticipantRole {
+    /// Parses a role from its string representation.
+    ///
+    /// # Arguments
+    ///
+    /// * `s` - String representation of the role (case-insensitive)
+    ///
+    /// # Returns
+    ///
+    /// Returns the matching `ParticipantRole` variant.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FhirError::InvalidInput`] if the string does not match any known role.
+    pub fn parse(s: &str) -> Result<Self, FhirError> {
+        match s.to_lowercase().as_str() {
+            "clinician" => Ok(Self::Clinician),
+            "careadministrator" => Ok(Self::CareAdministrator),
+            "patient" => Ok(Self::Patient),
+            "patientassociate" => Ok(Self::PatientAssociate),
+            "system" => Ok(Self::System),
+            _ => Err(FhirError::InvalidInput(format!("Invalid role: {}", s))),
+        }
+    }
+}
+
 /// Visibility and sensitivity settings for a thread.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LedgerVisibility {
     /// Sensitivity level (standard, confidential, restricted).
-    pub sensitivity: String,
+    pub sensitivity: SensitivityLevel,
 
     /// Whether access is restricted beyond normal rules.
     pub restricted: bool,
@@ -168,7 +308,8 @@ impl Messaging {
         };
 
         // Convert wire format to domain types
-        wire_to_domain(wire)
+        let ledger_data_nested = wire_to_domain(wire)?;
+        Ok(LedgerData::from_ledger_data_nested(ledger_data_nested))
     }
 
     /// Render a thread ledger as YAML text.
@@ -177,7 +318,7 @@ impl Messaging {
     ///
     /// # Arguments
     ///
-    /// * `data` - Ledger data containing all fields.
+    /// * `ledger` - Thread ledger data containing all fields.
     ///
     /// # Returns
     ///
@@ -186,8 +327,9 @@ impl Messaging {
     /// # Errors
     ///
     /// Returns [`FhirError`] if serialization fails.
-    pub fn ledger_render(data: &LedgerData) -> Result<String, FhirError> {
-        let wire: Ledger = domain_to_wire(data);
+    pub fn ledger_render(ledger: &LedgerData) -> Result<String, FhirError> {
+        let ledger_data = ledger.to_ledger_data_nested();
+        let wire: Ledger = domain_to_wire(&ledger_data);
         serde_yaml::to_string(&wire)
             .map_err(|e| FhirError::Translation(format!("Failed to serialize ledger: {e}")))
     }
@@ -220,8 +362,6 @@ struct Participant {
     pub participant_id: String,
     pub display_name: String,
     pub role: ParticipantRole,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub organisation: Option<String>,
 }
 
 /// Wire representation of visibility settings.
@@ -247,7 +387,7 @@ struct Policies {
 /// Convert wire format ledger to domain types.
 ///
 /// This performs validation and conversion of string identifiers to proper types.
-fn wire_to_domain(wire: Ledger) -> Result<LedgerData, FhirError> {
+fn wire_to_domain(wire: Ledger) -> Result<LedgerDataNested, FhirError> {
     // Parse thread_id as TimestampId
     let thread_id = wire
         .thread_id
@@ -264,22 +404,21 @@ fn wire_to_domain(wire: Ledger) -> Result<LedgerData, FhirError> {
             ))
         })?;
 
-        participants.push(LedgerParticipant {
-            participant_id,
-            display_name: p.display_name.clone(),
-            role: p.role.clone(),
-            organisation: p.organisation.clone(),
+        participants.push(MessageParticipant {
+            id: participant_id,
+            name: p.display_name.clone(),
+            role: p.role,
         });
     }
 
-    Ok(LedgerData {
+    Ok(LedgerDataNested {
         thread_id,
         status: wire.status,
         created_at: wire.created_at,
         last_updated_at: wire.last_updated_at,
         participants,
         visibility: LedgerVisibility {
-            sensitivity: wire.visibility.sensitivity,
+            sensitivity: SensitivityLevel::parse(&wire.visibility.sensitivity)?,
             restricted: wire.visibility.restricted,
         },
         policies: LedgerPolicies {
@@ -290,7 +429,7 @@ fn wire_to_domain(wire: Ledger) -> Result<LedgerData, FhirError> {
 }
 
 /// Convert domain types to wire format ledger.
-fn domain_to_wire(data: &LedgerData) -> Ledger {
+fn domain_to_wire(data: &LedgerDataNested) -> Ledger {
     Ledger {
         thread_id: data.thread_id.to_string(),
         status: data.status.clone(),
@@ -300,14 +439,13 @@ fn domain_to_wire(data: &LedgerData) -> Ledger {
             .participants
             .iter()
             .map(|p| Participant {
-                participant_id: p.participant_id.to_string(),
-                display_name: p.display_name.clone(),
-                role: p.role.clone(),
-                organisation: p.organisation.clone(),
+                participant_id: p.id.to_string(),
+                display_name: p.name.clone(),
+                role: p.role,
             })
             .collect(),
         visibility: Visibility {
-            sensitivity: data.visibility.sensitivity.clone(),
+            sensitivity: data.visibility.sensitivity.as_str().to_string(),
             restricted: data.visibility.restricted,
         },
         policies: Policies {
@@ -474,8 +612,8 @@ policies:
         );
         assert_eq!(result.status, ThreadStatus::Open);
         assert!(result.participants.is_empty());
-        assert_eq!(result.visibility.sensitivity, "standard");
-        assert!(!result.visibility.restricted);
+        assert_eq!(result.sensitivity, SensitivityLevel::Standard);
+        assert!(!result.restricted);
     }
 
     #[test]
@@ -488,7 +626,6 @@ participants:
   - participant_id: 4f8c2a1d-9e3b-4a7c-8f1e-6b0d2c5a9f12
     role: clinician
     display_name: Dr Jane Smith
-    organisation: Test Hospital
   - participant_id: a1d3c5e7-f9b2-4680-b2d4-f6e8c0a9d1e3
     role: patient
     display_name: John Doe
@@ -504,11 +641,6 @@ policies:
         assert_eq!(result.participants.len(), 2);
         assert_eq!(result.participants[0].role, ParticipantRole::Clinician);
         assert_eq!(result.participants[1].role, ParticipantRole::Patient);
-        assert_eq!(
-            result.participants[0].organisation,
-            Some("Test Hospital".to_string())
-        );
-        assert_eq!(result.participants[1].organisation, None);
     }
 
     #[test]

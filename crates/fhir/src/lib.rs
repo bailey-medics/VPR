@@ -21,9 +21,7 @@ pub use messaging::Messaging;
 
 // Re-export public domain-level types
 pub use coordination_status::{CoordinationStatusData, LifecycleState};
-pub use messaging::{
-    LedgerData, LedgerParticipant, LedgerPolicies, LedgerVisibility, ParticipantRole, ThreadStatus,
-};
+pub use messaging::{AuthorRole, LedgerData, MessageAuthor, SensitivityLevel, ThreadStatus};
 
 // Re-export TimestampId from vpr_uuid crate
 pub use vpr_uuid::TimestampId;
