@@ -1,30 +1,55 @@
 //! Patient demographics management.
 //!
 //! This module provides functionality for initialising and updating patient
-//! demographic information. It handles the creation of new patient records
-//! with unique identifiers, storage in a sharded directory structure, and
-//! version control using Git. Demographic updates include name and birth date
-//! modifications.
+//! demographic information within the VPR system. It handles:
+//!
+//! - Creation of new patient records with unique UUIDs
+//! - Storage in a sharded directory structure under `patient_data/demographics/`
+//! - Version control using Git with signed commits
+//! - Updates to patient name and birth date information
+//!
+//! ## Storage Layout
+//!
+//! Demographics are stored as JSON files in a sharded structure:
+//!
+//! ```text
+//! demographics/
+//!   <s1>/
+//!     <s2>/
+//!       <uuid>/
+//!         patient.json    # FHIR-like patient resource
+//!         .git/           # Git repository for versioning
+//! ```
+//!
+//! where `s1` and `s2` are the first four hex characters of the UUID, providing
+//! scalable directory sharding.
+//!
+//! ## Pure Data Operations
+//!
+//! This module contains **only** data operations—no API concerns such as
+//! authentication, HTTP/gRPC servers, or service interfaces. API-level logic
+//! belongs in `api-grpc`, `api-rest`, or `api-shared`.
 
 use crate::author::Author;
 use crate::config::CoreConfig;
+use crate::constants::{DEMOGRAPHICS_DIR_NAME, PATIENT_JSON_FILENAME};
 use crate::error::{PatientError, PatientResult};
 use crate::versioned_files::{
-    DemographicsDomain, VersionedFileService, VprCommitAction, VprCommitDomain, VprCommitMessage,
+    DemographicsDomain::Record, VersionedFileService, VprCommitAction, VprCommitDomain,
+    VprCommitMessage,
 };
 use crate::ShardableUuid;
 use api_shared::pb;
-use chrono;
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use serde_json;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tracing;
-use DemographicsDomain::*;
 
 /// Represents a patient demographics record in FHIR-like format.
-/// This struct contains basic demographic information for a patient.
+///
+/// Contains basic demographic information for a patient, stored as JSON
+/// in `patient.json` files within each patient's sharded directory.
 #[derive(Serialize, Deserialize)]
 struct Demographics {
     resource_type: String,
@@ -35,7 +60,8 @@ struct Demographics {
 }
 
 /// Represents a name component of a patient.
-/// Contains the use type, family name, and given names.
+///
+/// Follows FHIR naming conventions with family and given name fields.
 #[derive(Serialize, Deserialize)]
 struct Name {
     #[serde(rename = "use")]
@@ -45,12 +71,21 @@ struct Name {
 }
 
 /// Service for managing patient demographics operations.
+///
+/// This service handles creation, updates, and listing of patient demographic
+/// records. All operations are version-controlled via Git repositories in each
+/// patient's directory.
 #[derive(Clone)]
 pub struct DemographicsService {
     cfg: Arc<CoreConfig>,
 }
 
 impl DemographicsService {
+    /// Creates a new demographics service.
+    ///
+    /// # Arguments
+    ///
+    /// * `cfg` - Core configuration containing patient data directory paths
     pub fn new(cfg: Arc<CoreConfig>) -> Self {
         Self { cfg }
     }
@@ -59,31 +94,31 @@ impl DemographicsService {
 impl DemographicsService {
     /// Initialises a new patient demographics record.
     ///
-    /// This function creates a new patient with a unique UUID, stores the initial
-    /// demographics in a JSON file within a sharded directory structure, and
-    /// initialises a Git repository for version control.
+    /// Creates a new patient with a unique UUID, stores the initial demographics
+    /// in a JSON file within a sharded directory structure, and initialises a Git
+    /// repository for version control.
     ///
     /// # Arguments
     ///
-    /// * `author` - The author information for the initial Git commit.
-    /// * `care_location` - High-level organisational location for the commit (e.g. hospital name).
+    /// * `author` - Author information for the initial Git commit
+    /// * `care_location` - High-level organisational location for the commit (e.g., hospital name)
     ///
     /// # Returns
     ///
-    /// Returns the UUID of the newly created patient as a string.
+    /// The UUID of the newly created patient as a string.
     ///
     /// # Errors
     ///
-    /// Returns a `PatientError` if:
-    /// - `patient.json` cannot be serialised,
-    /// - the patient directory cannot be created,
-    /// - `patient.json` cannot be written,
-    /// - Git repository initialisation or the initial commit fails.
+    /// Returns `PatientError` if:
+    /// - JSON serialisation of patient data fails
+    /// - Patient directory cannot be created
+    /// - `patient.json` file cannot be written
+    /// - Git repository initialisation or commit fails
     pub fn initialise(&self, author: Author, care_location: String) -> PatientResult<String> {
         let data_dir = self.cfg.patient_data_dir();
 
         let demographics_uuid = ShardableUuid::new();
-        let created_at = chrono::Utc::now().to_rfc3339();
+        let created_at = Utc::now().to_rfc3339();
 
         // Create initial patient JSON
         let patient = Demographics {
@@ -96,13 +131,13 @@ impl DemographicsService {
         let json = serde_json::to_string_pretty(&patient).map_err(PatientError::Serialization)?;
 
         // Create the demographics directory
-        let demographics_dir = data_dir.join(crate::constants::DEMOGRAPHICS_DIR_NAME);
+        let demographics_dir = data_dir.join(DEMOGRAPHICS_DIR_NAME);
         // Note: demographics directory creation moved to startup validation in main.rs
 
         let patient_dir = demographics_uuid.sharded_dir(&demographics_dir);
         fs::create_dir_all(&patient_dir).map_err(PatientError::PatientDirCreation)?;
 
-        let filename = patient_dir.join(crate::constants::PATIENT_JSON_FILENAME);
+        let filename = patient_dir.join(PATIENT_JSON_FILENAME);
         fs::write(&filename, json).map_err(PatientError::FileWrite)?;
 
         // Initialise Git repository for the patient
@@ -113,38 +148,29 @@ impl DemographicsService {
             "Demographics record created",
             care_location,
         )?;
-        repo.commit_paths(
-            &author,
-            &msg,
-            &[PathBuf::from(crate::constants::PATIENT_JSON_FILENAME)],
-        )?;
+        repo.commit_paths(&author, &msg, &[PathBuf::from(PATIENT_JSON_FILENAME)])?;
 
         Ok(demographics_uuid.to_string())
     }
 
     /// Updates the demographics of an existing patient.
     ///
-    /// This function reads the existing patient JSON file, updates the name and
-    /// birth date fields, and writes the changes back to the file.
+    /// Reads the existing patient JSON file, updates the name and birth date fields,
+    /// and writes the changes back to the file. This operation does not create a new
+    /// Git commit—callers must commit changes separately if needed.
     ///
     /// # Arguments
     ///
-    /// * `demographics_uuid` - The UUID of the patient to update.
-    /// * `given_names` - A vector of given names for the patient.
-    /// * `last_name` - The family/last name of the patient.
-    /// * `birth_date` - The birth date of the patient as a string.
-    ///
-    /// # Returns
-    ///
-    /// Returns `Ok(())` on success.
+    /// * `demographics_uuid` - UUID of the patient to update
+    /// * `given_names` - Vector of given names for the patient
+    /// * `last_name` - Family/last name of the patient
+    /// * `birth_date` - Birth date of the patient as a string
     ///
     /// # Errors
     ///
-    /// Returns a `PatientError` if:
-    /// - the UUID cannot be parsed,
-    /// - `patient.json` cannot be read,
-    /// - `patient.json` cannot be deserialised or serialised,
-    /// - `patient.json` cannot be written.
+    /// Returns `PatientError` if:
+    /// - UUID cannot be parsed
+    /// - `patient.json` file cannot be read, deserialised, serialised, or written
     pub fn update(
         &self,
         demographics_uuid: &str,
@@ -153,11 +179,11 @@ impl DemographicsService {
         birth_date: &str,
     ) -> PatientResult<()> {
         let data_dir = self.cfg.patient_data_dir();
-        let demographics_dir = data_dir.join(crate::constants::DEMOGRAPHICS_DIR_NAME);
+        let demographics_dir = data_dir.join(DEMOGRAPHICS_DIR_NAME);
 
         let demographics_uuid = ShardableUuid::parse(demographics_uuid)?;
         let patient_dir = demographics_uuid.sharded_dir(&demographics_dir);
-        let filename = patient_dir.join(crate::constants::PATIENT_JSON_FILENAME);
+        let filename = patient_dir.join(PATIENT_JSON_FILENAME);
 
         // Read existing patient.json
         let existing_json = fs::read_to_string(&filename).map_err(PatientError::FileRead)?;
@@ -181,23 +207,27 @@ impl DemographicsService {
 
     /// Lists all patient records from the file system.
     ///
-    /// This method traverses the sharded directory structure under the patient data directory
-    /// configured in `CoreConfig`.
+    /// Traverses the sharded directory structure under `patient_data/demographics/`
     /// and reads all `patient.json` files to reconstruct patient records.
     ///
     /// # Returns
-    /// A `Vec<pb::Patient>` containing all found patient records. If any individual
-    /// patient file cannot be parsed, it will be logged as a warning and skipped.
+    ///
+    /// Vector of protobuf `Patient` messages containing all found patient records.
+    /// Individual patient files that cannot be parsed are logged as warnings and skipped.
     ///
     /// # Directory Structure
-    /// Expects patients stored in: `<patient_data_dir>/demographics/<s1>/<s2>/<32hex-uuid>/patient.json`
-    /// where s1/s2 are the first 4 hex characters of the UUID.
+    ///
+    /// Expects patients stored in:
+    /// ```text
+    /// <patient_data_dir>/demographics/<s1>/<s2>/<uuid>/patient.json
+    /// ```
+    /// where `s1`/`s2` are the first four hex characters of the UUID.
     pub fn list_patients(&self) -> Vec<pb::Patient> {
         let data_dir = self.cfg.patient_data_dir();
 
         let mut patients = Vec::new();
 
-        let demographics_dir = data_dir.join(crate::constants::DEMOGRAPHICS_DIR_NAME);
+        let demographics_dir = data_dir.join(DEMOGRAPHICS_DIR_NAME);
         let s1_iter = match fs::read_dir(&demographics_dir) {
             Ok(it) => it,
             Err(_) => return patients,
@@ -230,20 +260,20 @@ impl DemographicsService {
                         continue;
                     }
 
-                    let patient_path = id_path.join(crate::constants::PATIENT_JSON_FILENAME);
+                    let patient_path = id_path.join(PATIENT_JSON_FILENAME);
                     if !patient_path.is_file() {
                         continue;
                     }
 
                     if let Ok(contents) = fs::read_to_string(&patient_path) {
-                        #[derive(serde::Deserialize)]
+                        #[derive(Deserialize)]
                         struct StoredPatient {
                             name: Vec<StoredName>,
                             #[serde(default)]
                             created_at: String,
                         }
 
-                        #[derive(serde::Deserialize)]
+                        #[derive(Deserialize)]
                         struct StoredName {
                             family: String,
                             given: Vec<String>,

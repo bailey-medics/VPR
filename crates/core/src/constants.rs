@@ -22,3 +22,9 @@ pub const COORDINATION_DIR_NAME: &str = "coordination";
 pub const LATEST_RM: openehr::RmVersion = openehr::RmVersion::rm_1_1_0;
 /// Filename for patient JSON files.
 pub const PATIENT_JSON_FILENAME: &str = "patient.json";
+
+/// Filename for coordination thread messages.
+pub const THREAD_MESSAGES_FILENAME: &str = "messages.md";
+
+/// Filename for coordination thread ledger.
+pub const THREAD_LEDGER_FILENAME: &str = "ledger.yaml";

@@ -20,6 +20,8 @@ pub struct Message {
     pub metadata: MessageMetadata,
     /// Main body content (unescaped)
     pub body: String,
+    /// Optional UUID of message being corrected
+    pub corrects: Option<Uuid>,
 }
 
 /// Represents a single message within a coordination thread with strong typing.
@@ -313,6 +315,7 @@ impl MarkdownService {
         let mut author_id = None;
         let mut author_name = None;
         let mut author_role = None;
+        let mut corrects = None;
 
         for (key, value) in &variables {
             match key.as_str() {
@@ -336,6 +339,7 @@ impl MarkdownService {
                         .map_err(|e| PatientError::InvalidInput(e.to_string()))
                         .ok();
                 }
+                "Corrects" => corrects = Uuid::parse_str(value).ok(),
                 _ => {}
             }
         }
@@ -359,7 +363,11 @@ impl MarkdownService {
             },
         };
 
-        Ok(Message { metadata, body })
+        Ok(Message {
+            metadata,
+            body,
+            corrects,
+        })
     }
 }
 

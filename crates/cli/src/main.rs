@@ -1069,10 +1069,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("\nMessages ({}):", thread.messages.len());
                     for msg in &thread.messages {
                         println!("  ---");
-                        println!("  ID: {}", msg.message_id);
-                        println!("  Role: {:?}", msg.author.role);
-                        println!("  Timestamp: {}", msg.timestamp);
-                        println!("  Author: {} ({})", msg.author.name, msg.author.id);
+                        println!("  ID: {}", msg.metadata.message_id);
+                        println!("  Role: {:?}", msg.metadata.author.role);
+                        println!("  Timestamp: {}", msg.metadata.timestamp.to_rfc3339());
+                        println!(
+                            "  Author: {} ({})",
+                            msg.metadata.author.name, msg.metadata.author.id
+                        );
                         if let Some(corrects) = msg.corrects {
                             println!("  Corrects: {}", corrects);
                         }
