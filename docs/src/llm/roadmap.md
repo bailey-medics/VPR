@@ -58,6 +58,7 @@ Ensures long-term interoperability while preventing openEHR wire models from con
   - [ ] Clinical letters (Markdown with YAML front matter)
   - [ ] Documents (PDF with sidecar metadata)
   - [ ] Structured messaging threads (YAML/JSON)
+- [ ] Implement large-file-storage for binary artefacts (PDFs, images, scans) outside Git to preserve repository performance
 - [ ] Support patient-contributed artefacts and annotations
 - [ ] Explicitly document boundary between wire models and internal domain models
 
