@@ -28,3 +28,6 @@ pub const THREAD_FILENAME: &str = "thread.md";
 
 /// Filename for coordination thread ledger.
 pub const THREAD_LEDGER_FILENAME: &str = "ledger.yaml";
+
+/// Filename for coordination status linking to clinical record.
+pub const COORDINATION_STATUS_FILENAME: &str = "COORDINATION_STATUS.yaml";

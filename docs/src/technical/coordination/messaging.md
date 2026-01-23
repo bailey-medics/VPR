@@ -103,13 +103,17 @@ coordination/
 
 The coordination repository is sharded by UUID for scalability, similar to clinical records.
 
-> Hence, a communication is the combination of a thread and a ledger. A thread is the collection of individual messages, while the ledger contains metadata about the thread.
+**Conceptually:**
+
+- A communication is a thread and a ledger file
+- A thread is a list of messages stored in `thread.md`
+- The ledger contains metadata such as participants, status, policies, and visibility settings
 
 Where:
 
 - `<communication-id>` is a timestamp-prefixed UUID (e.g., `20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000`)
-- `thread.md` contains the canonical clinical conversation (collection of messages)
-- `ledger.yaml` contains thread metadata and participant information
+- `thread.md` contains the canonical clinical conversation (list of messages)
+- `ledger.yaml` contains thread metadata (participants, status, policies, visibility)
 
 ---
 
@@ -415,7 +419,7 @@ Messages are added via `CoordinationService::add_message()`:
 
 ### Metadata Updates
 
-Thread metadata is updated via `CoordinationService::update_thread_ledger()`:
+Thread metadata is updated via `CoordinationService::update_communication_ledger()`:
 
 - Modifies `ledger.yaml` (participants, status, policies)
 - Git commit records the change
