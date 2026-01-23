@@ -20,7 +20,7 @@
 //! coordination/
 //!   <s1>/
 //!     <s2>/
-//!       <uuid>/
+//!       <id>/
 //!         COORDINATION_STATUS.yaml    # Links to clinical record
 //!         communications/             # Messaging threads
 //!           <communication_id>/
@@ -247,23 +247,23 @@ impl CoordinationService<Initialised> {
     /// - Ledger serialization fails - [`PatientError::InvalidInput`]
     /// - File write or Git commit fails - [`PatientError::FileWrite`], various Git errors
     /// - Initial message body is empty - [`PatientError::InvalidInput`]
-    pub fn thread_create(
+    pub fn communication_create(
         &self,
         author: &Author,
         care_location: String,
-        message_authors: Vec<MessageAuthor>,
+        communication_authors: Vec<MessageAuthor>,
         initial_message: MessageContent,
     ) -> PatientResult<TimestampId> {
         author.validate_commit_author()?;
 
-        let msg = VprCommitMessage::new(
+        let commit_message = VprCommitMessage::new(
             VprCommitDomain::Coordination(Messaging),
             VprCommitAction::Create,
             "Created messaging thread",
             care_location,
         )?;
 
-        validate_message_authors(&message_authors)?;
+        validate_communication_authors(&communication_authors)?;
 
         let communication_id = TimestampIdGenerator::generate(None)?;
         let coordination_dir = self.coordination_dir(self.coordination_id());
@@ -277,39 +277,43 @@ impl CoordinationService<Initialised> {
             author: initial_message.author().clone(),
         };
 
+        let initial_message = Message {
+            metadata,
+            body: initial_message.body().to_string(),
+            corrects: None,
+        };
+
         let markdown_service = MarkdownService::new();
-        let messages_content =
-            markdown_service.new_thread_render("Messages", &metadata, initial_message.body())?;
+        let messages_content_raw = markdown_service.thread_render(&[initial_message])?;
 
         let ledger = LedgerData {
-            communication_id,
+            communication_id: communication_id.clone(),
             status: FhirThreadStatus::Open,
             created_at: now,
             last_updated_at: now,
-            participants: message_authors.clone(),
+            participants: communication_authors,
             sensitivity: SensitivityLevel::Standard,
             restricted: false,
             allow_patient_participation: true,
             allow_external_organisations: true,
         };
 
-        let ledger_content = FhirMessaging::ledger_render(&ledger)?;
+        let ledger_content_raw = FhirMessaging::ledger_render(&ledger)?;
 
-        // Construct relative paths directly
-        let thread_relative_dir =
-            Path::new("communications").join(ledger.communication_id.to_string());
-        let messages_relative = thread_relative_dir.join(THREAD_FILENAME);
-        let ledger_relative = thread_relative_dir.join(THREAD_LEDGER_FILENAME);
+        let messages_relative =
+            communication_file_relative_path(&communication_id, THREAD_FILENAME);
+        let ledger_relative =
+            communication_file_relative_path(&communication_id, THREAD_LEDGER_FILENAME);
 
         let files_to_write = [
             FileToWrite {
                 relative_path: &messages_relative,
-                content: &messages_content,
+                content: &messages_content_raw,
                 old_content: None,
             },
             FileToWrite {
                 relative_path: &ledger_relative,
-                content: &ledger_content,
+                content: &ledger_content_raw,
                 old_content: None,
             },
         ];
@@ -317,7 +321,7 @@ impl CoordinationService<Initialised> {
         VersionedFileService::write_and_commit_files(
             &coordination_dir,
             author,
-            &msg,
+            &commit_message,
             &files_to_write,
         )?;
 
@@ -359,7 +363,7 @@ impl CoordinationService<Initialised> {
 
         author.validate_commit_author()?;
 
-        let msg = VprCommitMessage::new(
+        let commit_message = VprCommitMessage::new(
             VprCommitDomain::Coordination(Messaging),
             VprCommitAction::Update,
             "Added message to thread",
@@ -378,22 +382,19 @@ impl CoordinationService<Initialised> {
         // Read and parse existing messages
         let old_thread_raw = self.thread_file_read(thread_id, THREAD_FILENAME)?;
         let markdown_service = MarkdownService::new();
-        let mut old_thread = markdown_service.thread_parse(&old_thread_raw)?;
+        let old_thread = markdown_service.thread_parse(&old_thread_raw)?;
 
-        // Create and append new message
-        let new_msg = Message {
+        // Create new thread with appended message
+        let new_message = Message {
             metadata,
             body: new_message.body().to_string(),
             corrects: new_message.corrects(),
         };
-        old_thread.push(new_msg);
+        let mut new_thread = old_thread;
+        new_thread.push(new_message);
 
         // Render all messages back to markdown
-        let thread_updated = old_thread
-            .iter()
-            .map(|msg| markdown_service.message_render(&msg.metadata, &msg.body, msg.corrects))
-            .collect::<PatientResult<Vec<String>>>()?
-            .join("");
+        let thread_updated = markdown_service.thread_render(&new_thread)?;
 
         // Update ledger last_updated_at
         let old_ledger_raw = self.thread_file_read(thread_id, THREAD_LEDGER_FILENAME)?;
@@ -404,9 +405,8 @@ impl CoordinationService<Initialised> {
 
         // Write and commit
         let coordination_dir = self.coordination_dir(self.coordination_id());
-        let thread_relative_dir = Path::new("communications").join(thread_id.to_string());
-        let messages_relative = thread_relative_dir.join(THREAD_FILENAME);
-        let ledger_relative = thread_relative_dir.join(THREAD_LEDGER_FILENAME);
+        let messages_relative = communication_file_relative_path(thread_id, THREAD_FILENAME);
+        let ledger_relative = communication_file_relative_path(thread_id, THREAD_LEDGER_FILENAME);
 
         let files_to_write = [
             FileToWrite {
@@ -424,7 +424,7 @@ impl CoordinationService<Initialised> {
         VersionedFileService::write_and_commit_files(
             &coordination_dir,
             author,
-            &msg,
+            &commit_message,
             &files_to_write,
         )?;
 
@@ -543,8 +543,7 @@ impl CoordinationService<Initialised> {
         let new_content = FhirMessaging::ledger_render(&ledger_data)?;
 
         let coordination_dir = self.coordination_dir(self.coordination_id());
-        let thread_relative_dir = Path::new("communications").join(thread_id.to_string());
-        let ledger_relative = thread_relative_dir.join(THREAD_LEDGER_FILENAME);
+        let ledger_relative = communication_file_relative_path(thread_id, THREAD_LEDGER_FILENAME);
 
         let files_to_write = [FileToWrite {
             relative_path: &ledger_relative,
@@ -743,6 +742,22 @@ fn generate_message_id() -> Uuid {
     Uuid::new_v4()
 }
 
+/// Constructs a relative file path for a communication file.
+///
+/// # Arguments
+///
+/// * `communication_id` - The timestamp-based communication identifier
+/// * `filename` - The filename within the communication directory
+///
+/// # Returns
+///
+/// Relative path: `communications/{communication_id}/{filename}`
+fn communication_file_relative_path(communication_id: &TimestampId, filename: &str) -> PathBuf {
+    Path::new("communications")
+        .join(communication_id.to_string())
+        .join(filename)
+}
+
 /// Validates that authors list is not empty and all author names contain content.
 ///
 /// # Arguments
@@ -754,7 +769,7 @@ fn generate_message_id() -> Uuid {
 /// Returns `PatientError::InvalidInput` if:
 /// - Authors list is empty
 /// - Any author name is empty or whitespace-only
-fn validate_message_authors(authors: &[MessageAuthor]) -> PatientResult<()> {
+fn validate_communication_authors(authors: &[MessageAuthor]) -> PatientResult<()> {
     if authors.is_empty() {
         return Err(PatientError::InvalidInput(
             "Authors list must not be empty".to_string(),
@@ -865,7 +880,7 @@ mod tests {
     }
 
     #[test]
-    fn test_thread_create_with_initial_message() {
+    fn test_communication_create_with_initial_message() {
         let (_temp, _template, cfg, author) = setup_test_env();
         let clinical_id = Uuid::new_v4();
 
@@ -881,7 +896,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = service.thread_create(
+        let result = service.communication_create(
             &author,
             "Test Location".to_string(),
             participants.clone(),
@@ -904,7 +919,7 @@ mod tests {
     }
 
     #[test]
-    fn test_thread_create_validates_empty_body() {
+    fn test_communication_create_validates_empty_body() {
         let (_temp, _template, cfg, author) = setup_test_env();
         let clinical_id = Uuid::new_v4();
 
@@ -924,27 +939,27 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_message_authors_empty_list() {
-        let result = validate_message_authors(&[]);
+    fn test_validate_communication_authors_empty_list() {
+        let result = validate_communication_authors(&[]);
         assert!(result.is_err());
     }
 
     #[test]
-    fn test_validate_message_authors_empty_name() {
+    fn test_validate_communication_authors_empty_name() {
         let authors = vec![MessageAuthor {
             id: Uuid::new_v4(),
             name: "   ".to_string(),
             role: fhir::AuthorRole::Clinician,
         }];
 
-        let result = validate_message_authors(&authors);
+        let result = validate_communication_authors(&authors);
         assert!(result.is_err());
     }
 
     #[test]
-    fn test_validate_message_authors_valid() {
+    fn test_validate_communication_authors_valid() {
         let authors = create_test_participants();
-        let result = validate_message_authors(&authors);
+        let result = validate_communication_authors(&authors);
         assert!(result.is_ok());
     }
 
@@ -963,7 +978,7 @@ mod tests {
                 .unwrap();
 
         let thread_id = service
-            .thread_create(
+            .communication_create(
                 &author,
                 "Test Location".to_string(),
                 participants.clone(),
@@ -1013,7 +1028,7 @@ mod tests {
         .unwrap();
 
         let thread_id = service
-            .thread_create(
+            .communication_create(
                 &author,
                 "Test Location".to_string(),
                 participants.clone(),
@@ -1083,7 +1098,7 @@ mod tests {
             MessageContent::new(participants[0].clone(), "Test message".to_string(), None).unwrap();
 
         let thread_id = service
-            .thread_create(
+            .communication_create(
                 &author,
                 "Test Location".to_string(),
                 participants.clone(),
@@ -1127,7 +1142,7 @@ mod tests {
             MessageContent::new(participants[0].clone(), "Test".to_string(), None).unwrap();
 
         let thread_id = service
-            .thread_create(
+            .communication_create(
                 &author,
                 "Test Location".to_string(),
                 participants,
@@ -1176,7 +1191,7 @@ mod tests {
             MessageContent::new(participants[0].clone(), "Test".to_string(), None).unwrap();
 
         let thread_id = service
-            .thread_create(
+            .communication_create(
                 &author,
                 "Test Location".to_string(),
                 participants,
@@ -1214,7 +1229,7 @@ mod tests {
             MessageContent::new(participants[0].clone(), "Test".to_string(), None).unwrap();
 
         let thread_id = service
-            .thread_create(
+            .communication_create(
                 &author,
                 "Test Location".to_string(),
                 participants,
@@ -1251,7 +1266,7 @@ mod tests {
             MessageContent::new(participants[0].clone(), "Test".to_string(), None).unwrap();
 
         let thread_id = service
-            .thread_create(
+            .communication_create(
                 &author,
                 "Test Location".to_string(),
                 participants,
@@ -1289,7 +1304,7 @@ mod tests {
             MessageContent::new(participants[0].clone(), "Test".to_string(), None).unwrap();
 
         let thread_id = service
-            .thread_create(
+            .communication_create(
                 &author,
                 "Test Location".to_string(),
                 participants,
