@@ -1058,7 +1058,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 CoordinationService::with_id(cfg.clone(), coordination_uuid_parsed);
             match coordination_service.read_thread(&thread_id_parsed) {
                 Ok(thread) => {
-                    println!("Thread ID: {}", thread.thread_id);
+                    println!("Communication ID: {}", thread.communication_id);
                     println!("Status: {:?}", thread.ledger.status);
                     println!("Created: {}", thread.ledger.created_at);
                     println!("Last Updated: {}", thread.ledger.last_updated_at);
