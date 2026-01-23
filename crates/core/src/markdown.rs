@@ -10,6 +10,9 @@ use chrono::{DateTime, Utc};
 use fhir::{AuthorRole, MessageAuthor};
 use uuid::Uuid;
 
+/// Thread header used for all coordination threads.
+const THREAD_HEADER: &str = "# Thread";
+
 /// Generic message structure for parsing.
 ///
 /// Each message contains strongly-typed metadata and body content.
@@ -46,44 +49,6 @@ impl MarkdownService {
     /// Creates a new `MarkdownService` instance.
     pub fn new() -> Self {
         Self
-    }
-
-    /// Creates the initial message for a new coordination thread with level-1 header.
-    ///
-    /// Constructs the first message in a thread with a required level-1 markdown header,
-    /// metadata, and prose content. The header keeps markdown linters satisfied
-    /// and provides thread context.
-    ///
-    /// # Arguments
-    ///
-    /// * `header` - Thread title (will be formatted as level-1 header)
-    /// * `metadata` - Message metadata containing ID, timestamp, and author details
-    /// * `body` - Message body content
-    ///
-    /// # Errors
-    ///
-    /// Returns `PatientError::InvalidInput` if:
-    /// - Header is empty
-    /// - Body is empty
-    pub fn new_thread_render(
-        &self,
-        header: &str,
-        metadata: &MessageMetadata,
-        body: &str,
-    ) -> PatientResult<String> {
-        if header.trim().is_empty() {
-            return Err(PatientError::InvalidInput(
-                "Thread header must not be empty".to_string(),
-            ));
-        }
-
-        // Delegate to message_render for formatting
-        let message_content = self.message_render(metadata, body, None)?;
-
-        // Prepend the header and append separator
-        let final_message = format!("# {}\n\n{}\n---\n\n", header.trim(), message_content);
-
-        Ok(final_message)
     }
 
     /// Validates and sanitises markdown content for coordination thread messages.
@@ -163,6 +128,33 @@ impl MarkdownService {
         output.push_str("\n---\n\n");
 
         Ok(output)
+    }
+
+    /// Renders multiple messages into a complete markdown thread.
+    ///
+    /// Takes a collection of messages and renders them all to markdown format.
+    /// Each message is rendered with its metadata and body, separated by horizontal rules.
+    /// The thread starts with a level-1 header "# Thread".
+    ///
+    /// # Arguments
+    ///
+    /// * `messages` - Slice of messages to render
+    ///
+    /// # Returns
+    ///
+    /// Complete markdown content with all messages rendered and separated.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PatientError::InvalidInput` if any message has an empty body.
+    pub fn thread_render(&self, messages: &[Message]) -> PatientResult<String> {
+        let content = messages
+            .iter()
+            .map(|msg| self.message_render(&msg.metadata, &msg.body, msg.corrects))
+            .collect::<PatientResult<Vec<String>>>()
+            .map(|rendered| rendered.join(""))?;
+
+        Ok(format!("{}\n\n{}", THREAD_HEADER, content))
     }
 
     /// Parses a markdown thread file into structured messages.
@@ -480,10 +472,13 @@ mod tests {
                 role: AuthorRole::Clinician,
             },
         };
-        let result = service
-            .new_thread_render("Title", &metadata, "Plain text content")
-            .unwrap();
-        assert!(result.starts_with("# Title\n\n"));
+        let msg = Message {
+            metadata,
+            body: "Plain text content".to_string(),
+            corrects: None,
+        };
+        let result = service.thread_render(&[msg]).unwrap();
+        assert!(result.starts_with("# Thread\n\n"));
         assert!(result.contains("Plain text content"));
     }
 
@@ -570,24 +565,6 @@ mod tests {
     }
 
     #[test]
-    fn test_thread_start_empty_header_fails() {
-        let service = MarkdownService::new();
-        let metadata = MessageMetadata {
-            message_id: Uuid::nil(),
-            timestamp: DateTime::parse_from_rfc3339("2026-01-22T10:30:00Z")
-                .unwrap()
-                .with_timezone(&Utc),
-            author: MessageAuthor {
-                id: Uuid::nil(),
-                name: "Test".to_string(),
-                role: AuthorRole::System,
-            },
-        };
-        let result = service.new_thread_render("", &metadata, "content");
-        assert!(result.is_err());
-    }
-
-    #[test]
     fn test_message_render_empty_body_fails() {
         let service = MarkdownService::new();
         let metadata = MessageMetadata {
@@ -622,11 +599,14 @@ mod tests {
             },
         };
 
-        let result = service
-            .new_thread_render("Clinical Update", &metadata, body)
-            .unwrap();
+        let msg = Message {
+            metadata,
+            body: body.to_string(),
+            corrects: None,
+        };
+        let result = service.thread_render(&[msg]).unwrap();
 
-        assert!(result.starts_with("# Clinical Update\n\n"));
+        assert!(result.starts_with("# Thread\n\n"));
         assert!(result.contains("Patient #12345 presented with symptoms."));
         assert!(result.contains("\\# Important note"));
         assert!(result.contains("See details."));
@@ -756,9 +736,12 @@ mod tests {
                 role: AuthorRole::Clinician,
             },
         };
-        let created = service
-            .new_thread_render("Clinical Note", &metadata, body)
-            .unwrap();
+        let msg = Message {
+            metadata,
+            body: body.to_string(),
+            corrects: None,
+        };
+        let created = service.thread_render(&[msg]).unwrap();
 
         // Parse it back
         let parsed = service.thread_parse(&created).unwrap();
@@ -786,11 +769,13 @@ mod tests {
                 role: AuthorRole::Clinician,
             },
         };
-        let msg1 = service
-            .new_thread_render("Care Coordination", &metadata1, "First message content")
-            .unwrap();
+        let msg1 = Message {
+            metadata: metadata1,
+            body: "First message content".to_string(),
+            corrects: None,
+        };
 
-        // Create second message with message_render_from_metadata
+        // Create second message
         let metadata2 = MessageMetadata {
             message_id: Uuid::new_v4(),
             timestamp: DateTime::parse_from_rfc3339("2026-01-22T11:30:00Z")
@@ -802,12 +787,14 @@ mod tests {
                 role: AuthorRole::Patient,
             },
         };
-        let msg2 = service
-            .message_render(&metadata2, "Second message content", None)
-            .unwrap();
+        let msg2 = Message {
+            metadata: metadata2,
+            body: "Second message content".to_string(),
+            corrects: None,
+        };
 
-        // Combine with separator
-        let thread = format!("{}\n\n---\n\n{}", msg1, msg2);
+        // Combine and render thread
+        let thread = service.thread_render(&[msg1, msg2]).unwrap();
 
         // Parse back
         let parsed = service.thread_parse(&thread).unwrap();

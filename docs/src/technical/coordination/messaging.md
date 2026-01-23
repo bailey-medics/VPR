@@ -103,6 +103,8 @@ coordination/
 
 The coordination repository is sharded by UUID for scalability, similar to clinical records.
 
+> Hence, a communication is the combination of a thread and a ledger. A thread is the collection of individual messages, while the ledger contains metadata about the thread.
+
 Where:
 
 - `<communication-id>` is a timestamp-prefixed UUID (e.g., `20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000`)
@@ -394,7 +396,7 @@ Messaging threads follow a defined lifecycle:
 
 ### Creation
 
-Threads are created via `CoordinationService::create_thread()`:
+Threads are created via `CoordinationService::communication_create()`:
 
 - Generates timestamp-prefixed communication ID
 - Creates `communications/<communication-id>/` directory
@@ -463,7 +465,7 @@ This creates:
 Messaging threads are created with:
 
 ```rust
-service.create_thread(
+service.communication_create(
     &author,
     care_location,
     participants,

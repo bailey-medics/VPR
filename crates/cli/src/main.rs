@@ -916,7 +916,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let coordination_service =
                 CoordinationService::with_id(cfg.clone(), coordination_uuid_parsed);
-            match coordination_service.thread_create(
+            match coordination_service.communication_create(
                 &author,
                 care_location,
                 participants,
