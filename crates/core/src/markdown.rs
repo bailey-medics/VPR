@@ -124,8 +124,8 @@ impl MarkdownService {
         let sanitised_body = self.escape_body(body);
         output.push_str(&sanitised_body);
 
-        // Add separator for message delimiting
-        output.push_str("\n---\n\n");
+        // Add blank line after body, then separator for message delimiting
+        output.push_str("\n\n---\n");
 
         Ok(output)
     }
@@ -154,7 +154,7 @@ impl MarkdownService {
             .collect::<PatientResult<Vec<String>>>()
             .map(|rendered| rendered.join(""))?;
 
-        Ok(format!("{}\n\n{}", THREAD_HEADER, content))
+        Ok(format!("{}\n\n{}\n", THREAD_HEADER, content.trim_end()))
     }
 
     /// Parses a markdown thread file into structured messages.
@@ -201,16 +201,18 @@ impl MarkdownService {
 
         let mut messages = Vec::new();
 
-        // Split by unescaped horizontal rules (---) that appear on their own line
-        let raw_sections: Vec<&str> = content.split("\n---\n").collect();
+        // Split by horizontal rules (---) that appear on their own line
+        // Use regex-like pattern to handle variable whitespace: split on newline(s), ---, newline(s)
+        // First normalize multiple newlines around --- to make splitting consistent
+        let normalized = content.trim();
+        let raw_sections: Vec<&str> = normalized
+            .split("---")
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
 
         for section in raw_sections {
-            let trimmed = section.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-
-            let message = self.message_parse(trimmed)?;
+            let message = self.message_parse(section)?;
             messages.push(message);
         }
 
