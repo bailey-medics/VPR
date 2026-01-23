@@ -347,10 +347,10 @@ enum Commands {
         signature: Option<String>,
     },
 
-    /// Read a messaging thread:
+    /// Read a communication thread:
     ///
     /// <coordination_uuid> <thread_id>
-    ReadThread {
+    ReadCommunication {
         /// Coordination repository UUID
         coordination_uuid: String,
         /// Thread ID
@@ -1034,7 +1034,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Err(e) => eprintln!("Error adding message: {}", e),
             }
         }
-        Some(Commands::ReadThread {
+        Some(Commands::ReadCommunication {
             coordination_uuid,
             thread_id,
         }) => {
@@ -1056,7 +1056,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let coordination_service =
                 CoordinationService::with_id(cfg.clone(), coordination_uuid_parsed);
-            match coordination_service.read_thread(&thread_id_parsed) {
+            match coordination_service.read_communication(&thread_id_parsed) {
                 Ok(thread) => {
                     println!("Communication ID: {}", thread.communication_id);
                     println!("Status: {:?}", thread.ledger.status);
