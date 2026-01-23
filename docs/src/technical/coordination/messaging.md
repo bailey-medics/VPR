@@ -93,11 +93,11 @@ Each messaging thread is stored as:
 coordination/
     <shard1>/
         <shard2>/
-            <coordination-uuid>/
+            <coordination-id>/
                 COORDINATION_STATUS.yaml
                 communications/
-                    <thread-id>/
-                        messages.md
+                    <communication-id>/
+                        messages.md → thread.md
                         ledger.yaml
 ```
 
@@ -105,15 +105,15 @@ The coordination repository is sharded by UUID for scalability, similar to clini
 
 Where:
 
-- `<thread-id>` is a timestamp-prefixed UUID (e.g., `20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000`)
-- `messages.md` contains the canonical clinical conversation
+- `<communication-id>` is a timestamp-prefixed UUID (e.g., `20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000`)
+- `thread.md` contains the canonical clinical conversation (collection of messages)
 - `ledger.yaml` contains thread metadata and participant information
 
 ---
 
-### Thread identity
+### Communication identity
 
-The `<thread-id>` is generated using a timestamp-prefixed identifier:
+The `<communication-id>` is generated using a timestamp-prefixed identifier:
 
 - format: `YYYYMMDDTHHMMSS.sssZ-UUID`
 - timestamp: UTC, ISO 8601, millisecond precision
@@ -125,7 +125,7 @@ Example:
 20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000
 ```
 
-This ensures thread identifiers are:
+This ensures communication identifiers are:
 
 - globally unique,
 - chronologically sortable,
@@ -135,11 +135,11 @@ The existing `TimestampId` struct is used to generate and validate these identif
 
 ---
 
-## `messages.md` – Canonical clinical conversation
+## `thread.md` – Thread of messages
 
 ### Purpose
 
-`messages.md` is the **canonical clinical record** of the conversation.
+`thread.md` is the **canonical clinical record** of the conversation thread.
 
 It records:
 
@@ -207,7 +207,7 @@ This preserves a truthful, auditable historical record.
 
 ### Explicit non-features
 
-`messages.md` does NOT record:
+`thread.md` does NOT record:
 
 - read or seen status,
 - urgency flags,
@@ -270,7 +270,7 @@ It answers:
 - organisational access rules
 
 ```yaml
-thread_id: 20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000
+communication_id: 20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000
 
 status: open
 created_at: 2026-01-11T14:35:22.045Z
@@ -396,9 +396,9 @@ Messaging threads follow a defined lifecycle:
 
 Threads are created via `CoordinationService::create_thread()`:
 
-- Generates timestamp-prefixed thread ID
-- Creates `communications/<thread-id>/` directory
-- Writes initial `messages.md` (optionally with first message)
+- Generates timestamp-prefixed communication ID
+- Creates `communications/<communication-id>/` directory
+- Writes initial `thread.md` (optionally with first message)
 - Writes `ledger.yaml` with participant list and policies
 - Commits atomically to Git
 
@@ -407,7 +407,7 @@ Threads are created via `CoordinationService::create_thread()`:
 Messages are added via `CoordinationService::add_message()`:
 
 - Generates unique message UUID
-- Appends to `messages.md` (preserves immutability)
+- Appends to `thread.md` (preserves immutability)
 - Commits with structured message and care location
 - Returns the message ID for reference
 
@@ -473,9 +473,9 @@ service.create_thread(
 
 This:
 
-- Generates timestamp-prefixed thread ID via `TimestampIdGenerator`
-- Creates `communications/<thread-id>/` directory
-- Writes `messages.md` with optional initial message
+- Generates timestamp-prefixed communication ID via `TimestampIdGenerator`
+- Creates `communications/<communication-id>/` directory
+- Writes `thread.md` with optional initial message
 - Writes `ledger.yaml` with participant list and policies
 - Commits both files atomically to Git
 
@@ -495,7 +495,7 @@ service.add_message(
 This:
 
 - Generates unique message UUID
-- Appends to `messages.md` (preserves immutability)
+- Appends to `thread.md` (preserves immutability)
 - Commits with structured message and care location
 - Returns the message ID
 

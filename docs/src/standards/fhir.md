@@ -226,7 +226,7 @@ This corresponds conceptually to resource status tracking in FHIR.
 Messaging thread metadata uses FHIR Communication resource semantics:
 
 ```yaml
-thread_id: 20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000
+communication_id: 20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000
 status: open # Maps to Communication.status
 participants:
   - participant_id: 4f8c2a1d-9e3b-4a7c-8f1e-6b0d-2c5a9f12
@@ -236,7 +236,7 @@ participants:
 
 Key mappings:
 
-- `thread_id` → `Communication.identifier`
+- `communication_id` → `Communication.identifier`
 - `status` → `Communication.status` (open=in-progress, closed=completed, archived=stopped)
 - `participants` → `Communication.recipient` array
 - `created_at` → `Communication.sent`

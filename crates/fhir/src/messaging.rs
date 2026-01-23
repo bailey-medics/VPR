@@ -10,7 +10,7 @@
 //! - Validate ledger structure and enforce required fields
 //!
 //! Notes:
-//! - Clinical messages are stored separately in messages.md
+//! - Clinical messages are stored separately in thread.md
 //! - This ledger is mutable and overwriteable (unlike messages)
 //! - Changes are git-audited via the change_log
 
@@ -38,8 +38,8 @@ pub use ParticipantRole as AuthorRole;
 /// without nested visibility or policies objects.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LedgerData {
-    /// Unique identifier for this thread (timestamp-prefixed UUID).
-    pub thread_id: TimestampId,
+    /// Unique identifier for this communication (timestamp-prefixed UUID).
+    pub communication_id: TimestampId,
 
     /// Current status of the thread.
     pub status: ThreadStatus,
@@ -70,7 +70,7 @@ impl LedgerData {
     /// Converts this flat structure to the nested LedgerDataNested format.
     fn to_ledger_data_nested(&self) -> LedgerDataNested {
         LedgerDataNested {
-            thread_id: self.thread_id.clone(),
+            communication_id: self.communication_id.clone(),
             status: self.status.clone(),
             created_at: self.created_at,
             last_updated_at: self.last_updated_at,
@@ -89,7 +89,7 @@ impl LedgerData {
     /// Creates a flat structure from the nested LedgerDataNested format.
     fn from_ledger_data_nested(data: LedgerDataNested) -> Self {
         Self {
-            thread_id: data.thread_id,
+            communication_id: data.communication_id,
             status: data.status,
             created_at: data.created_at,
             last_updated_at: data.last_updated_at,
@@ -108,8 +108,8 @@ impl LedgerData {
 /// with nested structures that match the YAML wire format.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct LedgerDataNested {
-    /// Unique identifier for this thread (timestamp-prefixed UUID).
-    pub thread_id: TimestampId,
+    /// Unique identifier for this communication (timestamp-prefixed UUID).
+    pub communication_id: TimestampId,
 
     /// Current status of the thread.
     pub status: ThreadStatus,
@@ -346,7 +346,7 @@ impl Messaging {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 struct Ledger {
-    pub thread_id: String,
+    pub communication_id: String,
     pub status: ThreadStatus,
     pub created_at: DateTime<Utc>,
     pub last_updated_at: DateTime<Utc>,
@@ -388,11 +388,11 @@ struct Policies {
 ///
 /// This performs validation and conversion of string identifiers to proper types.
 fn wire_to_domain(wire: Ledger) -> Result<LedgerDataNested, FhirError> {
-    // Parse thread_id as TimestampId
-    let thread_id = wire
-        .thread_id
+    // Parse communication_id as TimestampId
+    let communication_id = wire
+        .communication_id
         .parse::<TimestampId>()
-        .map_err(|e| FhirError::InvalidInput(format!("Invalid thread_id: {e}")))?;
+        .map_err(|e| FhirError::InvalidInput(format!("Invalid communication_id: {e}")))?;
 
     // Convert participants, validating UUIDs
     let mut participants = Vec::with_capacity(wire.participants.len());
@@ -412,7 +412,7 @@ fn wire_to_domain(wire: Ledger) -> Result<LedgerDataNested, FhirError> {
     }
 
     Ok(LedgerDataNested {
-        thread_id,
+        communication_id,
         status: wire.status,
         created_at: wire.created_at,
         last_updated_at: wire.last_updated_at,
@@ -431,7 +431,7 @@ fn wire_to_domain(wire: Ledger) -> Result<LedgerDataNested, FhirError> {
 /// Convert domain types to wire format ledger.
 fn domain_to_wire(data: &LedgerDataNested) -> Ledger {
     Ledger {
-        thread_id: data.thread_id.to_string(),
+        communication_id: data.communication_id.to_string(),
         status: data.status.clone(),
         created_at: data.created_at,
         last_updated_at: data.last_updated_at,
@@ -461,7 +461,7 @@ mod tests {
 
     #[test]
     fn round_trips_sample_yaml() {
-        let input = r#"thread_id: 20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000
+        let input = r#"communication_id: 20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000
 status: open
 created_at: "2026-01-11T14:35:22.045Z"
 last_updated_at: "2026-01-11T15:10:04.912Z"
@@ -491,7 +491,7 @@ policies:
 
     #[test]
     fn strict_validation_rejects_unknown_keys() {
-        let input = r#"thread_id: 20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000
+        let input = r#"communication_id: 20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000
 status: open
 created_at: "2026-01-11T14:35:22.045Z"
 last_updated_at: "2026-01-11T15:10:04.912Z"
@@ -516,7 +516,7 @@ unexpected_key: should_fail
 
     #[test]
     fn strict_validation_rejects_wrong_types() {
-        let input = r#"thread_id: 20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000
+        let input = r#"communication_id: 20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000
 status: open
 created_at: "2026-01-11T14:35:22.045Z"
 last_updated_at: "2026-01-11T15:10:04.912Z"
@@ -539,8 +539,8 @@ policies:
     }
 
     #[test]
-    fn rejects_invalid_thread_id() {
-        let input = r#"thread_id: not-a-valid-timestamp-id
+    fn rejects_invalid_communication_id() {
+        let input = r#"communication_id: not-a-valid-timestamp-id
 status: open
 created_at: "2026-01-11T14:35:22.045Z"
 last_updated_at: "2026-01-11T15:10:04.912Z"
@@ -553,10 +553,11 @@ policies:
   allow_external_organisations: false
 "#;
 
-        let err = Messaging::ledger_parse(input).expect_err("should reject invalid thread_id");
+        let err =
+            Messaging::ledger_parse(input).expect_err("should reject invalid communication_id");
         match err {
             FhirError::InvalidInput(msg) => {
-                assert!(msg.contains("Invalid thread_id"));
+                assert!(msg.contains("Invalid communication_id"));
             }
             other => panic!("expected InvalidInput error, got {other:?}"),
         }
@@ -564,7 +565,7 @@ policies:
 
     #[test]
     fn rejects_invalid_participant_uuid() {
-        let input = r#"thread_id: 20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000
+        let input = r#"communication_id: 20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000
 status: open
 created_at: "2026-01-11T14:35:22.045Z"
 last_updated_at: "2026-01-11T15:10:04.912Z"
@@ -592,7 +593,7 @@ policies:
 
     #[test]
     fn parses_minimal_valid_ledger() {
-        let input = r#"thread_id: 20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000
+        let input = r#"communication_id: 20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000
 status: open
 created_at: "2026-01-11T14:35:22.045Z"
 last_updated_at: "2026-01-11T15:10:04.912Z"
@@ -607,7 +608,7 @@ policies:
 
         let result = Messaging::ledger_parse(input).expect("should parse minimal ledger");
         assert_eq!(
-            result.thread_id.to_string(),
+            result.communication_id.to_string(),
             "20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000"
         );
         assert_eq!(result.status, ThreadStatus::Open);
@@ -618,7 +619,7 @@ policies:
 
     #[test]
     fn handles_multiple_participants() {
-        let input = r#"thread_id: 20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000
+        let input = r#"communication_id: 20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000
 status: open
 created_at: "2026-01-11T14:35:22.045Z"
 last_updated_at: "2026-01-11T15:10:04.912Z"
@@ -645,7 +646,7 @@ policies:
 
     #[test]
     fn handles_closed_and_archived_status() {
-        let closed = r#"thread_id: 20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000
+        let closed = r#"communication_id: 20260111T143522.045Z-550e8400-e29b-41d4-a716-446655440000
 status: closed
 created_at: "2026-01-11T14:35:22.045Z"
 last_updated_at: "2026-01-11T15:10:04.912Z"

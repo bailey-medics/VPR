@@ -23,9 +23,9 @@
 //!       <uuid>/
 //!         COORDINATION_STATUS.yaml    # Links to clinical record
 //!         communications/             # Messaging threads
-//!           <thread_id>/
+//!           <communication_id>/
 //!             ledger.yaml            # Thread metadata and participants
-//!             messages.md            # Thread messages in markdown
+//!             thread.md              # Thread messages in markdown
 //!         .git/                      # Git repository for versioning
 //! ```
 //!
@@ -39,7 +39,7 @@
 
 use crate::author::Author;
 use crate::config::CoreConfig;
-use crate::constants::{COORDINATION_DIR_NAME, THREAD_LEDGER_FILENAME, THREAD_MESSAGES_FILENAME};
+use crate::constants::{COORDINATION_DIR_NAME, THREAD_FILENAME, THREAD_LEDGER_FILENAME};
 use crate::error::{PatientError, PatientResult};
 use crate::markdown::{MarkdownService, Message, MessageMetadata};
 use crate::repositories::shared::create_uuid_and_shard_dir;
@@ -220,12 +220,12 @@ impl CoordinationService<Initialised> {
     /// visibility) and optionally an initial message.
     ///
     /// Creates:
-    /// - `communications/{thread_id}/` directory
+    /// - `communications/{communication_id}/` directory
     /// - `ledger.yaml` with participants, status, policies, and visibility settings
-    /// - `messages.md` with optional initial message
-    /// - Git commit with thread creation
+    /// - `thread.md` with message collection
+    /// - Git commit with communication creation
     ///
-    /// Thread ID format: `YYYYMMDDTHHMMSS.sssZ-UUID` (timestamp-based for ordering).
+    /// Communication ID format: `YYYYMMDDTHHMMSS.sssZ-UUID` (timestamp-based for ordering).
     ///
     /// # Arguments
     ///
@@ -265,7 +265,7 @@ impl CoordinationService<Initialised> {
 
         validate_message_authors(&message_authors)?;
 
-        let thread_id = TimestampIdGenerator::generate(None)?;
+        let communication_id = TimestampIdGenerator::generate(None)?;
         let coordination_dir = self.coordination_dir(self.coordination_id());
 
         let now = Utc::now();
@@ -282,7 +282,7 @@ impl CoordinationService<Initialised> {
             markdown_service.new_thread_render("Messages", &metadata, initial_message.body())?;
 
         let ledger = LedgerData {
-            thread_id,
+            communication_id,
             status: FhirThreadStatus::Open,
             created_at: now,
             last_updated_at: now,
@@ -296,8 +296,9 @@ impl CoordinationService<Initialised> {
         let ledger_content = FhirMessaging::ledger_render(&ledger)?;
 
         // Construct relative paths directly
-        let thread_relative_dir = Path::new("communications").join(ledger.thread_id.to_string());
-        let messages_relative = thread_relative_dir.join(THREAD_MESSAGES_FILENAME);
+        let thread_relative_dir =
+            Path::new("communications").join(ledger.communication_id.to_string());
+        let messages_relative = thread_relative_dir.join(THREAD_FILENAME);
         let ledger_relative = thread_relative_dir.join(THREAD_LEDGER_FILENAME);
 
         let files_to_write = [
@@ -320,12 +321,12 @@ impl CoordinationService<Initialised> {
             &files_to_write,
         )?;
 
-        Ok(ledger.thread_id)
+        Ok(ledger.communication_id)
     }
 
     /// Adds a message to an existing thread.
     ///
-    /// Appends a new message to the thread's messages.md file and updates the ledger's
+    /// Appends a new message to the thread's thread.md file and updates the ledger's
     /// last_updated_at timestamp. Both files are committed atomically to Git.
     ///
     /// # Arguments
@@ -343,7 +344,7 @@ impl CoordinationService<Initialised> {
     ///
     /// Returns `PatientError` if:
     /// - Author validation fails
-    /// - Thread does not exist (messages.md not found)
+    /// - Thread does not exist (thread.md not found)
     /// - File read, write, or Git commit operations fail
     /// - YAML serialisation or parsing fails
     pub fn message_add(
@@ -353,6 +354,9 @@ impl CoordinationService<Initialised> {
         thread_id: &TimestampId,
         new_message: MessageContent,
     ) -> PatientResult<String> {
+        self.thread_file_exists(thread_id, THREAD_FILENAME)?;
+        self.thread_file_exists(thread_id, THREAD_LEDGER_FILENAME)?;
+
         author.validate_commit_author()?;
 
         let msg = VprCommitMessage::new(
@@ -362,43 +366,38 @@ impl CoordinationService<Initialised> {
             care_location,
         )?;
 
-        let thread_dir = self.thread_dir(thread_id);
-        let messages_path = thread_dir.join(THREAD_MESSAGES_FILENAME);
-
-        if !messages_path.exists() {
-            return Err(PatientError::InvalidInput(format!(
-                "Thread does not exist: {}",
-                thread_id
-            )));
-        }
-
-        // Generate message ID and timestamp
         let message_id = generate_message_id();
         let now = Utc::now();
 
-        // Format message using MarkdownService
         let metadata = MessageMetadata {
             message_id,
             timestamp: now,
             author: new_message.author().clone(),
         };
 
+        // Read and parse existing messages
+        let old_thread_raw = self.thread_file_read(thread_id, THREAD_FILENAME)?;
         let markdown_service = MarkdownService::new();
-        let new_message_rendered = markdown_service.message_render(
-            &metadata,
-            new_message.body(),
-            new_message.corrects(),
-        )?;
+        let mut old_thread = markdown_service.thread_parse(&old_thread_raw)?;
 
-        // Read existing content and append
-        let existing_content =
-            fs::read_to_string(&messages_path).map_err(PatientError::FileRead)?;
-        let messages_updated = format!("{}{}", existing_content, new_message_rendered);
+        // Create and append new message
+        let new_msg = Message {
+            metadata,
+            body: new_message.body().to_string(),
+            corrects: new_message.corrects(),
+        };
+        old_thread.push(new_msg);
+
+        // Render all messages back to markdown
+        let thread_updated = old_thread
+            .iter()
+            .map(|msg| markdown_service.message_render(&msg.metadata, &msg.body, msg.corrects))
+            .collect::<PatientResult<Vec<String>>>()?
+            .join("");
 
         // Update ledger last_updated_at
-        let ledger_path = thread_dir.join(THREAD_LEDGER_FILENAME);
-        let ledger_content = fs::read_to_string(&ledger_path).map_err(PatientError::FileRead)?;
-        let mut ledger_data = FhirMessaging::ledger_parse(&ledger_content)?;
+        let old_ledger_raw = self.thread_file_read(thread_id, THREAD_LEDGER_FILENAME)?;
+        let mut ledger_data = FhirMessaging::ledger_parse(&old_ledger_raw)?;
         ledger_data.last_updated_at = now;
 
         let updated_ledger_content = FhirMessaging::ledger_render(&ledger_data)?;
@@ -406,19 +405,19 @@ impl CoordinationService<Initialised> {
         // Write and commit
         let coordination_dir = self.coordination_dir(self.coordination_id());
         let thread_relative_dir = Path::new("communications").join(thread_id.to_string());
-        let messages_relative = thread_relative_dir.join(THREAD_MESSAGES_FILENAME);
+        let messages_relative = thread_relative_dir.join(THREAD_FILENAME);
         let ledger_relative = thread_relative_dir.join(THREAD_LEDGER_FILENAME);
 
         let files_to_write = [
             FileToWrite {
                 relative_path: &messages_relative,
-                content: &messages_updated,
-                old_content: Some(&existing_content),
+                content: &thread_updated,
+                old_content: Some(&old_thread_raw),
             },
             FileToWrite {
                 relative_path: &ledger_relative,
                 content: &updated_ledger_content,
-                old_content: Some(&ledger_content),
+                old_content: Some(&old_ledger_raw),
             },
         ];
 
@@ -434,7 +433,7 @@ impl CoordinationService<Initialised> {
 
     /// Reads an entire thread including messages and metadata.
     ///
-    /// Reads both messages.md and ledger.yaml files, parses their contents, and
+    /// Reads both thread.md and ledger.yaml files, parses their contents, and
     /// returns structured data with full thread information.
     ///
     /// # Arguments
@@ -449,19 +448,19 @@ impl CoordinationService<Initialised> {
     /// # Errors
     ///
     /// Returns `PatientError` if:
-    /// - Thread does not exist (messages.md or ledger.yaml not found)
+    /// - Thread does not exist (thread.md or ledger.yaml not found)
     /// - File read operations fail
     /// - YAML or markdown parsing fails
     pub fn read_thread(&self, thread_id: &TimestampId) -> PatientResult<Thread> {
-        let messages_raw = self.read_thread_file(thread_id, THREAD_MESSAGES_FILENAME)?;
-        let ledger_raw = self.read_thread_file(thread_id, THREAD_LEDGER_FILENAME)?;
+        let messages_raw = self.thread_file_read(thread_id, THREAD_FILENAME)?;
+        let ledger_raw = self.thread_file_read(thread_id, THREAD_LEDGER_FILENAME)?;
 
         let markdown_service = MarkdownService::new();
         let messages = markdown_service.thread_parse(&messages_raw)?;
         let ledger = FhirMessaging::ledger_parse(&ledger_raw)?;
 
         Ok(Thread {
-            thread_id: thread_id.to_string(),
+            communication_id: thread_id.to_string(),
             ledger,
             messages,
         })
@@ -470,7 +469,7 @@ impl CoordinationService<Initialised> {
     /// Updates thread ledger metadata.
     ///
     /// Modifies ledger.yaml with updated participants, status, policies, or visibility
-    /// settings. The messages.md file is not modified. Changes are committed atomically
+    /// settings. The thread.md file is not modified. Changes are committed atomically
     /// to Git.
     ///
     /// # Arguments
@@ -620,7 +619,7 @@ impl MessageContent {
 /// Complete thread data (messages + ledger).
 #[derive(Clone, Debug)]
 pub struct Thread {
-    pub thread_id: String,
+    pub communication_id: String,
     pub ledger: LedgerData,
     pub messages: Vec<Message>,
 }
@@ -673,7 +672,7 @@ impl CoordinationService<Initialised> {
     ///
     /// # Returns
     ///
-    /// Absolute path to the thread directory containing messages.md and ledger.yaml.
+    /// Absolute path to the thread directory containing thread.md and ledger.yaml.
     fn thread_dir(&self, thread_id: &TimestampId) -> PathBuf {
         let coordination_dir = self.coordination_dir(self.coordination_id());
         coordination_dir
@@ -698,10 +697,40 @@ impl CoordinationService<Initialised> {
     /// # Errors
     ///
     /// Returns `PatientError::FileRead` if the file cannot be read.
-    fn read_thread_file(&self, thread_id: &TimestampId, filename: &str) -> PatientResult<String> {
+    fn thread_file_read(&self, thread_id: &TimestampId, filename: &str) -> PatientResult<String> {
         let thread_dir = self.thread_dir(thread_id);
         let file_path = thread_dir.join(filename);
         fs::read_to_string(&file_path).map_err(PatientError::FileRead)
+    }
+
+    /// Checks if a thread file exists.
+    ///
+    /// Validates that a specific file exists within a thread directory.
+    ///
+    /// # Arguments
+    ///
+    /// * `thread_id` - Timestamp-based thread identifier
+    /// * `filename` - Relative filename within the thread directory
+    ///
+    /// # Returns
+    ///
+    /// Ok(()) if the file exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PatientError::InvalidInput` if the file does not exist.
+    fn thread_file_exists(&self, thread_id: &TimestampId, filename: &str) -> PatientResult<()> {
+        let thread_dir = self.thread_dir(thread_id);
+        let file_path = thread_dir.join(filename);
+
+        if !file_path.exists() {
+            return Err(PatientError::InvalidInput(format!(
+                "Thread file does not exist: {} in thread {}",
+                filename, thread_id
+            )));
+        }
+
+        Ok(())
     }
 }
 
@@ -866,11 +895,11 @@ mod tests {
         let coord_dir = service.coordination_dir(service.coordination_id());
         let thread_dir = coord_dir.join("communications").join(thread_id.to_string());
         assert!(thread_dir.exists());
-        assert!(thread_dir.join("messages.md").exists());
+        assert!(thread_dir.join("thread.md").exists());
         assert!(thread_dir.join("ledger.yaml").exists());
 
-        // Verify messages.md contains initial message
-        let messages_content = fs::read_to_string(thread_dir.join("messages.md")).unwrap();
+        // Verify thread.md contains initial message
+        let messages_content = fs::read_to_string(thread_dir.join("thread.md")).unwrap();
         assert!(messages_content.contains("Initial thread message"));
     }
 
@@ -1064,7 +1093,7 @@ mod tests {
 
         let thread = service.read_thread(&thread_id).unwrap();
 
-        assert_eq!(thread.thread_id, thread_id.to_string());
+        assert_eq!(thread.communication_id, thread_id.to_string());
         assert_eq!(thread.ledger.participants.len(), 2);
         assert_eq!(thread.messages.len(), 1);
         assert_eq!(thread.ledger.status, FhirThreadStatus::Open);
