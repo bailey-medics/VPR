@@ -18,7 +18,7 @@
   - [Care Coordination](./technical/coordination/index.md)
     - [Messaging](./technical/coordination/messaging.md)
     - [FHIR Integration](./technical/coordination/fhir.md)
-  - [Large File Storage](./technical/large-file-storage.md)
+  - [File Storage](./technical/file-storage.md)
   - [Redaction](./technical/redaction/index.md)
   - [Writing Workers](./technical/design-decisions-writing-workers.md)
   - [Git](./technical/git.md)
