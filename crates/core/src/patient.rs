@@ -69,11 +69,14 @@ impl PatientService {
     ) -> PatientResult<FullRecord> {
         let demographics_service = DemographicsService::new(self.cfg.clone());
         // Initialise demographics
-        let demographics_uuid =
+        let demographics_service =
             demographics_service.initialise(author.clone(), care_location.clone())?;
 
+        // Get the UUID for later use
+        let demographics_uuid = demographics_service.demographics_id().to_string();
+
         // Update demographics with patient information
-        demographics_service.update(&demographics_uuid, given_names, &last_name, &birth_date)?;
+        demographics_service.update(given_names, &last_name, &birth_date)?;
 
         // Initialise clinical
         let clinical_service = ClinicalService::new(self.cfg.clone());

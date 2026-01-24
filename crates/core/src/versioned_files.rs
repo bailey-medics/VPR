@@ -77,6 +77,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use x509_parser::prelude::*;
 
+#[cfg(test)]
+use std::collections::HashSet;
+#[cfg(test)]
+use std::sync::{LazyLock, Mutex};
+
 const MAIN_REF: &str = "refs/heads/main";
 
 /// Deterministic container for VPR commit signatures.
@@ -853,38 +858,6 @@ impl VersionedFileService {
         Ok(())
     }
 
-    /// Create a commit including *all* files under the repository working directory.
-    ///
-    /// Recursively collects all files in the working directory (excluding `.git/`) and
-    /// commits them with the provided author information and message. This is useful for
-    /// initial repository setup or when all files should be included in the commit.
-    ///
-    /// # Arguments
-    ///
-    /// * `author` - Author information including name, email, and optional signature
-    /// * `message` - Structured commit message with domain, action, and location
-    ///
-    /// # Returns
-    ///
-    /// The Git object ID (OID) of the created commit.
-    ///
-    /// # Errors
-    ///
-    /// Returns `PatientError` if:
-    /// - Commit message rendering fails (invalid author, missing fields) - [`PatientError::InvalidInput`], [`PatientError::MissingCareLocation`]
-    /// - Directory traversal fails - [`PatientError::FileRead`]
-    /// - Git index operations fail - [`PatientError::GitIndex`], [`PatientError::GitAdd`]
-    /// - Commit creation fails (signing errors, tree write errors) - various Git-related errors
-    pub(crate) fn commit_all(
-        &self,
-        author: &Author,
-        message: &VprCommitMessage,
-    ) -> PatientResult<git2::Oid> {
-        let rendered = message.render_with_author(author)?;
-        let paths = self.collect_paths_recursive()?;
-        self.commit_paths_rendered(author, &rendered, &paths)
-    }
-
     /// Create a commit including only the provided file paths (relative to the repo workdir).
     ///
     /// This is useful for “surgical” updates where you don’t want to commit everything.
@@ -1063,14 +1036,14 @@ impl VersionedFileService {
     ///     old_content: None,
     /// }];
     ///
-    /// VersionedFileService::init_and_commit_with_cleanup(
+    /// VersionedFileService::init_and_commit(
     ///     &patient_dir,
     ///     &author,
     ///     &commit_message,
     ///     &files,
     /// )?;
     /// ```
-    pub(crate) fn init_and_commit_with_cleanup(
+    pub(crate) fn init_and_commit(
         patient_dir: &Path,
         author: &Author,
         message: &VprCommitMessage,
@@ -1086,7 +1059,7 @@ impl VersionedFileService {
             Ok(()) => Ok(()),
             Err(init_error) => {
                 // Attempt cleanup - remove entire patient_dir
-                if let Err(cleanup_err) = std::fs::remove_dir_all(patient_dir) {
+                if let Err(cleanup_err) = cleanup_patient_dir(patient_dir) {
                     return Err(PatientError::CleanupAfterInitialiseFailed {
                         path: patient_dir.to_path_buf(),
                         init_error: Box::new(init_error),
@@ -1326,52 +1299,6 @@ impl VersionedFileService {
         }
     }
 
-    /// Recursively collect all file paths in the repository working directory.
-    ///
-    /// Walks the directory tree starting from the repository's working directory,
-    /// collecting paths for all files (excluding directories and the `.git` directory).
-    /// All paths are returned relative to the working directory root.
-    ///
-    /// This is used by `commit_all` to stage all files in the repository.
-    ///
-    /// # Returns
-    ///
-    /// Vector of repository-relative paths for all regular files.
-    ///
-    /// # Errors
-    ///
-    /// Returns `PatientError` if:
-    /// - Directory traversal fails (permissions, I/O errors)
-    /// - Path cannot be made relative to repository root
-    fn collect_paths_recursive(&self) -> PatientResult<Vec<PathBuf>> {
-        fn walk(dir: &Path, base: &Path, out: &mut Vec<PathBuf>) -> PatientResult<()> {
-            for entry in fs::read_dir(dir).map_err(PatientError::FileRead)? {
-                let entry = entry.map_err(PatientError::FileRead)?;
-                let entry_path = entry.path();
-
-                if entry_path.ends_with(".git") {
-                    continue;
-                }
-
-                if entry_path.is_dir() {
-                    walk(&entry_path, base, out)?;
-                } else {
-                    let rel = entry_path.strip_prefix(base).map_err(|_| {
-                        PatientError::InvalidInput(
-                            "path is outside the repository working directory".into(),
-                        )
-                    })?;
-                    out.push(rel.to_path_buf());
-                }
-            }
-            Ok(())
-        }
-
-        let mut paths = Vec::new();
-        walk(&self.workdir, &self.workdir, &mut paths)?;
-        Ok(paths)
-    }
-
     /// Verifies the ECDSA signature of the latest commit in a patient's Git repository.
     ///
     /// VPR uses `git2::Repository::commit_signed` with an ECDSA P-256 signature over the
@@ -1490,6 +1417,56 @@ fn verifying_key_from_public_key_or_cert_pem(pem_or_cert: &str) -> PatientResult
         VerifyingKey::from_public_key_pem(pem_or_cert)
             .map_err(|e| PatientError::EcdsaPublicKeyParse(Box::new(e)))
     }
+}
+
+#[cfg(test)]
+static FORCE_CLEANUP_ERROR_FOR_THREADS: LazyLock<Mutex<HashSet<std::thread::ThreadId>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
+#[cfg(test)]
+pub(crate) fn force_cleanup_error_for_current_thread() {
+    let mut guard = FORCE_CLEANUP_ERROR_FOR_THREADS
+        .lock()
+        .expect("FORCE_CLEANUP_ERROR_FOR_THREADS mutex poisoned");
+    guard.insert(std::thread::current().id());
+}
+
+/// Removes a patient directory and all its contents.
+///
+/// This is a wrapper around [`std::fs::remove_dir_all`] with test instrumentation.
+/// In test mode, it can be forced to fail for specific threads to test error handling.
+///
+/// # Arguments
+///
+/// * `patient_dir` - The path to the patient directory to remove.
+///
+/// # Returns
+///
+/// Returns `Ok(())` if the directory was successfully removed.
+///
+/// # Errors
+///
+/// Returns an [`std::io::Error`] if the directory cannot be removed.
+///
+/// # Test Instrumentation
+///
+/// When compiled with `#[cfg(test)]`, this function checks a thread-local set to
+/// see if it should force a failure for the current thread. This allows testing
+/// of cleanup failure scenarios.
+fn cleanup_patient_dir(patient_dir: &Path) -> std::io::Result<()> {
+    #[cfg(test)]
+    {
+        let current_id = std::thread::current().id();
+        let mut guard = FORCE_CLEANUP_ERROR_FOR_THREADS
+            .lock()
+            .expect("FORCE_CLEANUP_ERROR_FOR_THREADS mutex poisoned");
+
+        if guard.remove(&current_id) {
+            return Err(std::io::Error::other("forced cleanup failure (test hook)"));
+        }
+    }
+
+    std::fs::remove_dir_all(patient_dir)
 }
 
 #[cfg(test)]

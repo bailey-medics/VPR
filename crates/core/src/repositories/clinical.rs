@@ -15,9 +15,11 @@
 
 use crate::author::Author;
 use crate::config::CoreConfig;
-use crate::constants::CLINICAL_DIR_NAME;
+use crate::constants::{CLINICAL_DIR_NAME, DEFAULT_GITIGNORE};
 use crate::error::{PatientError, PatientResult};
+use crate::paths::clinical::ehr_status::EhrStatusFile;
 use crate::paths::clinical::letter::LetterPaths;
+use crate::paths::common::GitIgnoreFile;
 use crate::repositories::shared::{
     copy_dir_recursive, create_uuid_and_shard_dir, validate_template, TemplateDirKind,
 };
@@ -34,7 +36,7 @@ use openehr::{
     ExternalReference, Letter,
 };
 use std::{
-    fs, io,
+    fs,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -43,12 +45,6 @@ use vpr_uuid::TimestampIdGenerator;
 #[cfg(test)]
 use std::io::ErrorKind;
 use uuid::Uuid;
-
-#[cfg(test)]
-use std::collections::HashSet;
-
-#[cfg(test)]
-use std::sync::{LazyLock, Mutex};
 
 /// Marker type: clinical record does not yet exist.
 ///
@@ -236,50 +232,54 @@ impl ClinicalService<Uninitialised> {
         let clinical_dir = self.clinical_dir();
         let (clinical_uuid, patient_dir) = create_uuid_and_shard_dir(&clinical_dir)?;
 
-        // Here we catch errors when creating the clinical record, so we can
-        // attempt to clean up the partially created directory and files.
-        let result: PatientResult<Uuid> = (|| {
-            let repo = VersionedFileService::init(&patient_dir)?;
+        let template_dir = self.cfg.clinical_template_dir().to_path_buf();
+        let rm_version = self.cfg.rm_system_version();
 
-            let template_dir = self.cfg.clinical_template_dir().to_path_buf();
+        // Validate and copy template - cleanup manually on failure since no git repo exists yet
+        let copy_result = (|| {
             validate_template(&TemplateDirKind::Clinical, &template_dir)?;
-
-            copy_dir_recursive(&template_dir, &patient_dir).map_err(PatientError::FileWrite)?;
-
-            let rm_version = self.cfg.rm_system_version();
-
-            let filename = patient_dir.join("ehr_status.yaml");
-            let ehr_id = EhrId::from_uuid(clinical_uuid.uuid());
-
-            let yaml_content = EhrStatus::render(rm_version, None, Some(&ehr_id), None)?;
-
-            fs::write(&filename, yaml_content).map_err(PatientError::FileWrite)?;
-
-            repo.commit_all(&author, &commit_message)?;
-
-            Ok(clinical_uuid.uuid())
+            copy_dir_recursive(&template_dir, &patient_dir).map_err(PatientError::FileWrite)
         })();
 
-        let clinical_id = match result {
-            Ok(id) => id,
-            Err(init_error) => {
-                match remove_patient_dir_all(&patient_dir) {
-                    Ok(()) => {}
-                    Err(cleanup_error) => {
-                        return Err(PatientError::CleanupAfterInitialiseFailed {
-                            path: patient_dir,
-                            init_error: Box::new(init_error),
-                            cleanup_error,
-                        });
-                    }
-                }
-                return Err(init_error);
+        if let Err(e) = copy_result {
+            if let Err(cleanup_err) = fs::remove_dir_all(&patient_dir) {
+                return Err(PatientError::CleanupAfterInitialiseFailed {
+                    path: patient_dir.clone(),
+                    init_error: Box::new(e),
+                    cleanup_error: cleanup_err,
+                });
             }
-        };
+            return Err(e);
+        }
+
+        // Prepare ehr_status.yaml content
+        let ehr_status_yaml = EhrStatus::render(
+            rm_version,
+            None,
+            Some(&EhrId::from_uuid(clinical_uuid.uuid())),
+            None,
+        )?;
+
+        let files = [
+            FileToWrite {
+                relative_path: Path::new(GitIgnoreFile::NAME),
+                content: DEFAULT_GITIGNORE,
+                old_content: None,
+            },
+            FileToWrite {
+                relative_path: Path::new(EhrStatusFile::NAME),
+                content: &ehr_status_yaml,
+                old_content: None,
+            },
+        ];
+
+        VersionedFileService::init_and_commit(&patient_dir, &author, &commit_message, &files)?;
 
         Ok(ClinicalService {
             cfg: self.cfg,
-            state: Initialised { clinical_id },
+            state: Initialised {
+                clinical_id: clinical_uuid.uuid(),
+            },
         })
     }
 }
@@ -506,56 +506,6 @@ impl<S> ClinicalService<S> {
         let clinical_dir = self.clinical_dir();
         clinical_uuid.sharded_dir(&clinical_dir)
     }
-}
-
-#[cfg(test)]
-static FORCE_CLEANUP_ERROR_FOR_THREADS: LazyLock<Mutex<HashSet<std::thread::ThreadId>>> =
-    LazyLock::new(|| Mutex::new(HashSet::new()));
-
-#[cfg(test)]
-fn force_cleanup_error_for_current_thread() {
-    let mut guard = FORCE_CLEANUP_ERROR_FOR_THREADS
-        .lock()
-        .expect("FORCE_CLEANUP_ERROR_FOR_THREADS mutex poisoned");
-    guard.insert(std::thread::current().id());
-}
-
-/// Removes a patient directory and all its contents.
-///
-/// This is a wrapper around [`std::fs::remove_dir_all`] with test instrumentation.
-/// In test mode, it can be forced to fail for specific threads to test error handling.
-///
-/// # Arguments
-///
-/// * `patient_dir` - The path to the patient directory to remove.
-///
-/// # Returns
-///
-/// Returns `Ok(())` if the directory was successfully removed.
-///
-/// # Errors
-///
-/// Returns an [`io::Error`] if the directory cannot be removed.
-///
-/// # Test Instrumentation
-///
-/// When compiled with `#[cfg(test)]`, this function checks a thread-local set to
-/// see if it should force a failure for the current thread. This allows testing
-/// of cleanup failure scenarios.
-fn remove_patient_dir_all(patient_dir: &Path) -> io::Result<()> {
-    #[cfg(test)]
-    {
-        let current_id = std::thread::current().id();
-        let mut guard = FORCE_CLEANUP_ERROR_FOR_THREADS
-            .lock()
-            .expect("FORCE_CLEANUP_ERROR_FOR_THREADS mutex poisoned");
-
-        if guard.remove(&current_id) {
-            return Err(io::Error::other("forced cleanup failure (test hook)"));
-        }
-    }
-
-    fs::remove_dir_all(patient_dir)
 }
 
 #[cfg(test)]
@@ -1405,13 +1355,14 @@ mod tests {
     }
 
     #[test]
-    fn test_initialise_returns_cleanup_after_initialise_failed_if_cleanup_fails() {
+    fn test_initialise_with_init_and_commit_validates_template_before_git() {
         let patient_data_dir = TempDir::new().expect("Failed to create temp dir");
         let clinical_template_dir = TempDir::new().expect("Failed to create template temp dir");
         // Intentionally do not create `.ehr/` so template validation fails.
 
         let rm_system_version = rm_system_version_from_env_value(None)
             .expect("rm_system_version_from_env_value should succeed");
+
         let cfg = Arc::new(
             CoreConfig::new(
                 patient_data_dir.path().to_path_buf(),
@@ -1432,71 +1383,24 @@ mod tests {
             certificate: None,
         };
 
-        force_cleanup_error_for_current_thread();
+        // With init_and_commit, template validation happens BEFORE git init,
+        // so we expect InvalidInput immediately without any git repo being created.
         let err = service
             .initialise(author, "Test Hospital".to_string())
-            .expect_err("initialise should fail");
+            .expect_err("initialise should fail on invalid template");
 
-        match err {
-            PatientError::CleanupAfterInitialiseFailed {
-                path,
-                init_error,
-                cleanup_error,
-            } => {
-                assert!(
-                    matches!(*init_error, PatientError::InvalidInput(_)),
-                    "expected init_error to be InvalidInput"
-                );
-                assert_eq!(cleanup_error.kind(), ErrorKind::Other);
-                assert!(path.exists(), "patient_dir should still exist");
-            }
-            other => panic!("unexpected error: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn test_initialise_initialises_git_repo_before_template_validation_failure() {
-        let patient_data_dir = TempDir::new().expect("Failed to create temp dir");
-        let clinical_template_dir = TempDir::new().expect("Failed to create template temp dir");
-        // Intentionally do not create `.ehr/` so template validation fails.
-
-        let rm_system_version = rm_system_version_from_env_value(None)
-            .expect("rm_system_version_from_env_value should succeed");
-        let cfg = Arc::new(
-            CoreConfig::new(
-                patient_data_dir.path().to_path_buf(),
-                clinical_template_dir.path().to_path_buf(),
-                rm_system_version,
-                "vpr.dev.1".into(),
-            )
-            .expect("CoreConfig::new should succeed"),
+        assert!(
+            matches!(err, PatientError::InvalidInput(_)),
+            "expected InvalidInput error before git init, got: {err:?}"
         );
-        let service = ClinicalService::new(cfg);
 
-        let author = Author {
-            name: "Test Author".to_string(),
-            role: "Clinician".to_string(),
-            email: "test@example.com".to_string(),
-            registrations: vec![],
-            signature: None,
-            certificate: None,
-        };
-
-        // Force cleanup to fail so we can inspect the partially-created directory.
-        force_cleanup_error_for_current_thread();
-        let err = service
-            .initialise(author, "Test Hospital".to_string())
-            .expect_err("initialise should fail");
-
-        match err {
-            PatientError::CleanupAfterInitialiseFailed { path, .. } => {
-                assert!(
-                    path.join(".git").is_dir(),
-                    "git repo should be initialised before template validation/copy"
-                );
-            }
-            other => panic!("unexpected error: {other:?}"),
-        }
+        // Verify no patient directories were created since validation failed early
+        let clinical_dir = patient_data_dir.path().join(CLINICAL_DIR_NAME);
+        assert_eq!(
+            count_allocated_patient_dirs(&clinical_dir),
+            0,
+            "no patient directories should exist after early validation failure"
+        );
     }
 
     #[test]

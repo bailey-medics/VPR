@@ -46,10 +46,12 @@
 use crate::author::Author;
 use crate::config::CoreConfig;
 use crate::constants::{
-    COORDINATION_DIR_NAME, COORDINATION_STATUS_FILENAME, THREAD_FILENAME, THREAD_LEDGER_FILENAME,
+    COORDINATION_DIR_NAME, DEFAULT_GITIGNORE, THREAD_FILENAME, THREAD_LEDGER_FILENAME,
 };
 use crate::error::{PatientError, PatientResult};
 use crate::markdown::{MarkdownService, Message, MessageMetadata};
+use crate::paths::common::GitIgnoreFile;
+use crate::paths::coordination::coordination_status::CoordinationStatusFile;
 use crate::repositories::shared::create_uuid_and_shard_dir;
 use crate::versioned_files::{
     CoordinationDomain::{Messaging, Record},
@@ -168,17 +170,24 @@ impl CoordinationService<Uninitialised> {
 
         let coordination_status_raw = CoordinationStatus::render(&coordination_status)?;
 
-        let status_file = FileToWrite {
-            relative_path: Path::new(COORDINATION_STATUS_FILENAME),
-            content: &coordination_status_raw,
-            old_content: None,
-        };
+        let files = [
+            FileToWrite {
+                relative_path: Path::new(GitIgnoreFile::NAME),
+                content: DEFAULT_GITIGNORE,
+                old_content: None,
+            },
+            FileToWrite {
+                relative_path: Path::new(CoordinationStatusFile::NAME),
+                content: &coordination_status_raw,
+                old_content: None,
+            },
+        ];
 
-        VersionedFileService::init_and_commit_with_cleanup(
+        VersionedFileService::init_and_commit(
             &patient_dir,
             &commit_author,
             &commit_message,
-            &[status_file],
+            &files,
         )?;
 
         Ok(CoordinationService {
@@ -616,7 +625,7 @@ impl CoordinationService<Initialised> {
             care_location,
         )?;
 
-        self.file_exists(&[COORDINATION_STATUS_FILENAME])?;
+        self.file_exists(&[CoordinationStatusFile::NAME])?;
 
         // Read existing status
         let old_status_raw = self.coordination_status_file_read()?;
@@ -640,7 +649,7 @@ impl CoordinationService<Initialised> {
 
         let coordination_dir = self.coordination_dir(self.coordination_id());
         let files_to_write = [FileToWrite {
-            relative_path: Path::new(COORDINATION_STATUS_FILENAME),
+            relative_path: Path::new(CoordinationStatusFile::NAME),
             content: &new_status_raw,
             old_content: Some(&old_status_raw),
         }];
@@ -826,7 +835,7 @@ impl CoordinationService<Initialised> {
     ///
     /// ```ignore
     /// // Check coordination status file
-    /// self.file_exists(&[COORDINATION_STATUS_FILENAME])?;
+    /// self.file_exists(&[CoordinationStatusFile::NAME])?;
     ///
     /// // Check thread file
     /// self.file_exists(&["communications", &thread_id.to_string(), "thread.md"])?;
@@ -856,7 +865,7 @@ impl CoordinationService<Initialised> {
     /// Absolute path to COORDINATION_STATUS.yaml.
     fn coordination_status_file_path(&self) -> PathBuf {
         let coordination_dir = self.coordination_dir(self.coordination_id());
-        coordination_dir.join(COORDINATION_STATUS_FILENAME)
+        coordination_dir.join(CoordinationStatusFile::NAME)
     }
 
     /// Reads the coordination status file.

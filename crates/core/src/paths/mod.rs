@@ -4,3 +4,6 @@
 //! It contains **no I/O logic** - only typed path construction.
 
 pub mod clinical;
+pub mod common;
+pub mod coordination;
+pub mod demographics;
