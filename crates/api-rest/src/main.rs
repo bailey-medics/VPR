@@ -26,7 +26,7 @@ use std::path::PathBuf;
 use vpr_core::{
     config::rm_system_version_from_env_value,
     repositories::clinical::ClinicalService,
-    repositories::demographics::DemographicsService,
+    repositories::demographics::{DemographicsService, Uninitialised as DemographicsUninitialised},
     repositories::shared::{resolve_clinical_template_dir, validate_template, TemplateDirKind},
     Author, AuthorRegistration, CoreConfig,
 };
@@ -38,7 +38,7 @@ use vpr_core::{
 #[derive(Clone)]
 struct AppState {
     cfg: Arc<CoreConfig>,
-    demographics_service: Arc<DemographicsService>,
+    demographics_service: Arc<DemographicsService<DemographicsUninitialised>>,
 }
 
 #[derive(OpenApi)]

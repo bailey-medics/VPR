@@ -17,7 +17,8 @@ use api_shared::{auth, HealthService};
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
 use vpr_core::{
-    repositories::clinical::ClinicalService, repositories::demographics::DemographicsService,
+    repositories::clinical::ClinicalService,
+    repositories::demographics::{DemographicsService, Uninitialised as DemographicsUninitialised},
     Author, AuthorRegistration, CoreConfig,
 };
 
@@ -63,7 +64,7 @@ use api_shared::pb::{vpr_server::Vpr, CreatePatientReq, CreatePatientRes, Health
 #[derive(Clone)]
 pub struct VprService {
     cfg: Arc<CoreConfig>,
-    demographics_service: DemographicsService,
+    demographics_service: DemographicsService<DemographicsUninitialised>,
 }
 
 impl VprService {

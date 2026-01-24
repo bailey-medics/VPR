@@ -478,7 +478,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             let demographics_service = DemographicsService::new(cfg.clone());
             match demographics_service.initialise(author, care_location) {
-                Ok(uuid) => println!("Initialised demographics with UUID: {}", uuid),
+                Ok(service) => println!(
+                    "Initialised demographics with UUID: {}",
+                    service.demographics_id()
+                ),
                 Err(e) => eprintln!("Error initialising demographics: {}", e),
             }
         }
@@ -568,15 +571,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .split(',')
                 .map(|s| s.trim().to_string())
                 .collect();
-            let demographics_service = DemographicsService::new(cfg.clone());
-            match demographics_service.update(
-                &demographics_uuid,
-                given_names_vec,
-                &last_name,
-                &birth_date,
-            ) {
-                Ok(()) => println!("Updated demographics for UUID: {}", demographics_uuid),
-                Err(e) => eprintln!("Error updating demographics: {}", e),
+
+            match DemographicsService::with_id(cfg.clone(), &demographics_uuid) {
+                Ok(demographics_service) => {
+                    match demographics_service.update(given_names_vec, &last_name, &birth_date) {
+                        Ok(()) => println!("Updated demographics for UUID: {}", demographics_uuid),
+                        Err(e) => eprintln!("Error updating demographics: {}", e),
+                    }
+                }
+                Err(e) => eprintln!("Error creating demographics service: {}", e),
             }
         }
         Some(Commands::InitialiseFullRecord {

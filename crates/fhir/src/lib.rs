@@ -14,14 +14,17 @@
 
 pub mod coordination_status;
 pub mod messaging;
+pub mod patient;
 
 // Re-export facades
 pub use coordination_status::CoordinationStatus;
 pub use messaging::Messaging;
+pub use patient::Patient;
 
 // Re-export public domain-level types
 pub use coordination_status::{CoordinationStatusData, LifecycleState};
 pub use messaging::{AuthorRole, LedgerData, MessageAuthor, SensitivityLevel, ThreadStatus};
+pub use patient::{NameUse, PatientData};
 
 // Re-export TimestampId from vpr_uuid crate
 pub use vpr_uuid::TimestampId;

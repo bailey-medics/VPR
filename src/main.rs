@@ -31,7 +31,7 @@ use vpr_core::{
     Author, AuthorRegistration, CoreConfig,
     config::rm_system_version_from_env_value,
     repositories::clinical::ClinicalService,
-    repositories::demographics::DemographicsService,
+    repositories::demographics::{DemographicsService, Uninitialised as DemographicsUninitialised},
     repositories::shared::{TemplateDirKind, resolve_clinical_template_dir, validate_template},
 };
 
@@ -48,7 +48,7 @@ type Patient = pb::Patient;
 #[derive(Clone)]
 struct AppState {
     cfg: Arc<CoreConfig>,
-    demographics_service: Arc<DemographicsService>,
+    demographics_service: Arc<DemographicsService<DemographicsUninitialised>>,
 }
 
 #[derive(OpenApi)]
