@@ -86,7 +86,9 @@ Defensive programming (clinical safety)
 - Spelling: Use British English (en-GB) for documentation and other prose (mdBook pages, README, Rustdoc/comments).
 - Documentation style:
   - Use **Rustdoc** (doc comments) with standard section headings.
-  - For functions/methods, include clear `# Arguments`, `# Returns`, and `# Errors` sections **when applicable**.
+  - For functions/methods (including private helpers), include clear `# Arguments`, `# Returns`, and `# Errors` sections **when applicable**.
+    - Include `# Arguments` for all methods with parameters (public or private), documenting what each parameter represents.
+    - Include `# Returns` for all methods that return non-unit values (public or private), describing what is returned.
     - If there are no arguments/meaningful return value/no error conditions to document, omit the empty section.
     - For `# Errors`, prefer a short, grouped bullet list describing the _conditions_ under which an error is returned (not an exhaustive list of enum variants).
       - Use the form: `Returns <ErrorType> if:` then `- ...` bullets.
