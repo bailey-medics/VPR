@@ -87,19 +87,21 @@ The name `files/` is intentionally neutral and does not imply format, size, or r
 
 Each file is identified by its **content**, not by its filename.
 
-Recommended practice:
+VPR implements content-addressed storage using SHA-256 hashes:
 
-- Files are named or sharded using a cryptographic hash (for example SHA-256)
+- Files are stored using their SHA-256 hash as the filename
+- Two-level sharding is used to prevent excessive files per directory
 - Hashes are used to verify integrity
 - If file contents change, a new file is created
 
-**Example (illustrative):**
+**Storage structure:**
 
 ```text
 files/
 └── sha256/
-    └── ab/
-        └── ab3f9e…
+    └── ab/          # First 2 characters of hash
+        └── cd/      # Next 2 characters of hash
+            └── abcdef123456...  # Full hash as filename
 ```
 
 ---
@@ -122,23 +124,30 @@ File references are small, human-readable, and versioned as part of the CR.
 
 ### Typical Reference Metadata
 
-A file reference typically records:
+A file reference records:
 
 - Relative path to the file within `files/`
-- Cryptographic checksum
-- Media type
-- Clinical purpose or context
-- Optional source or author
+- Cryptographic hash (SHA-256)
+- Hash algorithm identifier
+- Media type (MIME type, best-effort detection)
+- Original filename
+- File size in bytes
+- Storage timestamp (ISO 8601 format)
 
-**Example:**
+**Example (matching `FileMetadata` structure):**
 
 ```yaml
 file_reference:
-  path: files/sha256/ab/ab3f9e…
-  checksum: sha256:ab3f9e…
+  hash_algorithm: sha256
+  hash: abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890
+  relative_path: files/sha256/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890
+  size_bytes: 1048576
   media_type: application/pdf
-  purpose: External discharge letter
+  original_filename: discharge-letter.pdf
+  stored_at: "2026-01-24T10:30:00Z"
 ```
+
+**Note:** The `media_type` is detected automatically using file content inspection and should not be considered authoritative for clinical purposes.
 
 ---
 
@@ -170,10 +179,11 @@ This mirrors real-world clinical practice (for example “patient brought letter
 
 ## Versioning Behaviour
 
-- Files are immutable once added
-- New or corrected content results in a new file
+- Files are immutable once added (enforced by the `FilesService`)
+- New or corrected content results in a new file with a different hash
 - References are append-only
 - Historical references remain valid indefinitely
+- Attempting to store a file with an existing hash returns an error
 
 No reference is silently replaced or overwritten.
 
@@ -208,6 +218,35 @@ Git is used to version **clinical meaning**, not binary bytes.
 ## Enterprise Deployment and Acceleration (Non-Canonical Layer)
 
 In enterprise deployments, VPR retains the on-disk Clinical Repository (CR) as the **canonical source of truth**, while performance, scale, and availability are achieved through **derived acceleration layers**. These include projection databases, indexes, and caches built by continuously reading the canonical CR and materialising fast read models for queries, lists, and search. Large files remain conceptually part of the CR but may be mirrored to object storage for durability and efficient delivery; such storage acts as a **distribution and persistence layer**, not a new authority. All enterprise components are explicitly rebuildable from the canonical repository, tolerate missing binary bytes, and never accept writes that bypass the CR. This preserves VPR’s laptop-first, openEHR-aligned philosophy while enabling high-throughput, low-latency operation at organisational scale.
+
+---
+
+## Implementation
+
+VPR provides the `FilesService` (in the `vpr_files` crate) for managing binary file storage:
+
+### Core Operations
+
+- **`add(source_path)`** — Adds a file to content-addressed storage
+  - Computes SHA-256 hash
+  - Creates sharded storage path
+  - Enforces immutability (errors if hash exists)
+  - Detects media type automatically
+  - Returns `FileMetadata` with all reference information
+
+- **`read(hash)`** — Retrieves file contents by hash
+  - Returns file as byte vector (`Vec<u8>`)
+  - Suitable for network transmission
+  - Errors if file not found
+
+### Service Characteristics
+
+- **Repository-scoped**: Each service instance is bound to one repository
+- **Defensive**: Validates all paths and prevents directory traversal
+- **Stateless**: No persistent state beyond filesystem
+- **Safe**: All paths canonicalised to prevent symlink attacks
+
+See `crates/files/src/files.rs` for complete implementation details.
 
 ---
 
