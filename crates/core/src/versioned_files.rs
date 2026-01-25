@@ -1423,28 +1423,6 @@ fn verifying_key_from_public_key_or_cert_pem(pem_or_cert: &str) -> PatientResult
 static FORCE_CLEANUP_ERROR_FOR_THREADS: LazyLock<Mutex<HashSet<std::thread::ThreadId>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 
-/// Removes a patient directory and all its contents.
-///
-/// This is a wrapper around [`std::fs::remove_dir_all`] with test instrumentation.
-/// In test mode, it can be forced to fail for specific threads to test error handling.
-///
-/// # Arguments
-///
-/// * `patient_dir` - The path to the patient directory to remove.
-///
-/// # Returns
-///
-/// Returns `Ok(())` if the directory was successfully removed.
-///
-/// # Errors
-///
-/// Returns an [`std::io::Error`] if the directory cannot be removed.
-///
-/// # Test Instrumentation
-///
-/// When compiled with `#[cfg(test)]`, this function checks a thread-local set to
-/// see if it should force a failure for the current thread. This allows testing
-/// of cleanup failure scenarios.
 fn cleanup_patient_dir(patient_dir: &Path) -> std::io::Result<()> {
     #[cfg(test)]
     {
