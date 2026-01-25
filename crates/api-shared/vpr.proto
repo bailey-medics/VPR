@@ -39,8 +39,317 @@ message ListPatientsRes {
   repeated Patient patients = 1;
 }
 
+// Clinical Letter messages
+message ReadLetterReq {
+  string clinical_uuid = 1;
+  string letter_timestamp_id = 2;
+}
+
+message ClinicalList {
+  string name = 1;
+  string kind = 2;
+}
+
+message ReadLetterRes {
+  string body_content = 1;
+  string rm_version = 2;
+  string composer_name = 3;
+  string composer_role = 4;
+  string start_time = 5; // RFC3339
+  repeated ClinicalList clinical_lists = 6;
+}
+
+message NewLetterReq {
+  string clinical_uuid = 1;
+  string author_name = 2;
+  string author_email = 3;
+  string author_role = 4;
+  repeated AuthorRegistration author_registrations = 5;
+  string care_location = 6;
+  string content = 7;
+  string author_signature = 8;
+}
+
+message NewLetterRes {
+  string timestamp_id = 1;
+}
+
+message NewLetterWithAttachmentsReq {
+  string clinical_uuid = 1;
+  string author_name = 2;
+  string author_email = 3;
+  string author_role = 4;
+  repeated AuthorRegistration author_registrations = 5;
+  string care_location = 6;
+  repeated bytes attachment_files = 7; // File contents
+  repeated string attachment_names = 8; // Original filenames
+  string author_signature = 9;
+}
+
+message NewLetterWithAttachmentsRes {
+  string timestamp_id = 1;
+}
+
+message GetLetterAttachmentsReq {
+  string clinical_uuid = 1;
+  string letter_timestamp_id = 2;
+}
+
+message AttachmentMetadata {
+  string filename = 1;
+  string original_filename = 2;
+  string hash = 3;
+  string file_storage_path = 4;
+  int64 size_bytes = 5;
+  string media_type = 6;
+}
+
+message LetterAttachment {
+  AttachmentMetadata metadata = 1;
+  bytes content = 2;
+}
+
+message GetLetterAttachmentsRes {
+  repeated LetterAttachment attachments = 1;
+}
+
+// Demographics messages
+message InitialiseDemographicsReq {
+  string author_name = 1;
+  string author_email = 2;
+  string author_role = 3;
+  repeated AuthorRegistration author_registrations = 4;
+  string care_location = 5;
+  string author_signature = 6;
+}
+
+message InitialiseDemographicsRes {
+  string demographics_uuid = 1;
+}
+
+message UpdateDemographicsReq {
+  string demographics_uuid = 1;
+  repeated string given_names = 2;
+  string last_name = 3;
+  string birth_date = 4; // YYYY-MM-DD
+}
+
+message UpdateDemographicsRes {
+  bool success = 1;
+}
+
+// Clinical messages
+message InitialiseClinicalReq {
+  string author_name = 1;
+  string author_email = 2;
+  string author_role = 3;
+  repeated AuthorRegistration author_registrations = 4;
+  string care_location = 5;
+  string author_signature = 6;
+}
+
+message InitialiseClinicalRes {
+  string clinical_uuid = 1;
+}
+
+message LinkToDemographicsReq {
+  string clinical_uuid = 1;
+  string demographics_uuid = 2;
+  string author_name = 3;
+  string author_email = 4;
+  string author_role = 5;
+  repeated AuthorRegistration author_registrations = 6;
+  string care_location = 7;
+  string author_signature = 8;
+  string namespace = 9;
+}
+
+message LinkToDemographicsRes {
+  bool success = 1;
+}
+
+// Coordination messages
+message InitialiseCoordinationReq {
+  string clinical_uuid = 1;
+  string author_name = 2;
+  string author_email = 3;
+  string author_role = 4;
+  repeated AuthorRegistration author_registrations = 5;
+  string care_location = 6;
+  string author_signature = 7;
+}
+
+message InitialiseCoordinationRes {
+  string coordination_uuid = 1;
+}
+
+message MessageAuthor {
+  string id = 1; // UUID
+  string name = 2;
+  string role = 3; // clinician, careadministrator, patient, patientassociate, system
+}
+
+message CreateThreadReq {
+  string coordination_uuid = 1;
+  string author_name = 2;
+  string author_email = 3;
+  string author_role = 4;
+  repeated AuthorRegistration author_registrations = 5;
+  string care_location = 6;
+  repeated MessageAuthor participants = 7;
+  string initial_message_body = 8;
+  MessageAuthor initial_message_author = 9;
+  string author_signature = 10;
+}
+
+message CreateThreadRes {
+  string thread_id = 1;
+}
+
+message AddMessageReq {
+  string coordination_uuid = 1;
+  string thread_id = 2;
+  string author_name = 3;
+  string author_email = 4;
+  string author_role = 5;
+  repeated AuthorRegistration author_registrations = 6;
+  string care_location = 7;
+  MessageAuthor message_author = 8;
+  string message_body = 9;
+  string corrects = 10; // Optional UUID
+  string author_signature = 11;
+}
+
+message AddMessageRes {
+  string message_id = 1;
+}
+
+message ReadCommunicationReq {
+  string coordination_uuid = 1;
+  string thread_id = 2;
+}
+
+message MessageMetadata {
+  string message_id = 1;
+  MessageAuthor author = 2;
+  string timestamp = 3; // RFC3339
+  string corrects = 4; // Optional UUID
+}
+
+message Message {
+  MessageMetadata metadata = 1;
+  string body = 2;
+}
+
+message LedgerParticipant {
+  string id = 1; // UUID
+  string name = 2;
+  string role = 3;
+}
+
+message Ledger {
+  string communication_id = 1;
+  string status = 2; // open, closed, archived
+  repeated LedgerParticipant participants = 3;
+  string sensitivity = 4; // standard, confidential, restricted
+  bool restricted = 5;
+  bool allow_patient_participation = 6;
+  bool allow_external_organisations = 7;
+  string created_at = 8; // RFC3339
+  string last_updated_at = 9; // RFC3339
+}
+
+message ReadCommunicationRes {
+  string communication_id = 1;
+  Ledger ledger = 2;
+  repeated Message messages = 3;
+}
+
+message UpdateCommunicationLedgerReq {
+  string coordination_uuid = 1;
+  string thread_id = 2;
+  string author_name = 3;
+  string author_email = 4;
+  string author_role = 5;
+  repeated AuthorRegistration author_registrations = 6;
+  string care_location = 7;
+  repeated MessageAuthor add_participants = 8;
+  repeated string remove_participant_ids = 9; // UUIDs
+  string set_status = 10; // Optional: open, closed, archived
+  string set_sensitivity = 11; // Optional: standard, confidential, restricted
+  optional bool set_restricted = 12;
+  optional bool set_allow_patient = 13;
+  optional bool set_allow_external = 14;
+  string author_signature = 15;
+}
+
+message UpdateCommunicationLedgerRes {
+  bool success = 1;
+}
+
+message UpdateCoordinationStatusReq {
+  string coordination_uuid = 1;
+  string author_name = 2;
+  string author_email = 3;
+  string author_role = 4;
+  repeated AuthorRegistration author_registrations = 5;
+  string care_location = 6;
+  string set_lifecycle_state = 7; // Optional: active, suspended, closed
+  optional bool set_record_open = 8;
+  optional bool set_record_queryable = 9;
+  optional bool set_record_modifiable = 10;
+  string author_signature = 11;
+}
+
+message UpdateCoordinationStatusRes {
+  bool success = 1;
+}
+
+// Patient messages
+message InitialiseFullRecordReq {
+  repeated string given_names = 1;
+  string last_name = 2;
+  string birth_date = 3; // YYYY-MM-DD
+  string author_name = 4;
+  string author_email = 5;
+  string author_role = 6;
+  repeated AuthorRegistration author_registrations = 7;
+  string care_location = 8;
+  string author_signature = 9;
+  string namespace = 10;
+}
+
+message InitialiseFullRecordRes {
+  string demographics_uuid = 1;
+  string clinical_uuid = 2;
+  string coordination_uuid = 3;
+}
+
 service VPR {
   rpc Health(google.protobuf.Empty) returns (HealthRes);
+  
+  // Patient
   rpc CreatePatient(CreatePatientReq) returns (CreatePatientRes);
   rpc ListPatients(google.protobuf.Empty) returns (ListPatientsRes);
+  rpc InitialiseFullRecord(InitialiseFullRecordReq) returns (InitialiseFullRecordRes);
+  
+  // Demographics
+  rpc InitialiseDemographics(InitialiseDemographicsReq) returns (InitialiseDemographicsRes);
+  rpc UpdateDemographics(UpdateDemographicsReq) returns (UpdateDemographicsRes);
+  
+  // Clinical
+  rpc InitialiseClinical(InitialiseClinicalReq) returns (InitialiseClinicalRes);
+  rpc LinkToDemographics(LinkToDemographicsReq) returns (LinkToDemographicsRes);
+  rpc NewLetter(NewLetterReq) returns (NewLetterRes);
+  rpc ReadLetter(ReadLetterReq) returns (ReadLetterRes);
+  rpc NewLetterWithAttachments(NewLetterWithAttachmentsReq) returns (NewLetterWithAttachmentsRes);
+  rpc GetLetterAttachments(GetLetterAttachmentsReq) returns (GetLetterAttachmentsRes);
+  
+  // Coordination
+  rpc InitialiseCoordination(InitialiseCoordinationReq) returns (InitialiseCoordinationRes);
+  rpc CreateThread(CreateThreadReq) returns (CreateThreadRes);
+  rpc AddMessage(AddMessageReq) returns (AddMessageRes);
+  rpc ReadCommunication(ReadCommunicationReq) returns (ReadCommunicationRes);
+  rpc UpdateCommunicationLedger(UpdateCommunicationLedgerReq) returns (UpdateCommunicationLedgerRes);
+  rpc UpdateCoordinationStatus(UpdateCoordinationStatusReq) returns (UpdateCoordinationStatusRes);
 }
