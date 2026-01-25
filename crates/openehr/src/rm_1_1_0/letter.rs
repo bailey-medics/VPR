@@ -155,11 +155,21 @@ struct Narrative {
     pub path: String,
 }
 
-/// Default type for external text narrative.
-const NARRATIVE_TYPE: &str = "external_text";
+/// Default type for external text narrative (body.md).
+const NARRATIVE_TYPE_TEXT: &str = "external_text";
+
+/// Type for external media narrative (attachments).
+const NARRATIVE_TYPE_MEDIA: &str = "external_media";
 
 /// Default path for narrative body.
 const NARRATIVE_PATH: &str = "./body.md";
+
+/// Content parameters for letter initialization.
+struct LetterContent<'a> {
+    clinical_lists: Option<&'a [PublicClinicalList]>,
+    has_body: bool,
+    attachments: &'a [crate::public_structs::letter::AttachmentReference],
+}
 
 /// RM-specific ClinicalList EVALUATION (maps internally from public ClinicalList).
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -287,35 +297,48 @@ impl From<&PublicClinicalList> for ClinicalList {
 /// ```
 impl From<Composition> for LetterData {
     fn from(comp: Composition) -> Self {
-        // Extract clinical lists from the composition content
-        let clinical_lists = comp
-            .content
-            .iter()
-            .flat_map(|item| &item.section.items)
-            .filter_map(|section_item| {
-                if let EvaluationData::ClinicalList { kind, items } = &section_item.evaluation.data
-                {
-                    Some(PublicClinicalList {
-                        name: section_item.evaluation.name.value.clone(),
-                        kind: kind.value.clone(),
-                        items: items
-                            .iter()
-                            .map(|item| crate::public_structs::letter::ClinicalListItem {
-                                text: item.text.clone(),
-                                code: item.code.as_ref().map(|c| {
-                                    crate::public_structs::letter::CodedConcept {
-                                        terminology: c.terminology.clone(),
-                                        value: c.value.clone(),
-                                    }
-                                }),
-                            })
-                            .collect(),
-                    })
-                } else {
-                    None
+        // Extract clinical lists, attachments, and check for body from the composition content
+        let mut clinical_lists = Vec::new();
+        let mut attachments = Vec::new();
+        let mut has_body = false;
+
+        for item in &comp.content {
+            for section_item in &item.section.items {
+                match &section_item.evaluation.data {
+                    EvaluationData::ClinicalList { kind, items } => {
+                        clinical_lists.push(PublicClinicalList {
+                            name: section_item.evaluation.name.value.clone(),
+                            kind: kind.value.clone(),
+                            items: items
+                                .iter()
+                                .map(|item| crate::public_structs::letter::ClinicalListItem {
+                                    text: item.text.clone(),
+                                    code: item.code.as_ref().map(|c| {
+                                        crate::public_structs::letter::CodedConcept {
+                                            terminology: c.terminology.clone(),
+                                            value: c.value.clone(),
+                                        }
+                                    }),
+                                })
+                                .collect(),
+                        });
+                    }
+                    EvaluationData::Narrative { narrative } => {
+                        if narrative.type_ == NARRATIVE_TYPE_MEDIA {
+                            // external_media = attachment
+                            attachments.push(crate::public_structs::letter::AttachmentReference {
+                                path: narrative.path.clone(),
+                            });
+                        } else if narrative.type_ == NARRATIVE_TYPE_TEXT
+                            && narrative.path == NARRATIVE_PATH
+                        {
+                            // external_text pointing to body.md
+                            has_body = true;
+                        }
+                    }
                 }
-            })
-            .collect();
+            }
+        }
 
         LetterData {
             rm_version: comp
@@ -330,6 +353,8 @@ impl From<Composition> for LetterData {
             composer_role: comp.composer.role,
             start_time: comp.context.start_time,
             clinical_lists,
+            has_body,
+            attachments,
         }
     }
 }
@@ -343,7 +368,7 @@ impl From<Composition> for LetterData {
 /// The conversion:
 /// - Constructs a full openEHR RM COMPOSITION with proper archetype IDs
 /// - Creates the correspondence SECTION with required structure
-/// - Adds a narrative EVALUATION pointing to the external body.md file
+/// - Adds narrative EVALUATIONs based on attachments or default body.md
 /// - Converts clinical lists to snapshot EVALUATIONs with proper archetype IDs
 /// - Wraps all text fields in [`DvText`] structures as required by the RM
 ///
@@ -360,6 +385,7 @@ impl From<Composition> for LetterData {
 ///     composer_role: "Consultant".to_string(),
 ///     start_time: Utc::now(),
 ///     clinical_lists: vec![],
+///     attachments: vec![],
 /// };
 ///
 /// let composition: Composition = (&letter_data).into();
@@ -373,7 +399,11 @@ impl From<&LetterData> for Composition {
             &data.composer_name,
             &data.composer_role,
             data.start_time,
-            Some(&data.clinical_lists),
+            LetterContent {
+                clinical_lists: Some(&data.clinical_lists),
+                has_body: data.has_body,
+                attachments: &data.attachments,
+            },
         )
     }
 }
@@ -449,7 +479,7 @@ pub fn composition_render(data: &LetterData) -> Result<String, OpenEhrError> {
 /// * `composer_name` - Composer's name.
 /// * `composer_role` - Composer's role.
 /// * `start_time` - Context start time as a UTC datetime.
-/// * `clinical_lists` - Optional clinical lists to include as snapshot evaluations.
+/// * `content` - Letter content including clinical lists, body flag, and attachments.
 ///
 /// # Returns
 ///
@@ -460,26 +490,48 @@ fn letter_init(
     composer_name: &str,
     composer_role: &str,
     start_time: DateTime<Utc>,
-    clinical_lists: Option<&[PublicClinicalList]>,
+    content: LetterContent<'_>,
 ) -> Composition {
-    // Start with the narrative evaluation
-    let mut section_items = vec![SectionItem {
-        evaluation: Evaluation {
-            archetype_node_id: evaluation_archetype_node_id().to_string(),
-            name: DvText {
-                value: EVALUATION_NAME.to_string(),
-            },
-            data: EvaluationData::Narrative {
-                narrative: Narrative {
-                    type_: NARRATIVE_TYPE.to_string(),
-                    path: NARRATIVE_PATH.to_string(),
+    let mut section_items = Vec::new();
+
+    // Add body.md narrative if present
+    if content.has_body {
+        section_items.push(SectionItem {
+            evaluation: Evaluation {
+                archetype_node_id: evaluation_archetype_node_id().to_string(),
+                name: DvText {
+                    value: EVALUATION_NAME.to_string(),
+                },
+                data: EvaluationData::Narrative {
+                    narrative: Narrative {
+                        type_: NARRATIVE_TYPE_TEXT.to_string(),
+                        path: NARRATIVE_PATH.to_string(),
+                    },
                 },
             },
-        },
-    }];
+        });
+    }
+
+    // Add attachment narratives
+    for attachment in content.attachments {
+        section_items.push(SectionItem {
+            evaluation: Evaluation {
+                archetype_node_id: evaluation_archetype_node_id().to_string(),
+                name: DvText {
+                    value: EVALUATION_NAME.to_string(),
+                },
+                data: EvaluationData::Narrative {
+                    narrative: Narrative {
+                        type_: NARRATIVE_TYPE_MEDIA.to_string(),
+                        path: attachment.path.clone(),
+                    },
+                },
+            },
+        });
+    }
 
     // Add snapshot evaluations if provided
-    if let Some(lists) = clinical_lists {
+    if let Some(lists) = content.clinical_lists {
         for list in lists {
             let snapshot: ClinicalList = list.into();
             section_items.push(SectionItem {
@@ -760,7 +812,11 @@ content:
             "Dr Test",
             "Test Role",
             start_time,
-            None,
+            LetterContent {
+                clinical_lists: None,
+                has_body: true,
+                attachments: &[],
+            },
         );
 
         assert_eq!(letter.rm_version, "rm_1_1_0");
@@ -790,7 +846,11 @@ content:
             "Dr Test",
             "Test Role",
             start_time,
-            None,
+            LetterContent {
+                clinical_lists: None,
+                has_body: true,
+                attachments: &[],
+            },
         );
 
         let yaml_string = letter.to_string().expect("to_string should work");
@@ -825,6 +885,8 @@ content:
             composer_role: "New Role".to_string(),
             start_time,
             clinical_lists: vec![],
+            has_body: true,
+            attachments: vec![],
         };
 
         let result_yaml =
@@ -840,5 +902,129 @@ content:
         assert_eq!(result.composer_name, "Dr New");
         assert_eq!(result.composer_role, "New Role");
         assert_eq!(result.start_time, start_time);
+    }
+
+    #[test]
+    fn letter_with_attachments_creates_external_media() {
+        let start_time = DateTime::parse_from_rfc3339("2026-01-12T10:00:00Z")
+            .expect("valid datetime")
+            .with_timezone(&Utc);
+
+        // Create LetterData with attachments
+        let letter_data = LetterData {
+            rm_version: RmVersion::rm_1_1_0,
+            uid: "20260112T100000.000Z-00000000-0000-0000-0000-000000000000"
+                .parse()
+                .expect("valid TimestampId"),
+            composer_name: "Dr Test".to_string(),
+            composer_role: "Test Role".to_string(),
+            start_time,
+            clinical_lists: vec![],
+            has_body: false,
+            attachments: vec![
+                crate::public_structs::letter::AttachmentReference {
+                    path: "./attachments/attachment_1.yaml".to_string(),
+                },
+                crate::public_structs::letter::AttachmentReference {
+                    path: "./attachments/attachment_2.yaml".to_string(),
+                },
+            ],
+        };
+
+        let yaml_string = composition_render(&letter_data).expect("composition_render should work");
+
+        // Verify it contains external_media references
+        assert!(
+            yaml_string.contains("type: external_media"),
+            "YAML should contain external_media type"
+        );
+        assert!(
+            yaml_string.contains("path: ./attachments/attachment_1.yaml"),
+            "YAML should contain first attachment path"
+        );
+        assert!(
+            yaml_string.contains("path: ./attachments/attachment_2.yaml"),
+            "YAML should contain second attachment path"
+        );
+
+        // Verify it does NOT contain external_text or body.md
+        assert!(
+            !yaml_string.contains("type: external_text"),
+            "YAML should not contain external_text type when attachments are present"
+        );
+        assert!(
+            !yaml_string.contains("path: ./body.md"),
+            "YAML should not contain body.md path when attachments are present"
+        );
+
+        // Verify it can be parsed back
+        let reparsed_data =
+            composition_parse(&yaml_string).expect("should parse the generated YAML");
+
+        // Check that attachments were correctly extracted
+        assert_eq!(reparsed_data.attachments.len(), 2);
+        assert_eq!(
+            reparsed_data.attachments[0].path,
+            "./attachments/attachment_1.yaml"
+        );
+        assert_eq!(
+            reparsed_data.attachments[1].path,
+            "./attachments/attachment_2.yaml"
+        );
+    }
+
+    #[test]
+    fn letter_with_both_body_and_attachments() {
+        let start_time = DateTime::parse_from_rfc3339("2026-01-12T10:00:00Z")
+            .expect("valid datetime")
+            .with_timezone(&Utc);
+
+        // Create LetterData with both body and attachments
+        let letter_data = LetterData {
+            rm_version: RmVersion::rm_1_1_0,
+            uid: "20260112T100000.000Z-00000000-0000-0000-0000-000000000000"
+                .parse()
+                .expect("valid TimestampId"),
+            composer_name: "Dr Test".to_string(),
+            composer_role: "Test Role".to_string(),
+            start_time,
+            clinical_lists: vec![],
+            has_body: true,
+            attachments: vec![crate::public_structs::letter::AttachmentReference {
+                path: "./attachments/attachment_1.yaml".to_string(),
+            }],
+        };
+
+        let yaml_string = composition_render(&letter_data).expect("composition_render should work");
+
+        // Verify it contains BOTH external_text AND external_media
+        assert!(
+            yaml_string.contains("type: external_text"),
+            "YAML should contain external_text type for body.md"
+        );
+        assert!(
+            yaml_string.contains("path: ./body.md"),
+            "YAML should contain body.md path"
+        );
+        assert!(
+            yaml_string.contains("type: external_media"),
+            "YAML should contain external_media type for attachments"
+        );
+        assert!(
+            yaml_string.contains("path: ./attachments/attachment_1.yaml"),
+            "YAML should contain attachment path"
+        );
+
+        // Verify it can be parsed back
+        let reparsed_data =
+            composition_parse(&yaml_string).expect("should parse the generated YAML");
+
+        // Check that both body and attachments were correctly extracted
+        assert!(reparsed_data.has_body);
+        assert_eq!(reparsed_data.attachments.len(), 1);
+        assert_eq!(
+            reparsed_data.attachments[0].path,
+            "./attachments/attachment_1.yaml"
+        );
     }
 }

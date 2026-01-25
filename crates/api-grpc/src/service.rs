@@ -512,6 +512,70 @@ impl Vpr for VprService {
         }
     }
 
+    async fn new_letter_complete(
+        &self,
+        req: Request<pb::NewLetterCompleteReq>,
+    ) -> Result<Response<pb::NewLetterCompleteRes>, Status> {
+        let api_key = req
+            .metadata()
+            .get("x-api-key")
+            .and_then(|v| v.to_str().ok())
+            .ok_or_else(|| Status::unauthenticated("Missing x-api-key header"))?;
+        auth::validate_api_key(api_key)?;
+
+        let req = req.into_inner();
+        let author = build_author(
+            req.author_name,
+            req.author_email,
+            req.author_role,
+            req.author_registrations,
+            req.author_signature,
+        );
+
+        let clinical_uuid = ShardableUuid::parse(&req.clinical_uuid)
+            .map_err(|e| Status::invalid_argument(format!("Invalid clinical UUID: {}", e)))?
+            .uuid();
+
+        // Write attachment files to temporary directory
+        let temp_dir =
+            std::env::temp_dir().join(format!("vpr_attachments_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_dir)
+            .map_err(|e| Status::internal(format!("Failed to create temp dir: {}", e)))?;
+
+        let mut attachment_paths = Vec::new();
+        for (i, (content, name)) in req
+            .attachment_files
+            .iter()
+            .zip(&req.attachment_names)
+            .enumerate()
+        {
+            let file_path = temp_dir.join(format!("{}_{}", i, name));
+            std::fs::write(&file_path, content)
+                .map_err(|e| Status::internal(format!("Failed to write attachment: {}", e)))?;
+            attachment_paths.push(file_path);
+        }
+
+        let clinical_service = ClinicalService::with_id(self.cfg.clone(), clinical_uuid);
+        let result = clinical_service.create_letter(
+            &author,
+            req.care_location,
+            Some(req.content),
+            &attachment_paths,
+            None,
+        );
+
+        // Clean up temp files
+        let _ = std::fs::remove_dir_all(&temp_dir);
+
+        match result {
+            Ok(timestamp_id) => Ok(Response::new(pb::NewLetterCompleteRes { timestamp_id })),
+            Err(e) => Err(Status::internal(format!(
+                "Failed to create complete letter: {}",
+                e
+            ))),
+        }
+    }
+
     async fn get_letter_attachments(
         &self,
         req: Request<pb::GetLetterAttachmentsReq>,

@@ -90,6 +90,23 @@ message NewLetterWithAttachmentsRes {
   string timestamp_id = 1;
 }
 
+message NewLetterCompleteReq {
+  string clinical_uuid = 1;
+  string author_name = 2;
+  string author_email = 3;
+  string author_role = 4;
+  repeated AuthorRegistration author_registrations = 5;
+  string care_location = 6;
+  string content = 7; // Body content
+  repeated bytes attachment_files = 8; // File contents
+  repeated string attachment_names = 9; // Original filenames
+  string author_signature = 10;
+}
+
+message NewLetterCompleteRes {
+  string timestamp_id = 1;
+}
+
 message GetLetterAttachmentsReq {
   string clinical_uuid = 1;
   string letter_timestamp_id = 2;
@@ -343,6 +360,7 @@ service VPR {
   rpc NewLetter(NewLetterReq) returns (NewLetterRes);
   rpc ReadLetter(ReadLetterReq) returns (ReadLetterRes);
   rpc NewLetterWithAttachments(NewLetterWithAttachmentsReq) returns (NewLetterWithAttachmentsRes);
+  rpc NewLetterComplete(NewLetterCompleteReq) returns (NewLetterCompleteRes);
   rpc GetLetterAttachments(GetLetterAttachmentsReq) returns (GetLetterAttachmentsRes);
   
   // Coordination

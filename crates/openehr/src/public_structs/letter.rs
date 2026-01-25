@@ -16,6 +16,14 @@ use serde::{Deserialize, Serialize};
 /// This type is symmetric with both parsing and rendering:
 /// - `composition_parse()` extracts domain fields into this struct
 /// - `composition_render()` builds wire format from this struct
+///
+/// # Letter Content
+///
+/// A letter can have:
+/// - A body (markdown text in body.md) via `has_body` flag
+/// - Attachments (external files) via `attachments` vector
+/// - Both body AND attachments
+/// - But never neither (at least one must be present)
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LetterData {
     /// RM version for this letter.
@@ -35,6 +43,25 @@ pub struct LetterData {
 
     /// Optional clinical lists (snapshot evaluations) to include.
     pub clinical_lists: Vec<ClinicalList>,
+
+    /// Whether this letter has a body.md file.
+    /// When true, generates an external_text narrative pointing to ./body.md
+    pub has_body: bool,
+
+    /// Attachment references. When present, these generate
+    /// external_media narratives pointing to attachment metadata files.
+    pub attachments: Vec<AttachmentReference>,
+}
+
+/// Reference to an attachment file in a letter composition.
+///
+/// This represents a pointer to an attachment YAML file that contains
+/// metadata about the actual file stored in the files repository.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttachmentReference {
+    /// Relative path to the attachment metadata file
+    /// (e.g., "./attachments/attachment_1.yaml")
+    pub path: String,
 }
 
 /// A clinical list representing a collection of related clinical items.

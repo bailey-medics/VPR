@@ -54,6 +54,7 @@ struct AppState {
         initialise_clinical,
         link_to_demographics,
         new_letter,
+        new_letter_complete,
         read_letter,
         initialise_coordination,
     ),
@@ -74,6 +75,8 @@ struct AppState {
         pb::LinkToDemographicsRes,
         pb::NewLetterReq,
         pb::NewLetterRes,
+        pb::NewLetterCompleteReq,
+        pb::NewLetterCompleteRes,
         pb::ReadLetterReq,
         pb::ReadLetterRes,
         pb::InitialiseCoordinationReq,
@@ -154,6 +157,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/clinical", post(initialise_clinical))
         .route("/clinical/:id/link", post(link_to_demographics))
         .route("/clinical/:id/letters", post(new_letter))
+        .route("/clinical/:id/letters/complete", post(new_letter_complete))
         .route("/clinical/:id/letters/:letter_id", get(read_letter))
         .route("/coordination", post(initialise_coordination))
         .merge(
@@ -535,6 +539,84 @@ async fn new_letter(
         Ok(timestamp_id) => Ok(Json(pb::NewLetterRes { timestamp_id })),
         Err(e) => {
             tracing::error!("New letter error: {:?}", e);
+            Err((StatusCode::INTERNAL_SERVER_ERROR, "Internal error"))
+        }
+    }
+}
+
+#[utoipa::path(
+    post,
+    path = "/clinical/{id}/letters/complete",
+    request_body = pb::NewLetterCompleteReq,
+    responses(
+        (status = 201, description = "Complete letter created", body = pb::NewLetterCompleteRes),
+        (status = 400, description = "Bad request"),
+        (status = 500, description = "Internal server error")
+    )
+)]
+#[axum::debug_handler]
+async fn new_letter_complete(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+    Json(mut req): Json<pb::NewLetterCompleteReq>,
+) -> Result<Json<pb::NewLetterCompleteRes>, (StatusCode, &'static str)> {
+    req.clinical_uuid = id;
+
+    let author = build_author(
+        req.author_name,
+        req.author_email,
+        req.author_role,
+        req.author_registrations,
+        req.author_signature,
+    );
+
+    let clinical_uuid = match ShardableUuid::parse(&req.clinical_uuid) {
+        Ok(uuid) => uuid.uuid(),
+        Err(e) => {
+            tracing::error!("Invalid clinical UUID: {:?}", e);
+            return Err((StatusCode::BAD_REQUEST, "Invalid clinical UUID"));
+        }
+    };
+
+    // Write attachment files to temporary directory
+    let temp_dir = std::env::temp_dir().join(format!("vpr_attachments_{}", uuid::Uuid::new_v4()));
+    if let Err(e) = std::fs::create_dir_all(&temp_dir) {
+        tracing::error!("Failed to create temp dir: {:?}", e);
+        return Err((StatusCode::INTERNAL_SERVER_ERROR, "Internal error"));
+    }
+
+    let mut attachment_paths = Vec::new();
+    for (i, (content, name)) in req
+        .attachment_files
+        .iter()
+        .zip(&req.attachment_names)
+        .enumerate()
+    {
+        let file_path = temp_dir.join(format!("{}_{}", i, name));
+        if let Err(e) = std::fs::write(&file_path, content) {
+            tracing::error!("Failed to write attachment: {:?}", e);
+            let _ = std::fs::remove_dir_all(&temp_dir);
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, "Internal error"));
+        }
+        attachment_paths.push(file_path);
+    }
+
+    let clinical_service = ClinicalService::with_id(state.cfg.clone(), clinical_uuid);
+    let result = clinical_service.create_letter(
+        &author,
+        req.care_location,
+        Some(req.content),
+        &attachment_paths,
+        None,
+    );
+
+    // Clean up temp files
+    let _ = std::fs::remove_dir_all(&temp_dir);
+
+    match result {
+        Ok(timestamp_id) => Ok(Json(pb::NewLetterCompleteRes { timestamp_id })),
+        Err(e) => {
+            tracing::error!("New complete letter error: {:?}", e);
             Err((StatusCode::INTERNAL_SERVER_ERROR, "Internal error"))
         }
     }

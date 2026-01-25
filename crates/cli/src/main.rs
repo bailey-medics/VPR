@@ -404,6 +404,42 @@ enum Commands {
         signature: Option<String>,
     },
 
+    /// Create a complete letter with both body and attachments:
+    ///
+    /// <clinical_uuid> <author_name> <author_email>
+    /// --role <author_role>
+    /// --care-location <care_location>
+    /// --content <letter_content>
+    /// --attachment-file <file_path> (repeatable)
+    /// [--registration <AUTHORITY> <NUMBER> ...]
+    /// [--signature <ecdsa_private_key_pem>]
+    NewLetterComplete {
+        /// Clinical repository UUID
+        clinical_uuid: String,
+        /// Author name for Git commit
+        author_name: String,
+        /// Author email for Git commit
+        author_email: String,
+        /// Mandatory author role for commit metadata
+        #[arg(long)]
+        role: String,
+        /// Declared professional registrations (repeatable): --registration <AUTHORITY> <NUMBER>
+        #[arg(long, value_names = ["AUTHORITY", "NUMBER"], num_args = 2, action = clap::ArgAction::Append)]
+        registration: Vec<String>,
+        /// Mandatory organisational location for the commit (e.g. hospital name, GP surgery)
+        #[arg(long)]
+        care_location: String,
+        /// Letter content (markdown text)
+        #[arg(long)]
+        content: String,
+        /// File paths for attachments (repeatable): --attachment-file <path>
+        #[arg(long = "attachment-file", action = clap::ArgAction::Append)]
+        attachment_file: Vec<PathBuf>,
+        /// ECDSA private key PEM for X.509 signing (optional, can be PEM string, base64-encoded PEM, or file path)
+        #[arg(long)]
+        signature: Option<String>,
+    },
+
     /// Get letter attachments:
     ///
     /// <clinical_uuid> <letter_timestamp_id>
@@ -1334,6 +1370,66 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     )
                 }
                 Err(e) => eprintln!("Error creating letter with attachments: {}", e),
+            }
+        }
+        Some(Commands::NewLetterComplete {
+            clinical_uuid,
+            author_name,
+            author_email,
+            role,
+            registration,
+            care_location,
+            content,
+            attachment_file,
+            signature,
+        }) => {
+            let registrations: Vec<AuthorRegistration> = registration
+                .chunks(2)
+                .map(|chunk| AuthorRegistration {
+                    authority: chunk.first().cloned().unwrap_or_default(),
+                    number: chunk.get(1).cloned().unwrap_or_default(),
+                })
+                .collect();
+            let author = Author {
+                name: author_name,
+                role,
+                email: author_email,
+                registrations,
+                signature,
+                certificate: None,
+            };
+
+            let clinical_uuid_parsed = match ShardableUuid::parse(&clinical_uuid) {
+                Ok(uuid) => uuid.uuid(),
+                Err(e) => {
+                    eprintln!("Error parsing clinical UUID: {}", e);
+                    return Ok(());
+                }
+            };
+
+            if attachment_file.is_empty() {
+                eprintln!(
+                    "Error: At least one attachment file is required for new-letter-complete"
+                );
+                return Ok(());
+            }
+
+            let clinical_service = ClinicalService::with_id(cfg.clone(), clinical_uuid_parsed);
+            match clinical_service.create_letter(
+                &author,
+                care_location,
+                Some(content),
+                &attachment_file,
+                None,
+            ) {
+                Ok(timestamp_id) => {
+                    println!(
+                        "Created complete letter with body and {} attachment(s), timestamp ID: {}",
+                        attachment_file.len(),
+                        timestamp_id
+                    )
+                }
+                Err(e) => eprintln!("Error creating complete letter: {}", e),
             }
         }
         Some(Commands::GetLetterAttachments {
