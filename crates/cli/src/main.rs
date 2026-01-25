@@ -1456,7 +1456,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         );
                         for attachment in attachments {
                             println!("\n  ---");
-                            println!("  Filename: {}", attachment.metadata.filename);
+                            println!("  Filename: {}", attachment.metadata.metadata_filename);
                             println!("  Original: {}", attachment.metadata.original_filename);
                             println!("  Hash: {}", attachment.metadata.hash);
                             println!("  Size: {} bytes", attachment.metadata.size_bytes);
@@ -1465,7 +1465,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 attachment
                                     .metadata
                                     .media_type
-                                    .as_deref()
+                                    .as_ref()
+                                    .map(|mt| mt.as_str())
                                     .unwrap_or("unknown")
                             );
                             println!("  Storage Path: {}", attachment.metadata.file_storage_path);

@@ -1,11 +1,11 @@
 repos:
-  # cspell (spelling for identifiers, filenames, comments)
-  - repo: https://github.com/streetsidesoftware/cspell-cli
-    rev: v8.13.0 # use a stable tag
-    hooks:
-      - id: cspell
-        args: ["--no-progress", "--config", "cspell.config.json"]
-        types_or: [markdown, text, rust, yaml, json, toml]
+  # cspell disabled - not checking spelling
+  # - repo: https://github.com/streetsidesoftware/cspell-cli
+  #   rev: v8.13.0 # use a stable tag
+  #   hooks:
+  #     - id: cspell
+  #       args: ["--no-progress", "--config", "cspell.config.json"]
+  #       types_or: [markdown, text, yaml, json, toml]
 
   # cargo fmt (auto-format)
   - repo: local

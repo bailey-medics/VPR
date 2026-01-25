@@ -638,7 +638,7 @@ async fn read_letter(
     let clinical_service = ClinicalService::with_id(state.cfg.clone(), clinical_uuid_parsed);
     match clinical_service.read_letter(&letter_id) {
         Ok(result) => Ok(Json(pb::ReadLetterRes {
-            body_content: result.body_content,
+            body_content: result.body_content.to_string(),
             rm_version: format!("{:?}", result.letter_data.rm_version),
             composer_name: result.letter_data.composer_name,
             composer_role: result.letter_data.composer_role,
