@@ -66,6 +66,7 @@
 
 use crate::author::Author;
 use crate::error::{PatientError, PatientResult};
+use crate::types::NonEmptyText;
 use crate::ShardableUuid;
 use base64::{engine::general_purpose, Engine as _};
 use p256::ecdsa::signature::{Signer, Verifier};
@@ -422,8 +423,8 @@ impl VprCommitTrailer {
 pub(crate) struct VprCommitMessage {
     domain: VprCommitDomain,
     action: VprCommitAction,
-    summary: String,
-    care_location: String,
+    summary: NonEmptyText,
+    care_location: NonEmptyText,
     trailers: Vec<VprCommitTrailer>,
 }
 
@@ -446,23 +447,24 @@ impl VprCommitMessage {
     pub(crate) fn new(
         domain: VprCommitDomain,
         action: VprCommitAction,
-        summary: impl Into<String>,
-        care_location: impl Into<String>,
+        summary: impl AsRef<str>,
+        care_location: impl AsRef<str>,
     ) -> PatientResult<Self> {
-        let summary = summary.into().trim().to_string();
-        if summary.is_empty() || summary.contains(['\n', '\r']) {
+        let summary_str = summary.as_ref().trim();
+        if summary_str.contains(['\n', '\r']) {
             return Err(PatientError::InvalidInput(
-                "commit summary must be non-empty and single-line".into(),
+                "commit summary must be single-line".into(),
             ));
         }
+        let summary = NonEmptyText::new(summary_str)
+            .map_err(|_| PatientError::InvalidInput("commit summary must be non-empty".into()))?;
 
-        let care_location = care_location.into().trim().to_string();
-        if care_location.is_empty() {
-            return Err(PatientError::MissingCareLocation);
-        }
-        if care_location.contains(['\n', '\r']) {
+        let care_location_str = care_location.as_ref().trim();
+        if care_location_str.contains(['\n', '\r']) {
             return Err(PatientError::InvalidCareLocation);
         }
+        let care_location =
+            NonEmptyText::new(care_location_str).map_err(|_| PatientError::MissingCareLocation)?;
 
         Ok(Self {
             domain,
@@ -521,7 +523,7 @@ impl VprCommitMessage {
     /// Get the commit summary.
     #[allow(dead_code)]
     pub(crate) fn summary(&self) -> &str {
-        &self.summary
+        self.summary.as_str()
     }
 
     /// Get the commit trailers.
@@ -545,22 +547,8 @@ impl VprCommitMessage {
     /// if constructed via `new()` and `with_trailer()`).
     #[allow(dead_code)]
     pub(crate) fn render(&self) -> PatientResult<String> {
-        // Defensively validate invariants so `VprCommitMessage` stays safe even if constructed
-        // manually (e.g. via struct literal within the crate).
-        if self.summary.trim().is_empty() || self.summary.contains(['\n', '\r']) {
-            return Err(PatientError::InvalidInput(
-                "commit summary must be non-empty and single-line".into(),
-            ));
-        }
-
-        if self.care_location.trim().is_empty() {
-            return Err(PatientError::MissingCareLocation);
-        }
-        if self.care_location.contains(['\n', '\r']) {
-            return Err(PatientError::InvalidCareLocation);
-        }
-
-        let mut rendered = format!("{}:{}: {}", self.domain, self.action, self.summary.trim());
+        // With NonEmptyText, validation is enforced at construction time
+        let mut rendered = format!("{}:{}: {}", self.domain, self.action, self.summary.as_str());
 
         // Sort non-reserved trailers deterministically.
         let mut other = self.trailers.clone();
@@ -572,7 +560,7 @@ impl VprCommitMessage {
 
         rendered.push_str("\n\n");
         rendered.push_str("Care-Location: ");
-        rendered.push_str(self.care_location.trim());
+        rendered.push_str(self.care_location.as_str());
 
         for trailer in other {
             if trailer.key().contains(['\n', '\r'])
@@ -646,14 +634,8 @@ impl VprCommitMessage {
             return Err(PatientError::ReservedCareLocationTrailerKey);
         }
 
-        if self.care_location.trim().is_empty() {
-            return Err(PatientError::MissingCareLocation);
-        }
-        if self.care_location.contains(['\n', '\r']) {
-            return Err(PatientError::InvalidCareLocation);
-        }
-
-        let mut rendered = format!("{}:{}: {}", self.domain, self.action, self.summary.trim());
+        // With NonEmptyText, validation is enforced at construction time
+        let mut rendered = format!("{}:{}: {}", self.domain, self.action, self.summary.as_str());
 
         // Sort registrations deterministically, but do not require selecting a primary authority.
         let mut regs = author.registrations.clone();
@@ -688,7 +670,7 @@ impl VprCommitMessage {
 
         rendered.push('\n');
         rendered.push_str("Care-Location: ");
-        rendered.push_str(self.care_location.trim());
+        rendered.push_str(self.care_location.as_str());
 
         for trailer in other {
             rendered.push('\n');

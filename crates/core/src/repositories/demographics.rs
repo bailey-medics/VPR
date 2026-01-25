@@ -36,6 +36,7 @@ use crate::constants::{DEFAULT_GITIGNORE, DEMOGRAPHICS_DIR_NAME};
 use crate::error::{PatientError, PatientResult};
 use crate::paths::common::GitIgnoreFile;
 use crate::paths::demographics::patient::PatientFile;
+use crate::types::NonEmptyText;
 use crate::versioned_files::{
     DemographicsDomain::Record, FileToWrite, VersionedFileService, VprCommitAction,
     VprCommitDomain, VprCommitMessage,
@@ -137,7 +138,7 @@ impl DemographicsService<Uninitialised> {
     pub fn initialise(
         self,
         author: Author,
-        care_location: String,
+        care_location: NonEmptyText,
     ) -> PatientResult<DemographicsService<Initialised>> {
         author.validate_commit_author()?;
 
@@ -427,7 +428,7 @@ mod tests {
 
         let author = test_author();
         let demographics_service = service
-            .initialise(author, "Test Hospital".to_string())
+            .initialise(author, NonEmptyText::new("Test Hospital").unwrap())
             .expect("initialise should succeed");
 
         let demographics_id = demographics_service.demographics_id();
@@ -477,7 +478,7 @@ mod tests {
         };
 
         let err = service
-            .initialise(invalid_author, "Test Hospital".to_string())
+            .initialise(invalid_author, NonEmptyText::new("Test Hospital").unwrap())
             .expect_err("initialise should fail with invalid author");
 
         assert!(
@@ -497,16 +498,16 @@ mod tests {
     fn test_initialise_rejects_missing_care_location_and_creates_no_files() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let cfg = test_cfg(temp_dir.path());
-        let service = DemographicsService::new(cfg);
+        let _service = DemographicsService::new(cfg);
 
-        let author = test_author();
-        let err = service
-            .initialise(author, "".to_string()) // Empty care location
-            .expect_err("initialise should fail with empty care location");
+        let _author = test_author();
+        // NonEmptyText validation prevents empty strings at the type level
+        let err =
+            NonEmptyText::new("").expect_err("creating NonEmptyText from empty string should fail");
 
         assert!(
-            matches!(err, PatientError::MissingCareLocation),
-            "should return MissingCareLocation error"
+            matches!(err, crate::types::TextError::Empty),
+            "should return TextError::Empty"
         );
 
         let demographics_dir = temp_dir.path().join(DEMOGRAPHICS_DIR_NAME);
@@ -521,14 +522,13 @@ mod tests {
     fn test_initialise_cleans_up_on_failure() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let cfg = test_cfg(temp_dir.path());
-        let service = DemographicsService::new(cfg);
+        let _service = DemographicsService::new(cfg);
 
-        let author = test_author();
+        let _author = test_author();
 
-        // Trigger a validation failure before any files are created
-        let _err = service
-            .initialise(author, "".to_string()) // Empty care location
-            .expect_err("initialise should fail with empty care location");
+        // Trigger a validation failure - NonEmptyText prevents empty strings at type level
+        let _err =
+            NonEmptyText::new("").expect_err("creating NonEmptyText from empty string should fail");
 
         let demographics_dir = temp_dir.path().join(DEMOGRAPHICS_DIR_NAME);
         assert_eq!(
@@ -578,7 +578,7 @@ mod tests {
 
         let author = test_author();
         let demographics_service = service
-            .initialise(author, "Test Hospital".to_string())
+            .initialise(author, NonEmptyText::new("Test Hospital").unwrap())
             .expect("initialise should succeed");
 
         // Update demographics
@@ -626,7 +626,7 @@ mod tests {
         // Create first patient
         let service1 = DemographicsService::new(cfg.clone());
         let demographics_service1 = service1
-            .initialise(test_author(), "Test Hospital".to_string())
+            .initialise(test_author(), NonEmptyText::new("Test Hospital").unwrap())
             .expect("initialise should succeed");
         demographics_service1
             .update(vec!["Alice".to_string()], "Smith", "1990-01-15")
@@ -635,7 +635,7 @@ mod tests {
         // Create second patient
         let service2 = DemographicsService::new(cfg.clone());
         let demographics_service2 = service2
-            .initialise(test_author(), "Test Hospital".to_string())
+            .initialise(test_author(), NonEmptyText::new("Test Hospital").unwrap())
             .expect("initialise should succeed");
         demographics_service2
             .update(vec!["Bob".to_string()], "Jones", "1985-06-20")
@@ -671,7 +671,7 @@ mod tests {
         // Create valid patient
         let service1 = DemographicsService::new(cfg.clone());
         let demographics_service1 = service1
-            .initialise(test_author(), "Test Hospital".to_string())
+            .initialise(test_author(), NonEmptyText::new("Test Hospital").unwrap())
             .expect("initialise should succeed");
         demographics_service1
             .update(vec!["Valid".to_string()], "Patient", "1990-01-15")

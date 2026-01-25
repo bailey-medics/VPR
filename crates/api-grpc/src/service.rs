@@ -26,6 +26,7 @@ use vpr_core::{
         CoordinationService, CoordinationStatusUpdate, LedgerUpdate, MessageContent,
     },
     repositories::demographics::{DemographicsService, Uninitialised as DemographicsUninitialised},
+    types::NonEmptyText,
     Author, AuthorRegistration, CoreConfig, PatientService, ShardableUuid, TimestampId,
 };
 
@@ -151,8 +152,10 @@ impl Vpr for VprService {
             },
             certificate: None,
         };
+        let care_location = NonEmptyText::new(&req.care_location)
+            .map_err(|e| Status::invalid_argument(format!("Invalid care_location: {}", e)))?;
         let clinical_service = ClinicalService::new(self.cfg.clone());
-        match clinical_service.initialise(author, req.care_location) {
+        match clinical_service.initialise(author, care_location) {
             Ok(service) => {
                 let resp = pb::CreatePatientRes {
                     filename: "".to_string(), // No filename for initialise
@@ -220,10 +223,13 @@ impl Vpr for VprService {
             req.author_signature,
         );
 
+        let care_location = NonEmptyText::new(&req.care_location)
+            .map_err(|e| Status::invalid_argument(format!("Invalid care_location: {}", e)))?;
+
         let patient_service = PatientService::new(self.cfg.clone());
         match patient_service.initialise_full_record(
             author,
-            req.care_location,
+            care_location,
             req.given_names,
             req.last_name,
             req.birth_date,
@@ -265,8 +271,11 @@ impl Vpr for VprService {
             req.author_signature,
         );
 
+        let care_location = NonEmptyText::new(&req.care_location)
+            .map_err(|e| Status::invalid_argument(format!("Invalid care_location: {}", e)))?;
+
         let demographics_service = DemographicsService::new(self.cfg.clone());
-        match demographics_service.initialise(author, req.care_location) {
+        match demographics_service.initialise(author, care_location) {
             Ok(service) => Ok(Response::new(pb::InitialiseDemographicsRes {
                 demographics_uuid: service.demographics_id().to_string(),
             })),
@@ -323,8 +332,11 @@ impl Vpr for VprService {
             req.author_signature,
         );
 
+        let care_location = NonEmptyText::new(&req.care_location)
+            .map_err(|e| Status::invalid_argument(format!("Invalid care_location: {}", e)))?;
+
         let clinical_service = ClinicalService::new(self.cfg.clone());
-        match clinical_service.initialise(author, req.care_location) {
+        match clinical_service.initialise(author, care_location) {
             Ok(service) => Ok(Response::new(pb::InitialiseClinicalRes {
                 clinical_uuid: service.clinical_id().simple().to_string(),
             })),
@@ -359,10 +371,13 @@ impl Vpr for VprService {
             .map_err(|e| Status::invalid_argument(format!("Invalid clinical UUID: {}", e)))?
             .uuid();
 
+        let care_location = NonEmptyText::new(&req.care_location)
+            .map_err(|e| Status::invalid_argument(format!("Invalid care_location: {}", e)))?;
+
         let clinical_service = ClinicalService::with_id(self.cfg.clone(), clinical_uuid);
         match clinical_service.link_to_demographics(
             &author,
-            req.care_location,
+            care_location,
             &req.demographics_uuid,
             if req.namespace.is_empty() {
                 None
@@ -402,8 +417,11 @@ impl Vpr for VprService {
             .map_err(|e| Status::invalid_argument(format!("Invalid clinical UUID: {}", e)))?
             .uuid();
 
+        let care_location = NonEmptyText::new(&req.care_location)
+            .map_err(|e| Status::invalid_argument(format!("Invalid care_location: {}", e)))?;
+
         let clinical_service = ClinicalService::with_id(self.cfg.clone(), clinical_uuid);
-        match clinical_service.new_letter(&author, req.care_location, req.content, None) {
+        match clinical_service.new_letter(&author, care_location, req.content, None) {
             Ok(timestamp_id) => Ok(Response::new(pb::NewLetterRes { timestamp_id })),
             Err(e) => Err(Status::internal(format!("Failed to create letter: {}", e))),
         }
@@ -490,10 +508,13 @@ impl Vpr for VprService {
             attachment_paths.push(file_path);
         }
 
+        let care_location = NonEmptyText::new(&req.care_location)
+            .map_err(|e| Status::invalid_argument(format!("Invalid care_location: {}", e)))?;
+
         let clinical_service = ClinicalService::with_id(self.cfg.clone(), clinical_uuid);
         let result = clinical_service.new_letter_with_attachments(
             &author,
-            req.care_location,
+            care_location,
             &attachment_paths,
             None,
         );
@@ -555,10 +576,13 @@ impl Vpr for VprService {
             attachment_paths.push(file_path);
         }
 
+        let care_location = NonEmptyText::new(&req.care_location)
+            .map_err(|e| Status::invalid_argument(format!("Invalid care_location: {}", e)))?;
+
         let clinical_service = ClinicalService::with_id(self.cfg.clone(), clinical_uuid);
         let result = clinical_service.create_letter(
             &author,
-            req.care_location,
+            care_location,
             Some(req.content),
             &attachment_paths,
             None,
@@ -601,7 +625,7 @@ impl Vpr for VprService {
                         metadata: Some(pb::AttachmentMetadata {
                             filename: att.metadata.metadata_filename.to_string(),
                             original_filename: att.metadata.original_filename.to_string(),
-                            hash: att.metadata.hash,
+                            hash: att.metadata.hash.to_string(),
                             file_storage_path: att.metadata.file_storage_path.to_string(),
                             size_bytes: att.metadata.size_bytes as i64,
                             media_type: att

@@ -35,7 +35,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use vpr_uuid::TimestampIdGenerator;
+use vpr_uuid::{Sha256Hash, TimestampIdGenerator};
 
 #[cfg(test)]
 use std::io::ErrorKind;
@@ -93,7 +93,7 @@ pub struct AttachmentMetadata {
     /// Name of the attachment metadata file (e.g., "attachment_1.yaml")
     pub metadata_filename: NonEmptyText,
     /// SHA-256 hash of the file content
-    pub hash: String,
+    pub hash: Sha256Hash,
     /// Path to the file in the files storage (relative to repository root)
     pub file_storage_path: NonEmptyText,
     /// Size of the file in bytes
@@ -226,16 +226,10 @@ impl ClinicalService<Uninitialised> {
     /// - Git repository initialisation fails (e.g., [`PatientError::GitInit`])
     /// - The initial commit fails (e.g., certificate/signature mismatch)
     /// - Cleanup of a partially-created record directory fails ([`PatientError::CleanupAfterInitialiseFailed`])
-    ///
-    /// # Safety & Rollback
-    ///
-    /// If any operation fails during initialisation, this method attempts to clean up the
-    /// partially-created patient directory. If cleanup also fails, a
-    /// [`PatientError::CleanupAfterInitialiseFailed`] is returned with details of both errors.
     pub fn initialise(
         self,
         author: Author,
-        care_location: String,
+        care_location: NonEmptyText,
     ) -> PatientResult<ClinicalService<Initialised>> {
         author.validate_commit_author()?;
 
@@ -327,7 +321,7 @@ impl ClinicalService<Initialised> {
     pub fn link_to_demographics(
         &self,
         author: &Author,
-        care_location: String,
+        care_location: NonEmptyText,
         demographics_uuid: &str,
         namespace: Option<String>,
     ) -> PatientResult<()> {
@@ -419,7 +413,7 @@ impl ClinicalService<Initialised> {
     pub fn create_letter(
         &self,
         author: &Author,
-        care_location: String,
+        care_location: NonEmptyText,
         body_content: Option<String>,
         attachment_files: &[PathBuf],
         clinical_lists: Option<&[ClinicalList]>,
@@ -469,7 +463,9 @@ impl ClinicalService<Initialised> {
                     metadata_filename: NonEmptyText::new(&attachment_filename).map_err(|e| {
                         PatientError::InvalidInput(format!("Invalid attachment filename: {}", e))
                     })?,
-                    hash: file_metadata.hash.clone(),
+                    hash: Sha256Hash::parse(&file_metadata.hash).map_err(|e| {
+                        PatientError::InvalidInput(format!("Invalid SHA-256 hash: {}", e))
+                    })?,
                     file_storage_path: NonEmptyText::new(&file_metadata.relative_path).map_err(
                         |e| PatientError::InvalidInput(format!("Invalid file storage path: {}", e)),
                     )?,
@@ -623,7 +619,7 @@ impl ClinicalService<Initialised> {
     pub fn new_letter(
         &self,
         author: &Author,
-        care_location: String,
+        care_location: NonEmptyText,
         letter_content: String,
         clinical_lists: Option<&[ClinicalList]>,
     ) -> PatientResult<String> {
@@ -836,7 +832,7 @@ impl ClinicalService<Initialised> {
                 })?;
 
             // Retrieve file content from storage using the hash
-            let content = files_service.read(&metadata.hash).map_err(|e| {
+            let content = files_service.read(metadata.hash.as_str()).map_err(|e| {
                 PatientError::InvalidInput(format!("Failed to read attachment file: {}", e))
             })?;
 
@@ -864,7 +860,7 @@ impl ClinicalService<Initialised> {
     pub fn new_letter_with_attachments(
         &self,
         author: &Author,
-        care_location: String,
+        care_location: NonEmptyText,
         attachment_files: &[PathBuf],
         clinical_lists: Option<&[ClinicalList]>,
     ) -> PatientResult<String> {
@@ -1081,7 +1077,7 @@ mod tests {
         };
 
         let err = service
-            .initialise(author, "Test Hospital".to_string())
+            .initialise(author, NonEmptyText::new("Test Hospital").unwrap())
             .expect_err("initialise should fail for invalid author");
         assert!(matches!(err, PatientError::MissingAuthorName));
 
@@ -1107,9 +1103,9 @@ mod tests {
             .expect("CoreConfig::new should succeed"),
         );
 
-        let service = ClinicalService::new(cfg);
+        let _service = ClinicalService::new(cfg);
 
-        let author = Author {
+        let _author = Author {
             name: "Test Author".to_string(),
             role: "Clinician".to_string(),
             email: "test@example.com".to_string(),
@@ -1118,10 +1114,10 @@ mod tests {
             certificate: None,
         };
 
-        let err = service
-            .initialise(author, " \t\n".to_string())
-            .expect_err("initialise should fail for missing care location");
-        assert!(matches!(err, PatientError::MissingCareLocation));
+        // NonEmptyText validation prevents whitespace-only strings at the type level
+        let err = NonEmptyText::new(" \t\n")
+            .expect_err("creating NonEmptyText from whitespace should fail");
+        assert!(matches!(err, crate::types::TextError::Empty));
 
         assert!(
             !patient_data_dir.path().join(CLINICAL_DIR_NAME).exists(),
@@ -1148,7 +1144,7 @@ mod tests {
         let service = ClinicalService::new(cfg);
 
         // Call initialise
-        let result = service.initialise(author, "Test Hospital".to_string());
+        let result = service.initialise(author, NonEmptyText::new("Test Hospital").unwrap());
         assert!(result.is_ok(), "initialise should succeed");
 
         let clinical_uuid = result.unwrap();
@@ -1202,7 +1198,7 @@ mod tests {
         let service = ClinicalService::new(cfg.clone());
 
         // First, initialise a clinical record
-        let care_location = "Test Hospital".to_string();
+        let care_location: NonEmptyText = NonEmptyText::new("Test Hospital").unwrap();
         let service = service
             .initialise(author.clone(), care_location.clone())
             .expect("initialise should succeed");
@@ -1255,14 +1251,14 @@ mod tests {
         };
 
         let service = service
-            .initialise(author.clone(), "Test Hospital".to_string())
+            .initialise(author.clone(), NonEmptyText::new("Test Hospital").unwrap())
             .expect("initialise should succeed");
 
         // Try to link with invalid demographics UUID
         let err = service
             .link_to_demographics(
                 &author,
-                "Test Hospital".to_string(),
+                NonEmptyText::new("Test Hospital").unwrap(),
                 "invalid-demographics-uuid",
                 None,
             )
@@ -1287,7 +1283,7 @@ mod tests {
         };
 
         let service = service
-            .initialise(author.clone(), "Test Hospital".to_string())
+            .initialise(author.clone(), NonEmptyText::new("Test Hospital").unwrap())
             .expect("initialise should succeed");
 
         // Try to link with unsafe namespace containing invalid characters
@@ -1297,7 +1293,7 @@ mod tests {
         let err = service
             .link_to_demographics(
                 &author,
-                "Test Hospital".to_string(),
+                NonEmptyText::new("Test Hospital").unwrap(),
                 &demographics_uuid_str,
                 Some("unsafe<namespace>with/special\\chars".to_string()),
             )
@@ -1336,7 +1332,7 @@ mod tests {
         let err = service
             .link_to_demographics(
                 &author,
-                "Test Hospital".to_string(),
+                NonEmptyText::new("Test Hospital").unwrap(),
                 &demographics_uuid_str,
                 None,
             )
@@ -1383,7 +1379,7 @@ mod tests {
         let err = service
             .link_to_demographics(
                 &author,
-                "Test Hospital".to_string(),
+                NonEmptyText::new("Test Hospital").unwrap(),
                 &demographics_uuid_str,
                 None,
             )
@@ -1432,7 +1428,7 @@ mod tests {
         };
 
         // Initialise clinical record
-        let result = service.initialise(author, "Test Hospital".to_string());
+        let result = service.initialise(author, NonEmptyText::new("Test Hospital").unwrap());
         assert!(result.is_ok(), "initialise should succeed");
         let clinical_uuid = result.unwrap();
         let clinical_uuid_str = clinical_uuid.clinical_id().simple().to_string();
@@ -1496,7 +1492,7 @@ mod tests {
         };
 
         let clinical_uuid = service
-            .initialise(author, "Test Hospital".to_string())
+            .initialise(author, NonEmptyText::new("Test Hospital").unwrap())
             .expect("initialise should succeed");
         let clinical_uuid_str = clinical_uuid.clinical_id().simple().to_string();
 
@@ -1553,7 +1549,7 @@ mod tests {
         };
 
         let err = service
-            .initialise(author, "Test Hospital".to_string())
+            .initialise(author, NonEmptyText::new("Test Hospital").unwrap())
             .expect_err("initialise should fail due to certificate mismatch");
         assert!(matches!(
             err,
@@ -1582,7 +1578,7 @@ mod tests {
         };
 
         let clinical_uuid = service
-            .initialise(author, "Test Hospital".to_string())
+            .initialise(author, NonEmptyText::new("Test Hospital").unwrap())
             .expect("initialise should succeed");
         let clinical_uuid_str = clinical_uuid.clinical_id().simple().to_string();
 
@@ -1622,7 +1618,7 @@ mod tests {
         };
 
         let clinical_uuid = service
-            .initialise(author, "Test Hospital".to_string())
+            .initialise(author, NonEmptyText::new("Test Hospital").unwrap())
             .expect("initialise should succeed");
         let clinical_uuid_str = clinical_uuid.clinical_id().simple().to_string();
 
@@ -1664,12 +1660,12 @@ mod tests {
 
         let service = ClinicalService::new(cfg.clone());
         let service = service
-            .initialise(author.clone(), "Test Hospital".to_string())
+            .initialise(author.clone(), NonEmptyText::new("Test Hospital").unwrap())
             .expect("initialise should succeed");
 
         let result = service.new_letter(
             &author,
-            "Test Hospital".to_string(),
+            NonEmptyText::new("Test Hospital").unwrap(),
             "Letter content".to_string(),
             None,
         );
@@ -1702,7 +1698,7 @@ mod tests {
 
         // Initialize clinical record
         let service = service
-            .initialise(author.clone(), "Test Hospital".to_string())
+            .initialise(author.clone(), NonEmptyText::new("Test Hospital").unwrap())
             .expect("initialise should succeed");
 
         // Create a test PDF file
@@ -1714,7 +1710,7 @@ mod tests {
         // Create letter with attachment
         let result = service.new_letter_with_attachments(
             &author,
-            "Test Hospital".to_string(),
+            NonEmptyText::new("Test Hospital").unwrap(),
             &attachment_files,
             None,
         );
@@ -1755,7 +1751,7 @@ mod tests {
             "test_document.pdf"
         );
         assert_eq!(attachment_metadata.size_bytes, 16); // "fake PDF content".len()
-        assert!(!attachment_metadata.hash.is_empty());
+        assert!(!attachment_metadata.hash.as_str().is_empty());
     }
 
     #[test]
@@ -1775,7 +1771,7 @@ mod tests {
 
         // Initialize clinical record
         let service = service
-            .initialise(author.clone(), "Test Hospital".to_string())
+            .initialise(author.clone(), NonEmptyText::new("Test Hospital").unwrap())
             .expect("initialise should succeed");
 
         // Create test files
@@ -1792,7 +1788,7 @@ mod tests {
         let timestamp_id = service
             .new_letter_with_attachments(
                 &author,
-                "Test Hospital".to_string(),
+                NonEmptyText::new("Test Hospital").unwrap(),
                 &attachment_files,
                 None,
             )
@@ -1840,14 +1836,14 @@ mod tests {
 
         // Initialize clinical record
         let service = service
-            .initialise(author.clone(), "Test Hospital".to_string())
+            .initialise(author.clone(), NonEmptyText::new("Test Hospital").unwrap())
             .expect("initialise should succeed");
 
         // Create letter without attachments
         let timestamp_id = service
             .new_letter(
                 &author,
-                "Test Hospital".to_string(),
+                NonEmptyText::new("Test Hospital").unwrap(),
                 "Test content".to_string(),
                 None,
             )
@@ -1879,7 +1875,7 @@ mod tests {
 
         // Initialize clinical record
         let service = service
-            .initialise(author.clone(), "Test Hospital".to_string())
+            .initialise(author.clone(), NonEmptyText::new("Test Hospital").unwrap())
             .expect("initialise should succeed");
 
         let letter_content = "# Test Letter\n\nThis is a test letter.";
@@ -1888,7 +1884,7 @@ mod tests {
         let timestamp_id = service
             .new_letter(
                 &author,
-                "Test Hospital".to_string(),
+                NonEmptyText::new("Test Hospital").unwrap(),
                 letter_content.to_string(),
                 None,
             )
@@ -1921,7 +1917,7 @@ mod tests {
         };
 
         let service = service
-            .initialise(author.clone(), "Test Hospital".to_string())
+            .initialise(author.clone(), NonEmptyText::new("Test Hospital").unwrap())
             .expect("initialise should succeed");
 
         // Try to read with invalid timestamp
@@ -1947,7 +1943,7 @@ mod tests {
         };
 
         let service = service
-            .initialise(author.clone(), "Test Hospital".to_string())
+            .initialise(author.clone(), NonEmptyText::new("Test Hospital").unwrap())
             .expect("initialise should succeed");
 
         // Try to read non-existent letter with valid timestamp format
@@ -1974,7 +1970,7 @@ mod tests {
         };
 
         let service = service
-            .initialise(author.clone(), "Test Hospital".to_string())
+            .initialise(author.clone(), NonEmptyText::new("Test Hospital").unwrap())
             .expect("initialise should succeed");
 
         // Try to attach non-existent file
@@ -1983,7 +1979,7 @@ mod tests {
 
         let result = service.new_letter_with_attachments(
             &author,
-            "Test Hospital".to_string(),
+            NonEmptyText::new("Test Hospital").unwrap(),
             &attachment_files,
             None,
         );
@@ -2008,7 +2004,7 @@ mod tests {
         };
 
         let service = service
-            .initialise(author.clone(), "Test Hospital".to_string())
+            .initialise(author.clone(), NonEmptyText::new("Test Hospital").unwrap())
             .expect("initialise should succeed");
 
         // Create multiple test files
@@ -2028,7 +2024,7 @@ mod tests {
         let timestamp_id = service
             .new_letter_with_attachments(
                 &author,
-                "Test Hospital".to_string(),
+                NonEmptyText::new("Test Hospital").unwrap(),
                 &attachment_files,
                 None,
             )
@@ -2071,7 +2067,7 @@ mod tests {
         };
 
         let service = service
-            .initialise(author.clone(), "Test Hospital".to_string())
+            .initialise(author.clone(), NonEmptyText::new("Test Hospital").unwrap())
             .expect("initialise should succeed");
 
         let result = service.get_letter_attachments("invalid-timestamp");
@@ -2096,7 +2092,7 @@ mod tests {
         };
 
         let service = service
-            .initialise(author.clone(), "Test Hospital".to_string())
+            .initialise(author.clone(), NonEmptyText::new("Test Hospital").unwrap())
             .expect("initialise should succeed");
 
         // Create test file
@@ -2116,7 +2112,7 @@ mod tests {
         let timestamp_id = service
             .new_letter_with_attachments(
                 &author,
-                "Test Hospital".to_string(),
+                NonEmptyText::new("Test Hospital").unwrap(),
                 &[test_file],
                 Some(&clinical_lists),
             )
@@ -2138,7 +2134,10 @@ mod tests {
     fn test_attachment_metadata_serialization() {
         let metadata = AttachmentMetadata {
             metadata_filename: NonEmptyText::new("attachment_1.yaml").unwrap(),
-            hash: "abc123".to_string(),
+            hash: Sha256Hash::parse(
+                "abc123def456789012345678901234567890123456789012345678901234abcd",
+            )
+            .unwrap(),
             file_storage_path: NonEmptyText::new("files/sha256/ab/c1/abc123").unwrap(),
             size_bytes: 1024,
             media_type: Some(NonEmptyText::new("application/pdf").unwrap()),

@@ -20,6 +20,7 @@ use vpr_core::{
         CoordinationService, CoordinationStatusUpdate, LedgerUpdate, MessageContent,
     },
     repositories::demographics::DemographicsService,
+    types::NonEmptyText,
     versioned_files::VersionedFileService,
     Author, AuthorRegistration, CoreConfig, PatientService, ShardableUuid, TimestampId,
 };
@@ -670,6 +671,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 signature,
                 certificate: None,
             };
+            let care_location = match NonEmptyText::new(&care_location) {
+                Ok(cl) => cl,
+                Err(e) => {
+                    eprintln!("Invalid care_location: {}", e);
+                    return Ok(());
+                }
+            };
             let demographics_service = DemographicsService::new(cfg.clone());
             match demographics_service.initialise(author, care_location) {
                 Ok(service) => println!(
@@ -701,6 +709,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 registrations,
                 signature,
                 certificate: None,
+            };
+            let care_location = match NonEmptyText::new(&care_location) {
+                Ok(cl) => cl,
+                Err(e) => {
+                    eprintln!("Invalid care_location: {}", e);
+                    return Ok(());
+                }
             };
             let clinical_service = ClinicalService::new(cfg.clone());
             match clinical_service.initialise(author, care_location) {
@@ -741,6 +756,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Ok(uuid) => uuid.uuid(),
                 Err(e) => {
                     eprintln!("Error parsing clinical UUID: {}", e);
+                    return Ok(());
+                }
+            };
+            let care_location = match NonEmptyText::new(&care_location) {
+                Ok(cl) => cl,
+                Err(e) => {
+                    eprintln!("Invalid care_location: {}", e);
                     return Ok(());
                 }
             };
@@ -820,6 +842,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .split(',')
                 .map(|s| s.trim().to_string())
                 .collect();
+            let care_location = match NonEmptyText::new(&care_location) {
+                Ok(cl) => cl,
+                Err(e) => {
+                    eprintln!("Invalid care_location: {}", e);
+                    return Ok(());
+                }
+            };
             let service = PatientService::new(cfg.clone());
             match service.initialise_full_record(
                 author,
@@ -942,6 +971,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Ok(uuid) => uuid.uuid(),
                 Err(e) => {
                     eprintln!("Error parsing clinical UUID: {}", e);
+                    return Ok(());
+                }
+            };
+            let care_location = match NonEmptyText::new(&care_location) {
+                Ok(cl) => cl,
+                Err(e) => {
+                    eprintln!("Invalid care_location: {}", e);
                     return Ok(());
                 }
             };
@@ -1353,6 +1389,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 eprintln!("Error: At least one attachment file is required");
                 return Ok(());
             }
+            let care_location = match NonEmptyText::new(&care_location) {
+                Ok(cl) => cl,
+                Err(e) => {
+                    eprintln!("Invalid care_location: {}", e);
+                    return Ok(());
+                }
+            };
 
             let clinical_service = ClinicalService::with_id(cfg.clone(), clinical_uuid_parsed);
             match clinical_service.new_letter_with_attachments(
@@ -1412,6 +1455,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
                 return Ok(());
             }
+            let care_location = match NonEmptyText::new(&care_location) {
+                Ok(cl) => cl,
+                Err(e) => {
+                    eprintln!("Invalid care_location: {}", e);
+                    return Ok(());
+                }
+            };
 
             let clinical_service = ClinicalService::with_id(cfg.clone(), clinical_uuid_parsed);
             match clinical_service.create_letter(

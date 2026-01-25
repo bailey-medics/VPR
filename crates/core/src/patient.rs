@@ -6,7 +6,7 @@
 use crate::{
     author::Author, error::PatientResult, repositories::clinical::ClinicalService,
     repositories::coordination::CoordinationService,
-    repositories::demographics::DemographicsService,
+    repositories::demographics::DemographicsService, types::NonEmptyText,
 };
 
 /// Represents a complete patient record with both demographics and clinical components.
@@ -61,7 +61,7 @@ impl PatientService {
     pub fn initialise_full_record(
         &self,
         author: Author,
-        care_location: String,
+        care_location: NonEmptyText,
         given_names: Vec<String>,
         last_name: String,
         birth_date: String,
@@ -94,8 +94,11 @@ impl PatientService {
 
         // Initialise coordination record linked to clinical
         let coordination_service = CoordinationService::new(self.cfg.clone());
-        let coordination_service =
-            coordination_service.initialise(author, care_location, clinical_uuid)?;
+        let coordination_service = coordination_service.initialise(
+            author,
+            care_location.as_str().to_string(),
+            clinical_uuid,
+        )?;
         let coordination_uuid = coordination_service.coordination_id();
 
         Ok(FullRecord {

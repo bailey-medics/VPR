@@ -27,6 +27,7 @@ use vpr_core::{
     repositories::clinical::ClinicalService,
     repositories::coordination::CoordinationService,
     repositories::demographics::{DemographicsService, Uninitialised as DemographicsUninitialised},
+    types::NonEmptyText,
     Author, AuthorRegistration, CoreConfig, PatientService, ShardableUuid,
 };
 
@@ -266,8 +267,11 @@ async fn create_patient(
         },
         certificate: None,
     };
+    let care_location = NonEmptyText::new(&req.care_location)
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid care_location"))?;
+
     let clinical_service = ClinicalService::new(state.cfg.clone());
-    match clinical_service.initialise(author, req.care_location) {
+    match clinical_service.initialise(author, care_location) {
         Ok(service) => {
             let resp = pb::CreatePatientRes {
                 filename: "".to_string(),
@@ -308,11 +312,13 @@ async fn initialise_full_record(
         req.author_registrations,
         req.author_signature,
     );
+    let care_location = NonEmptyText::new(&req.care_location)
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid care_location"))?;
 
     let patient_service = PatientService::new(state.cfg.clone());
     match patient_service.initialise_full_record(
         author,
-        req.care_location,
+        care_location,
         req.given_names,
         req.last_name,
         req.birth_date,
@@ -355,9 +361,11 @@ async fn initialise_demographics(
         req.author_registrations,
         req.author_signature,
     );
+    let care_location = NonEmptyText::new(&req.care_location)
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid care_location"))?;
 
     let demographics_service = DemographicsService::new(state.cfg.clone());
-    match demographics_service.initialise(author, req.care_location) {
+    match demographics_service.initialise(author, care_location) {
         Ok(service) => Ok(Json(pb::InitialiseDemographicsRes {
             demographics_uuid: service.demographics_id().to_string(),
         })),
@@ -425,9 +433,11 @@ async fn initialise_clinical(
         req.author_registrations,
         req.author_signature,
     );
+    let care_location = NonEmptyText::new(&req.care_location)
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid care_location"))?;
 
     let clinical_service = ClinicalService::new(state.cfg.clone());
-    match clinical_service.initialise(author, req.care_location) {
+    match clinical_service.initialise(author, care_location) {
         Ok(service) => Ok(Json(pb::InitialiseClinicalRes {
             clinical_uuid: service.clinical_id().simple().to_string(),
         })),
@@ -471,11 +481,13 @@ async fn link_to_demographics(
             return Err((StatusCode::BAD_REQUEST, "Invalid clinical UUID"));
         }
     };
+    let care_location = NonEmptyText::new(&req.care_location)
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid care_location"))?;
 
     let clinical_service = ClinicalService::with_id(state.cfg.clone(), clinical_uuid);
     match clinical_service.link_to_demographics(
         &author,
-        req.care_location,
+        care_location,
         &req.demographics_uuid,
         if req.namespace.is_empty() {
             None
@@ -524,9 +536,11 @@ async fn new_letter(
             return Err((StatusCode::BAD_REQUEST, "Invalid clinical UUID"));
         }
     };
+    let care_location = NonEmptyText::new(&req.care_location)
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid care_location"))?;
 
     let clinical_service = ClinicalService::with_id(state.cfg.clone(), clinical_uuid);
-    match clinical_service.new_letter(&author, req.care_location, req.content, None) {
+    match clinical_service.new_letter(&author, care_location, req.content, None) {
         Ok(timestamp_id) => Ok(Json(pb::NewLetterRes { timestamp_id })),
         Err(e) => {
             tracing::error!("New letter error: {:?}", e);
@@ -591,11 +605,13 @@ async fn new_letter_complete(
         }
         attachment_paths.push(file_path);
     }
+    let care_location = NonEmptyText::new(&req.care_location)
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid care_location"))?;
 
     let clinical_service = ClinicalService::with_id(state.cfg.clone(), clinical_uuid);
     let result = clinical_service.create_letter(
         &author,
-        req.care_location,
+        care_location,
         Some(req.content),
         &attachment_paths,
         None,
