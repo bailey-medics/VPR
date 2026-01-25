@@ -99,6 +99,7 @@ dependencies = [
  "api-shared",
  "chrono",
  "dotenvy",
+ "fhir",
  "prost",
  "prost-types",
  "serde",
@@ -119,6 +120,7 @@ dependencies = [
  "anyhow",
  "api-shared",
  "axum",
+ "fhir",
  "serde",
  "serde_json",
  "tokio",
@@ -129,6 +131,7 @@ dependencies = [
  "tracing-subscriber",
  "utoipa",
  "utoipa-swagger-ui",
+ "uuid",
  "vpr-core",
 ]
 

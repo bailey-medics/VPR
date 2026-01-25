@@ -28,4 +28,5 @@ serde_json = "1.0"
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 vpr-core = { path = "../core", version = "0.1.0" }
+fhir = { path = "../fhir", version = "0.1.0" }
 api-shared = { path = "../api-shared", version = "0.1.0" }
