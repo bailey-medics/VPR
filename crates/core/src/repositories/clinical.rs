@@ -109,6 +109,38 @@ pub struct ReadLetterResult {
     pub letter_data: LetterData,
 }
 
+/// Metadata for a file attachment in a clinical letter.
+///
+/// This structure contains the information needed to reference an attached file
+/// from a letter composition, including both the file storage details and
+/// attachment-specific metadata.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AttachmentMetadata {
+    /// Name of the attachment file (e.g., "attachment_1.yaml")
+    pub filename: String,
+    /// Original filename from the source
+    pub original_filename: String,
+    /// SHA-256 hash of the file content
+    pub hash: String,
+    /// Path to the file in the files storage (relative to repository root)
+    pub file_storage_path: String,
+    /// Size of the file in bytes
+    pub size_bytes: u64,
+    /// Detected media type (MIME type)
+    pub media_type: Option<String>,
+}
+
+/// Result of reading letter attachments.
+///
+/// Contains the attachment metadata and the actual file content.
+#[derive(Debug, Clone)]
+pub struct LetterAttachment {
+    /// Metadata about the attachment
+    pub metadata: AttachmentMetadata,
+    /// The binary content of the file
+    pub content: Vec<u8>,
+}
+
 /// Service for managing clinical record operations.
 ///
 /// This service uses the type-state pattern to enforce correct usage at compile time.
@@ -548,6 +580,244 @@ impl ClinicalService<Initialised> {
             body_content,
             letter_data,
         })
+    }
+
+    /// Retrieves all attachments for a clinical letter.
+    ///
+    /// This function reads all attachment metadata files from the letter's attachments directory
+    /// and retrieves the actual file content from storage.
+    ///
+    /// # Arguments
+    ///
+    /// * `timestamp_id` - The timestamp ID of the letter.
+    ///
+    /// # Returns
+    ///
+    /// Returns a vector of `LetterAttachment` containing metadata and file content for each attachment.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `PatientError` if:
+    /// - The timestamp ID cannot be parsed
+    /// - The clinical UUID cannot be parsed
+    /// - The attachments directory does not exist or cannot be read
+    /// - Any attachment metadata file cannot be read or parsed
+    /// - Any file cannot be retrieved from storage
+    pub fn get_letter_attachments(
+        &self,
+        timestamp_id: &str,
+    ) -> PatientResult<Vec<LetterAttachment>> {
+        let timestamp_id: vpr_uuid::TimestampId = timestamp_id
+            .parse()
+            .map_err(|e| PatientError::InvalidInput(format!("Invalid timestamp ID: {}", e)))?;
+        let letter_paths = LetterPaths::new(&timestamp_id);
+
+        let clinical_uuid = ShardableUuid::parse(&self.clinical_id().simple().to_string())?;
+        let patient_dir = self.clinical_patient_dir(&clinical_uuid);
+
+        let attachments_dir = patient_dir.join(letter_paths.attachments_dir());
+
+        // Check if attachments directory exists
+        if !attachments_dir.exists() {
+            // No attachments - return empty vector
+            return Ok(Vec::new());
+        }
+
+        // Initialize FilesService for reading files
+        let clinical_dir = self.clinical_dir();
+        let files_service =
+            vpr_files::FilesService::new(&clinical_dir, clinical_uuid).map_err(|e| {
+                PatientError::InvalidInput(format!("Failed to initialize files service: {}", e))
+            })?;
+
+        let mut attachments = Vec::new();
+
+        // Read all attachment metadata files
+        let entries = fs::read_dir(&attachments_dir).map_err(|e| {
+            PatientError::FileRead(std::io::Error::new(
+                e.kind(),
+                format!("Failed to read attachments directory: {}", e),
+            ))
+        })?;
+
+        for entry in entries {
+            let entry = entry.map_err(PatientError::FileRead)?;
+            let path = entry.path();
+
+            // Only process .yaml files
+            if path.extension().and_then(|s| s.to_str()) != Some("yaml") {
+                continue;
+            }
+
+            // Read and parse attachment metadata
+            let metadata_content = fs::read_to_string(&path).map_err(PatientError::FileRead)?;
+            let metadata: AttachmentMetadata =
+                serde_yaml::from_str(&metadata_content).map_err(|e| {
+                    PatientError::InvalidInput(format!(
+                        "Failed to parse attachment metadata: {}",
+                        e
+                    ))
+                })?;
+
+            // Retrieve file content from storage using the hash
+            let content = files_service.read(&metadata.hash).map_err(|e| {
+                PatientError::InvalidInput(format!("Failed to read attachment file: {}", e))
+            })?;
+
+            attachments.push(LetterAttachment { metadata, content });
+        }
+
+        Ok(attachments)
+    }
+
+    /// Creates a new clinical letter with file attachments.
+    ///
+    /// This function creates a new letter with attached files (e.g., PDFs, images).
+    /// Files are stored using the FilesService and referenced via attachment YAML files.
+    /// Unlike `new_letter()`, this method does not create a body.md file.
+    ///
+    /// # Arguments
+    ///
+    /// * `author` - The author information for the Git commit. Must have a non-empty name.
+    /// * `care_location` - High-level organisational location for the commit (e.g. hospital name).
+    ///   Must be a non-empty string.
+    /// * `attachment_files` - Paths to files to attach (e.g., PDFs, images).
+    /// * `clinical_lists` - Optional clinical lists to include in the composition.
+    ///
+    /// # Returns
+    ///
+    /// Returns the generated timestamp ID for the letter on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `PatientError` if:
+    /// - The author's name is empty or whitespace-only
+    /// - The care location is empty or whitespace-only
+    /// - The clinical UUID cannot be parsed
+    /// - Any attachment file cannot be read or stored
+    /// - Creating the composition.yaml content fails
+    /// - Writing files or committing to Git fails
+    pub fn new_letter_with_attachments(
+        &self,
+        author: &Author,
+        care_location: String,
+        attachment_files: &[PathBuf],
+        clinical_lists: Option<&[ClinicalList]>,
+    ) -> PatientResult<String> {
+        author.validate_commit_author()?;
+
+        let commit_message = VprCommitMessage::new(
+            VprCommitDomain::Clinical(Record),
+            VprCommitAction::Create,
+            "Created new letter with attachments",
+            care_location,
+        )?;
+
+        let timestamp_id = TimestampIdGenerator::generate(None)?;
+        let letter_paths = LetterPaths::new(&timestamp_id);
+
+        let clinical_uuid = ShardableUuid::parse(&self.clinical_id().simple().to_string())?;
+        let patient_dir = self.clinical_patient_dir(&clinical_uuid);
+
+        // Initialize FilesService for this clinical repository
+        let clinical_dir = self.clinical_dir();
+        let files_service = vpr_files::FilesService::new(&clinical_dir, clinical_uuid.clone())
+            .map_err(|e| {
+                PatientError::InvalidInput(format!("Failed to initialize files service: {}", e))
+            })?;
+
+        // Process attachments
+        let mut attachment_metadata_list = Vec::new();
+        let mut attachment_files_to_write = Vec::new();
+
+        for (index, file_path) in attachment_files.iter().enumerate() {
+            // Add file to storage
+            let file_metadata = files_service.add(file_path).map_err(|e| {
+                PatientError::InvalidInput(format!("Failed to add attachment file: {}", e))
+            })?;
+
+            // Create attachment metadata
+            let attachment_filename = format!("attachment_{}.yaml", index + 1);
+            let attachment_metadata = AttachmentMetadata {
+                filename: attachment_filename.clone(),
+                original_filename: file_metadata.original_filename.clone(),
+                hash: file_metadata.hash.clone(),
+                file_storage_path: file_metadata.relative_path.clone(),
+                size_bytes: file_metadata.size_bytes,
+                media_type: file_metadata.media_type.clone(),
+            };
+
+            // Serialize attachment metadata to YAML
+            let attachment_yaml = serde_yaml::to_string(&attachment_metadata).map_err(|e| {
+                PatientError::InvalidInput(format!(
+                    "Failed to serialize attachment metadata: {}",
+                    e
+                ))
+            })?;
+
+            // Add to files to write
+            let attachment_path = letter_paths.attachment(&attachment_filename);
+            attachment_files_to_write.push((attachment_path, attachment_yaml));
+            attachment_metadata_list.push(attachment_metadata);
+        }
+
+        // Generate composition.yaml content using Letter::composition_render
+        let rm_version = self.cfg.rm_system_version();
+        let start_time = timestamp_id.timestamp();
+
+        // Construct LetterData for the new letter
+        let letter_data = openehr::LetterData {
+            rm_version,
+            uid: timestamp_id.clone(),
+            composer_name: author.name.clone(),
+            composer_role: "Clinical Practitioner".to_string(),
+            start_time,
+            clinical_lists: clinical_lists
+                .map(|lists| lists.to_vec())
+                .unwrap_or_default(),
+        };
+
+        let composition_content =
+            Letter::composition_render(rm_version, &letter_data).map_err(|e| {
+                PatientError::InvalidInput(format!("Failed to create letter composition: {}", e))
+            })?;
+
+        let composition_yaml_relative_path = letter_paths.composition_yaml();
+
+        // Build list of all files to write
+        let mut files_to_write_vec = vec![FileToWrite {
+            relative_path: &composition_yaml_relative_path,
+            content: &composition_content,
+            old_content: None,
+        }];
+
+        // Store attachment content strings to ensure they live long enough
+        let attachment_contents: Vec<String> = attachment_files_to_write
+            .iter()
+            .map(|(_, content)| content.clone())
+            .collect();
+        let attachment_paths: Vec<PathBuf> = attachment_files_to_write
+            .iter()
+            .map(|(path, _)| path.clone())
+            .collect();
+
+        // Add attachment files
+        for (path, content) in attachment_paths.iter().zip(attachment_contents.iter()) {
+            files_to_write_vec.push(FileToWrite {
+                relative_path: path,
+                content,
+                old_content: None,
+            });
+        }
+
+        VersionedFileService::write_and_commit_files(
+            &patient_dir,
+            author,
+            &commit_message,
+            &files_to_write_vec,
+        )?;
+
+        Ok(timestamp_id.to_string())
     }
 }
 
@@ -2043,5 +2313,464 @@ mod tests {
             timestamp_id.contains("Z-"),
             "timestamp_id should contain 'Z-' separator"
         );
+    }
+
+    #[test]
+    fn test_new_letter_with_attachments() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let cfg = test_cfg(temp_dir.path());
+
+        let service = ClinicalService::new(cfg.clone());
+        let author = Author {
+            name: "Dr. Test".to_string(),
+            role: "Consultant".to_string(),
+            email: "test@example.com".to_string(),
+            registrations: vec![],
+            signature: None,
+            certificate: None,
+        };
+
+        // Initialize clinical record
+        let service = service
+            .initialise(author.clone(), "Test Hospital".to_string())
+            .expect("initialise should succeed");
+
+        // Create a test PDF file
+        let test_file = temp_dir.path().join("test_document.pdf");
+        fs::write(&test_file, b"fake PDF content").expect("Failed to create test file");
+
+        let attachment_files = vec![test_file.clone()];
+
+        // Create letter with attachment
+        let result = service.new_letter_with_attachments(
+            &author,
+            "Test Hospital".to_string(),
+            &attachment_files,
+            None,
+        );
+
+        assert!(result.is_ok(), "new_letter_with_attachments should succeed");
+        let timestamp_id = result.unwrap();
+
+        // Verify the files were created
+        let clinical_uuid = ShardableUuid::parse(&service.clinical_id().simple().to_string())
+            .expect("should parse clinical UUID");
+        let patient_dir = service.clinical_patient_dir(&clinical_uuid);
+        let letter_paths = LetterPaths::new(
+            &timestamp_id
+                .parse::<vpr_uuid::TimestampId>()
+                .expect("should parse timestamp ID"),
+        );
+
+        // Check composition.yaml exists
+        let composition_path = patient_dir.join(letter_paths.composition_yaml());
+        assert!(composition_path.exists(), "composition.yaml should exist");
+
+        // Check attachment metadata file exists
+        let attachment_path = patient_dir.join(letter_paths.attachment("attachment_1.yaml"));
+        assert!(attachment_path.exists(), "attachment_1.yaml should exist");
+
+        // Read and verify attachment metadata
+        let attachment_content =
+            fs::read_to_string(&attachment_path).expect("should read attachment metadata");
+        let attachment_metadata: AttachmentMetadata =
+            serde_yaml::from_str(&attachment_content).expect("should parse attachment metadata");
+
+        assert_eq!(attachment_metadata.filename, "attachment_1.yaml");
+        assert_eq!(attachment_metadata.original_filename, "test_document.pdf");
+        assert_eq!(attachment_metadata.size_bytes, 16); // "fake PDF content".len()
+        assert!(!attachment_metadata.hash.is_empty());
+    }
+
+    #[test]
+    fn test_get_letter_attachments() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let cfg = test_cfg(temp_dir.path());
+
+        let service = ClinicalService::new(cfg.clone());
+        let author = Author {
+            name: "Dr. Test".to_string(),
+            role: "Consultant".to_string(),
+            email: "test@example.com".to_string(),
+            registrations: vec![],
+            signature: None,
+            certificate: None,
+        };
+
+        // Initialize clinical record
+        let service = service
+            .initialise(author.clone(), "Test Hospital".to_string())
+            .expect("initialise should succeed");
+
+        // Create test files
+        let test_file1 = temp_dir.path().join("document1.pdf");
+        let test_file2 = temp_dir.path().join("image.png");
+        let content1 = b"PDF content here";
+        let content2 = b"PNG content here";
+        fs::write(&test_file1, content1).expect("Failed to create test file 1");
+        fs::write(&test_file2, content2).expect("Failed to create test file 2");
+
+        let attachment_files = vec![test_file1, test_file2];
+
+        // Create letter with attachments
+        let timestamp_id = service
+            .new_letter_with_attachments(
+                &author,
+                "Test Hospital".to_string(),
+                &attachment_files,
+                None,
+            )
+            .expect("new_letter_with_attachments should succeed");
+
+        // Retrieve attachments
+        let attachments = service
+            .get_letter_attachments(&timestamp_id)
+            .expect("get_letter_attachments should succeed");
+
+        // Verify we got 2 attachments
+        assert_eq!(attachments.len(), 2, "should have 2 attachments");
+
+        // Verify first attachment
+        assert_eq!(attachments[0].metadata.original_filename, "document1.pdf");
+        assert_eq!(attachments[0].metadata.size_bytes, content1.len() as u64);
+        assert_eq!(attachments[0].content, content1);
+
+        // Verify second attachment
+        assert_eq!(attachments[1].metadata.original_filename, "image.png");
+        assert_eq!(attachments[1].metadata.size_bytes, content2.len() as u64);
+        assert_eq!(attachments[1].content, content2);
+    }
+
+    #[test]
+    fn test_get_letter_attachments_empty() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let cfg = test_cfg(temp_dir.path());
+
+        let service = ClinicalService::new(cfg.clone());
+        let author = Author {
+            name: "Dr. Test".to_string(),
+            role: "Consultant".to_string(),
+            email: "test@example.com".to_string(),
+            registrations: vec![],
+            signature: None,
+            certificate: None,
+        };
+
+        // Initialize clinical record
+        let service = service
+            .initialise(author.clone(), "Test Hospital".to_string())
+            .expect("initialise should succeed");
+
+        // Create letter without attachments
+        let timestamp_id = service
+            .new_letter(
+                &author,
+                "Test Hospital".to_string(),
+                "Test content".to_string(),
+                None,
+            )
+            .expect("new_letter should succeed");
+
+        // Try to retrieve attachments
+        let attachments = service
+            .get_letter_attachments(&timestamp_id)
+            .expect("get_letter_attachments should succeed");
+
+        // Should return empty vector
+        assert_eq!(attachments.len(), 0, "should have no attachments");
+    }
+
+    #[test]
+    fn test_read_letter() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let cfg = test_cfg(temp_dir.path());
+
+        let service = ClinicalService::new(cfg.clone());
+        let author = Author {
+            name: "Dr. Test".to_string(),
+            role: "Consultant".to_string(),
+            email: "test@example.com".to_string(),
+            registrations: vec![],
+            signature: None,
+            certificate: None,
+        };
+
+        // Initialize clinical record
+        let service = service
+            .initialise(author.clone(), "Test Hospital".to_string())
+            .expect("initialise should succeed");
+
+        let letter_content = "# Test Letter\n\nThis is a test letter.";
+
+        // Create letter
+        let timestamp_id = service
+            .new_letter(
+                &author,
+                "Test Hospital".to_string(),
+                letter_content.to_string(),
+                None,
+            )
+            .expect("new_letter should succeed");
+
+        // Read letter back
+        let result = service
+            .read_letter(&timestamp_id)
+            .expect("read_letter should succeed");
+
+        // Verify content
+        assert_eq!(result.body_content, letter_content);
+        assert_eq!(result.letter_data.composer_name, "Dr. Test");
+        assert_eq!(result.letter_data.composer_role, "Clinical Practitioner");
+    }
+
+    #[test]
+    fn test_read_letter_invalid_timestamp() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let cfg = test_cfg(temp_dir.path());
+
+        let service = ClinicalService::new(cfg.clone());
+        let author = Author {
+            name: "Dr. Test".to_string(),
+            role: "Consultant".to_string(),
+            email: "test@example.com".to_string(),
+            registrations: vec![],
+            signature: None,
+            certificate: None,
+        };
+
+        let service = service
+            .initialise(author.clone(), "Test Hospital".to_string())
+            .expect("initialise should succeed");
+
+        // Try to read with invalid timestamp
+        let result = service.read_letter("invalid-timestamp");
+
+        assert!(result.is_err());
+        assert!(matches!(result, Err(PatientError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_read_letter_nonexistent() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let cfg = test_cfg(temp_dir.path());
+
+        let service = ClinicalService::new(cfg.clone());
+        let author = Author {
+            name: "Dr. Test".to_string(),
+            role: "Consultant".to_string(),
+            email: "test@example.com".to_string(),
+            registrations: vec![],
+            signature: None,
+            certificate: None,
+        };
+
+        let service = service
+            .initialise(author.clone(), "Test Hospital".to_string())
+            .expect("initialise should succeed");
+
+        // Try to read non-existent letter with valid timestamp format
+        let fake_timestamp = "20260125T120000.000Z-550e8400-e29b-41d4-a716-446655440000";
+        let result = service.read_letter(fake_timestamp);
+
+        assert!(result.is_err());
+        assert!(matches!(result, Err(PatientError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_new_letter_with_attachments_nonexistent_file() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let cfg = test_cfg(temp_dir.path());
+
+        let service = ClinicalService::new(cfg.clone());
+        let author = Author {
+            name: "Dr. Test".to_string(),
+            role: "Consultant".to_string(),
+            email: "test@example.com".to_string(),
+            registrations: vec![],
+            signature: None,
+            certificate: None,
+        };
+
+        let service = service
+            .initialise(author.clone(), "Test Hospital".to_string())
+            .expect("initialise should succeed");
+
+        // Try to attach non-existent file
+        let nonexistent_file = temp_dir.path().join("does_not_exist.pdf");
+        let attachment_files = vec![nonexistent_file];
+
+        let result = service.new_letter_with_attachments(
+            &author,
+            "Test Hospital".to_string(),
+            &attachment_files,
+            None,
+        );
+
+        assert!(result.is_err());
+        assert!(matches!(result, Err(PatientError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_new_letter_with_attachments_multiple_files() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let cfg = test_cfg(temp_dir.path());
+
+        let service = ClinicalService::new(cfg.clone());
+        let author = Author {
+            name: "Dr. Test".to_string(),
+            role: "Consultant".to_string(),
+            email: "test@example.com".to_string(),
+            registrations: vec![],
+            signature: None,
+            certificate: None,
+        };
+
+        let service = service
+            .initialise(author.clone(), "Test Hospital".to_string())
+            .expect("initialise should succeed");
+
+        // Create multiple test files
+        let test_files = vec![
+            (temp_dir.path().join("doc1.pdf"), b"content1" as &[u8]),
+            (temp_dir.path().join("doc2.txt"), b"content2"),
+            (temp_dir.path().join("image.png"), b"content3"),
+        ];
+
+        for (path, content) in &test_files {
+            fs::write(path, content).expect("Failed to create test file");
+        }
+
+        let attachment_files: Vec<PathBuf> =
+            test_files.iter().map(|(path, _)| path.clone()).collect();
+
+        let timestamp_id = service
+            .new_letter_with_attachments(
+                &author,
+                "Test Hospital".to_string(),
+                &attachment_files,
+                None,
+            )
+            .expect("new_letter_with_attachments should succeed");
+
+        // Verify all attachments were created
+        let clinical_uuid = ShardableUuid::parse(&service.clinical_id().simple().to_string())
+            .expect("should parse clinical UUID");
+        let patient_dir = service.clinical_patient_dir(&clinical_uuid);
+        let letter_paths = LetterPaths::new(
+            &timestamp_id
+                .parse::<vpr_uuid::TimestampId>()
+                .expect("should parse timestamp ID"),
+        );
+
+        for i in 1..=3 {
+            let attachment_path =
+                patient_dir.join(letter_paths.attachment(&format!("attachment_{}.yaml", i)));
+            assert!(
+                attachment_path.exists(),
+                "attachment_{}.yaml should exist",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_get_letter_attachments_invalid_timestamp() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let cfg = test_cfg(temp_dir.path());
+
+        let service = ClinicalService::new(cfg.clone());
+        let author = Author {
+            name: "Dr. Test".to_string(),
+            role: "Consultant".to_string(),
+            email: "test@example.com".to_string(),
+            registrations: vec![],
+            signature: None,
+            certificate: None,
+        };
+
+        let service = service
+            .initialise(author.clone(), "Test Hospital".to_string())
+            .expect("initialise should succeed");
+
+        let result = service.get_letter_attachments("invalid-timestamp");
+
+        assert!(result.is_err());
+        assert!(matches!(result, Err(PatientError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn test_get_letter_attachments_with_clinical_lists() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let cfg = test_cfg(temp_dir.path());
+
+        let service = ClinicalService::new(cfg.clone());
+        let author = Author {
+            name: "Dr. Test".to_string(),
+            role: "Consultant".to_string(),
+            email: "test@example.com".to_string(),
+            registrations: vec![],
+            signature: None,
+            certificate: None,
+        };
+
+        let service = service
+            .initialise(author.clone(), "Test Hospital".to_string())
+            .expect("initialise should succeed");
+
+        // Create test file
+        let test_file = temp_dir.path().join("report.pdf");
+        fs::write(&test_file, b"test report content").expect("Failed to create test file");
+
+        // Create clinical lists
+        let clinical_lists = vec![openehr::ClinicalList {
+            name: "Diagnoses".to_string(),
+            kind: "diagnoses".to_string(),
+            items: vec![openehr::ClinicalListItem {
+                text: "Hypertension".to_string(),
+                code: None,
+            }],
+        }];
+
+        let timestamp_id = service
+            .new_letter_with_attachments(
+                &author,
+                "Test Hospital".to_string(),
+                &[test_file],
+                Some(&clinical_lists),
+            )
+            .expect("new_letter_with_attachments should succeed");
+
+        // Verify attachment is retrievable
+        let attachments = service
+            .get_letter_attachments(&timestamp_id)
+            .expect("get_letter_attachments should succeed");
+
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].metadata.original_filename, "report.pdf");
+    }
+
+    #[test]
+    fn test_attachment_metadata_serialization() {
+        let metadata = AttachmentMetadata {
+            filename: "attachment_1.yaml".to_string(),
+            original_filename: "test.pdf".to_string(),
+            hash: "abc123".to_string(),
+            file_storage_path: "files/sha256/ab/c1/abc123".to_string(),
+            size_bytes: 1024,
+            media_type: Some("application/pdf".to_string()),
+        };
+
+        // Serialize to YAML
+        let yaml = serde_yaml::to_string(&metadata).expect("should serialize");
+        assert!(yaml.contains("filename:"));
+        assert!(yaml.contains("test.pdf"));
+
+        // Deserialize back
+        let deserialized: AttachmentMetadata =
+            serde_yaml::from_str(&yaml).expect("should deserialize");
+        assert_eq!(deserialized.filename, metadata.filename);
+        assert_eq!(deserialized.original_filename, metadata.original_filename);
+        assert_eq!(deserialized.hash, metadata.hash);
+        assert_eq!(deserialized.size_bytes, metadata.size_bytes);
     }
 }
