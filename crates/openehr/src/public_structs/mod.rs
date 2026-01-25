@@ -5,4 +5,4 @@
 
 pub mod letter;
 
-pub use letter::{ClinicalList, ClinicalListItem, CodedConcept, LetterData};
+pub use letter::{AttachmentReference, ClinicalList, ClinicalListItem, CodedConcept, LetterData};

@@ -429,7 +429,205 @@ impl ClinicalService<Initialised> {
         )
     }
 
-    /// Creates a new clinical letter.
+    /// Creates a new clinical letter with optional body and/or attachments.
+    ///
+    /// This is the unified function for creating letters with any combination of:
+    /// - Body content only (markdown text saved as body.md)
+    /// - Attachments only (files stored via FilesService)
+    /// - Both body content AND attachments
+    ///
+    /// At least one of `body_content` or `attachment_files` must be provided.
+    ///
+    /// # Arguments
+    ///
+    /// * `author` - The author information for the Git commit. Must have a non-empty name.
+    /// * `care_location` - High-level organisational location for the commit (e.g. hospital name).
+    ///   Must be a non-empty string.
+    /// * `body_content` - Optional Markdown content for the letter body (body.md).
+    /// * `attachment_files` - Paths to files to attach (e.g., PDFs, images). Can be empty.
+    /// * `clinical_lists` - Optional clinical lists to include in the composition.
+    ///
+    /// # Returns
+    ///
+    /// Returns the generated timestamp ID for the letter on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `PatientError` if:
+    /// - Both `body_content` and `attachment_files` are empty/None
+    /// - The author's name is empty or whitespace-only
+    /// - The care location is empty or whitespace-only
+    /// - The clinical UUID cannot be parsed
+    /// - Any attachment file cannot be read or stored
+    /// - Creating the composition.yaml content fails
+    /// - Writing files or committing to Git fails
+    pub fn create_letter(
+        &self,
+        author: &Author,
+        care_location: String,
+        body_content: Option<String>,
+        attachment_files: &[PathBuf],
+        clinical_lists: Option<&[ClinicalList]>,
+    ) -> PatientResult<String> {
+        // Validate: at least one of body or attachments must be present
+        if body_content.is_none() && attachment_files.is_empty() {
+            return Err(PatientError::InvalidInput(
+                "Letter must have either body content or attachments (or both)".to_string(),
+            ));
+        }
+
+        author.validate_commit_author()?;
+
+        let commit_message = VprCommitMessage::new(
+            VprCommitDomain::Clinical(Record),
+            VprCommitAction::Create,
+            "Created new letter",
+            care_location,
+        )?;
+
+        let timestamp_id = TimestampIdGenerator::generate(None)?;
+        let letter_paths = LetterPaths::new(&timestamp_id);
+
+        let clinical_uuid = ShardableUuid::parse(&self.clinical_id().simple().to_string())?;
+        let patient_dir = self.clinical_patient_dir(&clinical_uuid);
+
+        // Process attachments if provided
+        let mut attachment_metadata_list = Vec::new();
+        let mut attachment_files_to_write = Vec::new();
+
+        if !attachment_files.is_empty() {
+            let clinical_dir = self.clinical_dir();
+            let files_service = vpr_files::FilesService::new(&clinical_dir, clinical_uuid.clone())
+                .map_err(|e| {
+                    PatientError::InvalidInput(format!("Failed to initialize files service: {}", e))
+                })?;
+
+            for (index, file_path) in attachment_files.iter().enumerate() {
+                // Add file to storage
+                let file_metadata = files_service.add(file_path).map_err(|e| {
+                    PatientError::InvalidInput(format!("Failed to add attachment file: {}", e))
+                })?;
+
+                // Create attachment metadata
+                let attachment_filename = format!("attachment_{}.yaml", index + 1);
+                let attachment_metadata = AttachmentMetadata {
+                    filename: attachment_filename.clone(),
+                    original_filename: file_metadata.original_filename.clone(),
+                    hash: file_metadata.hash.clone(),
+                    file_storage_path: file_metadata.relative_path.clone(),
+                    size_bytes: file_metadata.size_bytes,
+                    media_type: file_metadata.media_type.clone(),
+                };
+
+                // Serialize attachment metadata to YAML
+                let attachment_yaml = serde_yaml::to_string(&attachment_metadata).map_err(|e| {
+                    PatientError::InvalidInput(format!(
+                        "Failed to serialize attachment metadata: {}",
+                        e
+                    ))
+                })?;
+
+                // Add to files to write
+                let attachment_path = letter_paths.attachment(&attachment_filename);
+                attachment_files_to_write.push((attachment_path, attachment_yaml));
+                attachment_metadata_list.push(attachment_metadata);
+            }
+        }
+
+        // Generate composition.yaml content
+        let rm_version = self.cfg.rm_system_version();
+        let start_time = timestamp_id.timestamp();
+
+        // Build attachment references for the composition
+        let attachment_refs: Vec<openehr::AttachmentReference> = attachment_metadata_list
+            .iter()
+            .map(|meta| openehr::AttachmentReference {
+                path: format!("./attachments/{}", meta.filename),
+            })
+            .collect();
+
+        // Construct LetterData
+        let letter_data = openehr::LetterData {
+            rm_version,
+            uid: timestamp_id.clone(),
+            composer_name: author.name.clone(),
+            composer_role: "Clinical Practitioner".to_string(),
+            start_time,
+            clinical_lists: clinical_lists
+                .map(|lists| lists.to_vec())
+                .unwrap_or_default(),
+            has_body: body_content.is_some(),
+            attachments: attachment_refs,
+        };
+
+        let composition_content =
+            Letter::composition_render(rm_version, &letter_data).map_err(|e| {
+                PatientError::InvalidInput(format!("Failed to create letter composition: {}", e))
+            })?;
+
+        let composition_yaml_relative_path = letter_paths.composition_yaml();
+
+        // Build list of all files to write
+        let mut files_to_write_vec = vec![FileToWrite {
+            relative_path: &composition_yaml_relative_path,
+            content: &composition_content,
+            old_content: None,
+        }];
+
+        // Add body.md if provided
+        let body_md_relative_path;
+        if let Some(ref body) = body_content {
+            body_md_relative_path = letter_paths.body_md();
+            files_to_write_vec.push(FileToWrite {
+                relative_path: &body_md_relative_path,
+                content: body,
+                old_content: None,
+            });
+        }
+
+        // Add attachment metadata files
+        let attachment_contents: Vec<String> = attachment_files_to_write
+            .iter()
+            .map(|(_, content)| content.clone())
+            .collect();
+        let attachment_paths: Vec<PathBuf> = attachment_files_to_write
+            .iter()
+            .map(|(path, _)| path.clone())
+            .collect();
+
+        for (path, content) in attachment_paths.iter().zip(attachment_contents.iter()) {
+            files_to_write_vec.push(FileToWrite {
+                relative_path: path,
+                content,
+                old_content: None,
+            });
+        }
+
+        VersionedFileService::write_and_commit_files(
+            &patient_dir,
+            author,
+            &commit_message,
+            &files_to_write_vec,
+        )?;
+
+        Ok(timestamp_id.to_string())
+    }
+
+    /// Creates a new clinical letter with body content.
+    ///
+    /// This is a convenience wrapper around [`create_letter`](Self::create_letter)
+    /// for the common case of creating a letter with only body content.
+    ///
+    /// # Arguments
+    ///
+    /// * `author` - The author information for the Git commit.
+    /// * `care_location` - High-level organisational location for the commit.
+    /// * `letter_content` - The Markdown content for the letter body.
+    /// * `clinical_lists` - Optional clinical lists to include.
+    ///
+    /// # Returns
+    ///
+    /// Returns the generated timestamp ID for the letter on success.
     ///
     /// This function creates a new letter with the specified content, generates a unique
     /// timestamp-based ID, and commits both the composition.yaml and body.md files to Git.
@@ -492,6 +690,8 @@ impl ClinicalService<Initialised> {
             clinical_lists: clinical_lists
                 .map(|lists| lists.to_vec())
                 .unwrap_or_default(),
+            has_body: true,
+            attachments: vec![],
         };
 
         let composition_content =
@@ -673,31 +873,19 @@ impl ClinicalService<Initialised> {
 
     /// Creates a new clinical letter with file attachments.
     ///
-    /// This function creates a new letter with attached files (e.g., PDFs, images).
-    /// Files are stored using the FilesService and referenced via attachment YAML files.
-    /// Unlike `new_letter()`, this method does not create a body.md file.
+    /// This is a convenience wrapper around [`create_letter`](Self::create_letter)
+    /// for creating a letter with only attachments (no body content).
     ///
     /// # Arguments
     ///
-    /// * `author` - The author information for the Git commit. Must have a non-empty name.
-    /// * `care_location` - High-level organisational location for the commit (e.g. hospital name).
-    ///   Must be a non-empty string.
+    /// * `author` - The author information for the Git commit.
+    /// * `care_location` - High-level organisational location for the commit.
     /// * `attachment_files` - Paths to files to attach (e.g., PDFs, images).
-    /// * `clinical_lists` - Optional clinical lists to include in the composition.
+    /// * `clinical_lists` - Optional clinical lists to include.
     ///
     /// # Returns
     ///
     /// Returns the generated timestamp ID for the letter on success.
-    ///
-    /// # Errors
-    ///
-    /// Returns a `PatientError` if:
-    /// - The author's name is empty or whitespace-only
-    /// - The care location is empty or whitespace-only
-    /// - The clinical UUID cannot be parsed
-    /// - Any attachment file cannot be read or stored
-    /// - Creating the composition.yaml content fails
-    /// - Writing files or committing to Git fails
     pub fn new_letter_with_attachments(
         &self,
         author: &Author,
@@ -705,120 +893,13 @@ impl ClinicalService<Initialised> {
         attachment_files: &[PathBuf],
         clinical_lists: Option<&[ClinicalList]>,
     ) -> PatientResult<String> {
-        author.validate_commit_author()?;
-
-        let commit_message = VprCommitMessage::new(
-            VprCommitDomain::Clinical(Record),
-            VprCommitAction::Create,
-            "Created new letter with attachments",
-            care_location,
-        )?;
-
-        let timestamp_id = TimestampIdGenerator::generate(None)?;
-        let letter_paths = LetterPaths::new(&timestamp_id);
-
-        let clinical_uuid = ShardableUuid::parse(&self.clinical_id().simple().to_string())?;
-        let patient_dir = self.clinical_patient_dir(&clinical_uuid);
-
-        // Initialize FilesService for this clinical repository
-        let clinical_dir = self.clinical_dir();
-        let files_service = vpr_files::FilesService::new(&clinical_dir, clinical_uuid.clone())
-            .map_err(|e| {
-                PatientError::InvalidInput(format!("Failed to initialize files service: {}", e))
-            })?;
-
-        // Process attachments
-        let mut attachment_metadata_list = Vec::new();
-        let mut attachment_files_to_write = Vec::new();
-
-        for (index, file_path) in attachment_files.iter().enumerate() {
-            // Add file to storage
-            let file_metadata = files_service.add(file_path).map_err(|e| {
-                PatientError::InvalidInput(format!("Failed to add attachment file: {}", e))
-            })?;
-
-            // Create attachment metadata
-            let attachment_filename = format!("attachment_{}.yaml", index + 1);
-            let attachment_metadata = AttachmentMetadata {
-                filename: attachment_filename.clone(),
-                original_filename: file_metadata.original_filename.clone(),
-                hash: file_metadata.hash.clone(),
-                file_storage_path: file_metadata.relative_path.clone(),
-                size_bytes: file_metadata.size_bytes,
-                media_type: file_metadata.media_type.clone(),
-            };
-
-            // Serialize attachment metadata to YAML
-            let attachment_yaml = serde_yaml::to_string(&attachment_metadata).map_err(|e| {
-                PatientError::InvalidInput(format!(
-                    "Failed to serialize attachment metadata: {}",
-                    e
-                ))
-            })?;
-
-            // Add to files to write
-            let attachment_path = letter_paths.attachment(&attachment_filename);
-            attachment_files_to_write.push((attachment_path, attachment_yaml));
-            attachment_metadata_list.push(attachment_metadata);
-        }
-
-        // Generate composition.yaml content using Letter::composition_render
-        let rm_version = self.cfg.rm_system_version();
-        let start_time = timestamp_id.timestamp();
-
-        // Construct LetterData for the new letter
-        let letter_data = openehr::LetterData {
-            rm_version,
-            uid: timestamp_id.clone(),
-            composer_name: author.name.clone(),
-            composer_role: "Clinical Practitioner".to_string(),
-            start_time,
-            clinical_lists: clinical_lists
-                .map(|lists| lists.to_vec())
-                .unwrap_or_default(),
-        };
-
-        let composition_content =
-            Letter::composition_render(rm_version, &letter_data).map_err(|e| {
-                PatientError::InvalidInput(format!("Failed to create letter composition: {}", e))
-            })?;
-
-        let composition_yaml_relative_path = letter_paths.composition_yaml();
-
-        // Build list of all files to write
-        let mut files_to_write_vec = vec![FileToWrite {
-            relative_path: &composition_yaml_relative_path,
-            content: &composition_content,
-            old_content: None,
-        }];
-
-        // Store attachment content strings to ensure they live long enough
-        let attachment_contents: Vec<String> = attachment_files_to_write
-            .iter()
-            .map(|(_, content)| content.clone())
-            .collect();
-        let attachment_paths: Vec<PathBuf> = attachment_files_to_write
-            .iter()
-            .map(|(path, _)| path.clone())
-            .collect();
-
-        // Add attachment files
-        for (path, content) in attachment_paths.iter().zip(attachment_contents.iter()) {
-            files_to_write_vec.push(FileToWrite {
-                relative_path: path,
-                content,
-                old_content: None,
-            });
-        }
-
-        VersionedFileService::write_and_commit_files(
-            &patient_dir,
+        self.create_letter(
             author,
-            &commit_message,
-            &files_to_write_vec,
-        )?;
-
-        Ok(timestamp_id.to_string())
+            care_location,
+            None,
+            attachment_files,
+            clinical_lists,
+        )
     }
 }
 
