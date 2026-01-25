@@ -22,13 +22,13 @@ use std::{
 
 /// Whitelist of allowed file extensions for template and patient data files.
 ///
-/// These extensions are considered safe for storage in patient repositories.
-/// Files with other extensions will be rejected during validation to prevent
-/// code injection and malicious file uploads.
-pub(crate) const ALLOWED_EXTENSIONS: &[&str] = &[
-    "md", "txt", "yaml", "yml", "json", "xml", "html", "css", "js", "pdf", "png", "jpg", "jpeg",
-    "gif", "svg", "csv", "tsv",
-];
+/// These extensions are considered safe for storage in patient repositories that will be
+/// committed to Git. Files with other extensions will be rejected during validation.
+/// Binary files and other content types should be stored in the content-addressed files/ storage.
+///
+/// Note: Files without extensions (e.g., .gitignore, LICENSE, README) are allowed by the
+/// validation logic and don't need to be listed here.
+pub(crate) const ALLOWED_EXTENSIONS: &[&str] = &["md", "txt", "yaml", "yml"];
 
 /// Dangerous file patterns that must be rejected in templates and patient uploads.
 ///
