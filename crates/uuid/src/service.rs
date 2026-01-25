@@ -11,6 +11,200 @@ use std::{fmt, str::FromStr};
 /// Re-exported for convenience.
 pub use ::uuid::Uuid;
 
+/// A validated SHA-256 hash in canonical form (64 lowercase hex characters).
+///
+/// This wrapper type guarantees that once constructed, the contained hash string
+/// is a valid SHA-256 hash in canonical format. It provides type safety for hash
+/// operations and ensures consistent representation across the system.
+///
+/// # Canonical SHA-256 form
+/// - Length: 64 characters
+/// - Characters: `0-9` and `a-f` only (lowercase hexadecimal)
+/// - Example: `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`
+///
+/// # When to use this type
+/// Use this wrapper whenever you are:
+/// - Accepting a hash string from external sources (file metadata, API requests, etc.)
+/// - Validating file integrity using content hashes
+/// - Storing or transmitting hash values that must be validated
+///
+/// Once you have a `Sha256Hash`, you can safely assume the hash is valid and in canonical form.
+///
+/// # Construction
+/// - [`Sha256Hash::parse`] validates an externally supplied hash string.
+/// - [`Sha256Hash::from_bytes`] converts a 32-byte array directly to a hash.
+///
+/// # Errors
+/// [`Sha256Hash::parse`] returns [`UuidError::InvalidInput`] if the input is not a valid
+/// 64-character lowercase hex string.
+///
+/// # Display format
+/// When displayed or converted to string, `Sha256Hash` always produces the canonical
+/// 64-character lowercase hex format.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Sha256Hash(String);
+
+impl Sha256Hash {
+    /// Validates and parses a hash string that must be in canonical SHA-256 form.
+    ///
+    /// This does **not** normalise other representations (e.g., uppercase).
+    /// The input must be exactly 64 lowercase hexadecimal characters.
+    ///
+    /// # Arguments
+    ///
+    /// * `input` - Hash string to validate. Must be exactly 64 lowercase hex characters.
+    ///
+    /// # Returns
+    ///
+    /// Returns a validated [`Sha256Hash`] on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UuidError::InvalidInput`] if `input` is not in canonical form.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use vpr_uuid::Sha256Hash;
+    /// let hash = Sha256Hash::parse("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    /// assert!(hash.is_ok());
+    ///
+    /// let invalid = Sha256Hash::parse("not-a-hash");
+    /// assert!(invalid.is_err());
+    /// ```
+    pub fn parse(input: &str) -> UuidResult<Self> {
+        if Self::is_canonical(input) {
+            return Ok(Self(input.to_string()));
+        }
+        Err(UuidError::InvalidInput(format!(
+            "SHA-256 hash must be 64 lowercase hex characters, got: '{}'",
+            input
+        )))
+    }
+
+    /// Creates a `Sha256Hash` from a 32-byte array.
+    ///
+    /// This constructor converts a raw SHA-256 hash (32 bytes) into its hexadecimal
+    /// string representation. Use this when you have computed a hash using a library
+    /// like `sha2` or similar.
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes` - A 32-byte array representing the SHA-256 hash.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Sha256Hash` with the hexadecimal representation of the bytes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use vpr_uuid::Sha256Hash;
+    /// let bytes = [0u8; 32]; // All zeros
+    /// let hash = Sha256Hash::from_bytes(&bytes);
+    /// assert_eq!(hash.as_str(), "0000000000000000000000000000000000000000000000000000000000000000");
+    /// ```
+    pub fn from_bytes(bytes: &[u8; 32]) -> Self {
+        let hex_string = bytes
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>();
+        Self(hex_string)
+    }
+
+    /// Returns the hash as a string slice.
+    ///
+    /// # Returns
+    ///
+    /// Returns a reference to the canonical hash string.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Returns true if `input` is in canonical SHA-256 form.
+    ///
+    /// This is a purely syntactic check that validates:
+    /// - Exactly 64 characters long
+    /// - Contains only lowercase hex characters (`0-9` and `a-f`)
+    ///
+    /// This method is fast and can be used for pre-validation before calling [`Sha256Hash::parse`].
+    ///
+    /// # Arguments
+    ///
+    /// * `input` - Candidate hash string to validate.
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` if `input` is canonical, otherwise `false`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use vpr_uuid::Sha256Hash;
+    /// assert!(Sha256Hash::is_canonical("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"));
+    /// assert!(!Sha256Hash::is_canonical("E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"));
+    /// assert!(!Sha256Hash::is_canonical("not-a-hash"));
+    /// assert!(!Sha256Hash::is_canonical("abc123"));
+    /// ```
+    pub fn is_canonical(input: &str) -> bool {
+        input.len() == 64
+            && input
+                .bytes()
+                .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    }
+}
+
+impl fmt::Display for Sha256Hash {
+    /// Formats the hash in canonical form (64 lowercase hex characters).
+    ///
+    /// This ensures consistent string representation across the application.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl FromStr for Sha256Hash {
+    type Err = UuidError;
+
+    /// Parses a string into a `Sha256Hash`, requiring canonical form.
+    ///
+    /// This is equivalent to calling [`Sha256Hash::parse`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UuidError::InvalidInput`] if the string is not in canonical SHA-256 form.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Sha256Hash::parse(s)
+    }
+}
+
+impl AsRef<str> for Sha256Hash {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for Sha256Hash {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for Sha256Hash {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Sha256Hash::parse(&s).map_err(serde::de::Error::custom)
+    }
+}
+
 /// VPR's canonical UUID representation (32 lowercase hex characters, no hyphens).
 ///
 /// This wrapper type guarantees that once constructed, the contained UUID is in VPR's
@@ -846,6 +1040,155 @@ mod tests {
         uuid2.hash(&mut hasher2);
 
         assert_eq!(hasher1.finish(), hasher2.finish());
+    }
+
+    // Sha256Hash tests
+    #[test]
+    fn test_sha256_parse_valid() {
+        let valid = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        let result = Sha256Hash::parse(valid);
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().as_str(), valid);
+    }
+
+    #[test]
+    fn test_sha256_parse_rejects_uppercase() {
+        let uppercase = "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855";
+        let result = Sha256Hash::parse(uppercase);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_sha256_parse_rejects_too_short() {
+        let short = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b85";
+        let result = Sha256Hash::parse(short);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_sha256_parse_rejects_too_long() {
+        let long = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b8555";
+        let result = Sha256Hash::parse(long);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_sha256_parse_rejects_invalid_characters() {
+        // cspell:disable-next-line
+        let invalid = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852bxyz";
+        let result = Sha256Hash::parse(invalid);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_sha256_is_canonical_valid() {
+        assert!(Sha256Hash::is_canonical(
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        ));
+        assert!(Sha256Hash::is_canonical(
+            "0000000000000000000000000000000000000000000000000000000000000000"
+        ));
+        assert!(Sha256Hash::is_canonical(
+            "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        ));
+    }
+
+    #[test]
+    fn test_sha256_is_canonical_invalid() {
+        // Uppercase
+        assert!(!Sha256Hash::is_canonical(
+            "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+        ));
+
+        // Too short
+        assert!(!Sha256Hash::is_canonical(
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b85"
+        ));
+
+        // Too long
+        assert!(!Sha256Hash::is_canonical(
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b8555"
+        ));
+
+        // Invalid characters
+        // cspell:disable-next-line
+        assert!(!Sha256Hash::is_canonical(
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852bxyz"
+        ));
+
+        // Random string
+        assert!(!Sha256Hash::is_canonical("not-a-hash"));
+    }
+
+    #[test]
+    fn test_sha256_from_bytes() {
+        let bytes = [0u8; 32];
+        let hash = Sha256Hash::from_bytes(&bytes);
+        assert_eq!(
+            hash.as_str(),
+            "0000000000000000000000000000000000000000000000000000000000000000"
+        );
+    }
+
+    #[test]
+    fn test_sha256_display() {
+        let hash =
+            Sha256Hash::parse("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+                .unwrap();
+        assert_eq!(
+            hash.to_string(),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    #[test]
+    fn test_sha256_from_str() {
+        let hash_str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        let result: Result<Sha256Hash, _> = hash_str.parse();
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().as_str(), hash_str);
+    }
+
+    #[test]
+    fn test_sha256_clone_and_equality() {
+        let hash1 =
+            Sha256Hash::parse("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+                .unwrap();
+        let hash2 = hash1.clone();
+
+        assert_eq!(hash1, hash2);
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_sha256_serde_roundtrip() {
+        let hash =
+            Sha256Hash::parse("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+                .unwrap();
+
+        let json = serde_json::to_string(&hash).unwrap();
+        assert_eq!(
+            json,
+            "\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\""
+        );
+
+        let deserialized: Sha256Hash = serde_json::from_str(&json).unwrap();
+        assert_eq!(hash, deserialized);
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_sha256_serde_rejects_invalid() {
+        let invalid_json = "\"not-a-valid-hash\"";
+        let result: Result<Sha256Hash, _> = serde_json::from_str(invalid_json);
+
+        assert!(result.is_err());
     }
 
     #[test]

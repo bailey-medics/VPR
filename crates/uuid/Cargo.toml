@@ -8,10 +8,16 @@ license = "AGPL-3.0-or-later"
 name = "vpr_uuid"
 path = "src/lib.rs"
 
+[features]
+default = ["serde"]
+serde = ["dep:serde"]
+
 [dependencies]
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "1.0"
+serde = { version = "1.0", features = ["derive"], optional = true }
 
 [dev-dependencies]
 tempfile = "3.0"
+serde_json = "1.0"

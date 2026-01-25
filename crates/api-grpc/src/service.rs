@@ -428,7 +428,7 @@ impl Vpr for VprService {
         let clinical_service = ClinicalService::with_id(self.cfg.clone(), clinical_uuid);
         match clinical_service.read_letter(&req.letter_timestamp_id) {
             Ok(result) => Ok(Response::new(pb::ReadLetterRes {
-                body_content: result.body_content,
+                body_content: result.body_content.to_string(),
                 rm_version: format!("{:?}", result.letter_data.rm_version),
                 composer_name: result.letter_data.composer_name,
                 composer_role: result.letter_data.composer_role,
@@ -599,12 +599,16 @@ impl Vpr for VprService {
                     .into_iter()
                     .map(|att| pb::LetterAttachment {
                         metadata: Some(pb::AttachmentMetadata {
-                            filename: att.metadata.filename,
-                            original_filename: att.metadata.original_filename,
+                            filename: att.metadata.metadata_filename.to_string(),
+                            original_filename: att.metadata.original_filename.to_string(),
                             hash: att.metadata.hash,
-                            file_storage_path: att.metadata.file_storage_path,
+                            file_storage_path: att.metadata.file_storage_path.to_string(),
                             size_bytes: att.metadata.size_bytes as i64,
-                            media_type: att.metadata.media_type.unwrap_or_default(),
+                            media_type: att
+                                .metadata
+                                .media_type
+                                .map(|mt| mt.to_string())
+                                .unwrap_or_default(),
                         }),
                         content: att.content,
                     })

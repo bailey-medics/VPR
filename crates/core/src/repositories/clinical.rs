@@ -2,25 +2,21 @@
 //!
 //! This module handles the creation, linking, and maintenance of per-patient
 //! clinical record repositories within the Versioned Patient Repository (VPR).
-//! It initialises new records from validated clinical templates, enforces directory
-//! sharding for scalable storage, and ensures all operations are version-controlled
-//! through Git with optional cryptographic signing.
-//!
-//! Each record includes an `ehr_status.yaml` file conforming to openEHR structures,
-//! providing metadata about the patient’s EHR lifecycle and its linkage to
-//! demographics via external references.
-//!
-//! All filesystem operations are validated for safety and rollback on failure,
-//! guaranteeing no partial or unsafe patient directories remain after errors.
+//! Clinical data is stored in lines with OpenEHR Reference Model (RM) structures.
+//! The module initialises new records from validated clinical templates, enforces
+//! directory sharding for scalable storage, and ensures all operations are
+//! version-controlled through Git with optional cryptographic signing.
 
 use crate::author::Author;
 use crate::config::CoreConfig;
 use crate::constants::{CLINICAL_DIR_NAME, DEFAULT_GITIGNORE};
 use crate::error::{PatientError, PatientResult};
-use crate::paths::clinical::ehr_status::EhrStatusFile;
-use crate::paths::clinical::letter::LetterPaths;
-use crate::paths::common::GitIgnoreFile;
+use crate::paths::{
+    clinical::{ehr_status::EhrStatusFile, letter::LetterPaths},
+    common::GitIgnoreFile,
+};
 use crate::repositories::shared::create_uuid_and_shard_dir;
+use crate::types::NonEmptyText;
 
 // TODO: need to check if this is really needed
 #[cfg(test)]
@@ -62,39 +58,18 @@ pub struct Uninitialised;
 /// Marker type: clinical record exists.
 ///
 /// This type is used in the type-state pattern to indicate that a [`ClinicalService`]
-/// has been initialised and has a valid clinical record with a known UUID.
+/// has been initialised and has a valid clinical record with a known ID.
 ///
 /// Services in this state can call operations that require an existing clinical record,
 /// such as [`link_to_demographics`](ClinicalService::link_to_demographics).
 ///
 /// # Fields
 ///
-/// The clinical UUID is stored privately and accessed via the
+/// The clinical ID is stored privately and accessed via the
 /// [`clinical_id()`](ClinicalService::clinical_id) method.
 #[derive(Clone, Copy, Debug)]
 pub struct Initialised {
     clinical_id: Uuid,
-}
-
-/// Result of creating a new letter.
-///
-/// Contains the generated paths and input data for verification and testing.
-#[derive(Debug, Clone)]
-pub struct LetterResult {
-    /// Full path to the letter's body.md file
-    pub body_md_path: PathBuf,
-    /// Author name
-    pub author_name: String,
-    /// Author role
-    pub author_role: String,
-    /// Author email
-    pub author_email: String,
-    /// The care location provided
-    pub care_location: String,
-    /// The letter content provided
-    pub letter_content: String,
-    /// The generated timestamp ID
-    pub timestamp_id: String,
 }
 
 /// Result of reading an existing letter.
@@ -103,7 +78,7 @@ pub struct LetterResult {
 #[derive(Debug, Clone)]
 pub struct ReadLetterResult {
     /// The Markdown content from body.md
-    pub body_content: String,
+    pub body_content: NonEmptyText,
     /// Parsed composition metadata from composition.yaml
     pub letter_data: LetterData,
 }
@@ -115,18 +90,18 @@ pub struct ReadLetterResult {
 /// attachment-specific metadata.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AttachmentMetadata {
-    /// Name of the attachment file (e.g., "attachment_1.yaml")
-    pub filename: String,
-    /// Original filename from the source
-    pub original_filename: String,
+    /// Name of the attachment metadata file (e.g., "attachment_1.yaml")
+    pub metadata_filename: NonEmptyText,
     /// SHA-256 hash of the file content
     pub hash: String,
     /// Path to the file in the files storage (relative to repository root)
-    pub file_storage_path: String,
+    pub file_storage_path: NonEmptyText,
     /// Size of the file in bytes
     pub size_bytes: u64,
     /// Detected media type (MIME type)
-    pub media_type: Option<String>,
+    pub media_type: Option<NonEmptyText>,
+    /// Original filename from the source
+    pub original_filename: NonEmptyText,
 }
 
 /// Result of reading letter attachments.
@@ -491,12 +466,26 @@ impl ClinicalService<Initialised> {
                 // Create attachment metadata
                 let attachment_filename = format!("attachment_{}.yaml", index + 1);
                 let attachment_metadata = AttachmentMetadata {
-                    filename: attachment_filename.clone(),
-                    original_filename: file_metadata.original_filename.clone(),
+                    metadata_filename: NonEmptyText::new(&attachment_filename).map_err(|e| {
+                        PatientError::InvalidInput(format!("Invalid attachment filename: {}", e))
+                    })?,
                     hash: file_metadata.hash.clone(),
-                    file_storage_path: file_metadata.relative_path.clone(),
+                    file_storage_path: NonEmptyText::new(&file_metadata.relative_path).map_err(
+                        |e| PatientError::InvalidInput(format!("Invalid file storage path: {}", e)),
+                    )?,
                     size_bytes: file_metadata.size_bytes,
-                    media_type: file_metadata.media_type.clone(),
+                    media_type: file_metadata
+                        .media_type
+                        .as_ref()
+                        .map(|mt| NonEmptyText::new(mt.as_str()))
+                        .transpose()
+                        .map_err(|e| {
+                            PatientError::InvalidInput(format!("Invalid media type: {}", e))
+                        })?,
+                    original_filename: NonEmptyText::new(&file_metadata.original_filename)
+                        .map_err(|e| {
+                            PatientError::InvalidInput(format!("Invalid original filename: {}", e))
+                        })?,
                 };
 
                 // Serialize attachment metadata to YAML
@@ -522,7 +511,7 @@ impl ClinicalService<Initialised> {
         let attachment_refs: Vec<openehr::AttachmentReference> = attachment_metadata_list
             .iter()
             .map(|meta| openehr::AttachmentReference {
-                path: format!("./attachments/{}", meta.filename),
+                path: format!("./attachments/{}", meta.metadata_filename),
             })
             .collect();
 
@@ -746,7 +735,13 @@ impl ClinicalService<Initialised> {
         }
 
         // Read the body content
-        let body_content = fs::read_to_string(&body_md_path).map_err(PatientError::FileRead)?;
+        let body_content_str = fs::read_to_string(&body_md_path).map_err(PatientError::FileRead)?;
+        let body_content = NonEmptyText::new(&body_content_str).map_err(|_| {
+            PatientError::InvalidInput(format!(
+                "Letter body is empty for timestamp ID: {}",
+                timestamp_id
+            ))
+        })?;
 
         // Read and parse the composition
         let composition_yaml =
@@ -1751,8 +1746,14 @@ mod tests {
         let attachment_metadata: AttachmentMetadata =
             serde_yaml::from_str(&attachment_content).expect("should parse attachment metadata");
 
-        assert_eq!(attachment_metadata.filename, "attachment_1.yaml");
-        assert_eq!(attachment_metadata.original_filename, "test_document.pdf");
+        assert_eq!(
+            attachment_metadata.metadata_filename.as_str(),
+            "attachment_1.yaml"
+        );
+        assert_eq!(
+            attachment_metadata.original_filename.as_str(),
+            "test_document.pdf"
+        );
         assert_eq!(attachment_metadata.size_bytes, 16); // "fake PDF content".len()
         assert!(!attachment_metadata.hash.is_empty());
     }
@@ -1806,12 +1807,18 @@ mod tests {
         assert_eq!(attachments.len(), 2, "should have 2 attachments");
 
         // Verify first attachment
-        assert_eq!(attachments[0].metadata.original_filename, "document1.pdf");
+        assert_eq!(
+            attachments[0].metadata.original_filename.as_str(),
+            "document1.pdf"
+        );
         assert_eq!(attachments[0].metadata.size_bytes, content1.len() as u64);
         assert_eq!(attachments[0].content, content1);
 
         // Verify second attachment
-        assert_eq!(attachments[1].metadata.original_filename, "image.png");
+        assert_eq!(
+            attachments[1].metadata.original_filename.as_str(),
+            "image.png"
+        );
         assert_eq!(attachments[1].metadata.size_bytes, content2.len() as u64);
         assert_eq!(attachments[1].content, content2);
     }
@@ -1893,7 +1900,7 @@ mod tests {
             .expect("read_letter should succeed");
 
         // Verify content
-        assert_eq!(result.body_content, letter_content);
+        assert_eq!(result.body_content.as_str(), letter_content);
         assert_eq!(result.letter_data.composer_name, "Dr. Test");
         assert_eq!(result.letter_data.composer_role, "Clinical Practitioner");
     }
@@ -2121,18 +2128,21 @@ mod tests {
             .expect("get_letter_attachments should succeed");
 
         assert_eq!(attachments.len(), 1);
-        assert_eq!(attachments[0].metadata.original_filename, "report.pdf");
+        assert_eq!(
+            attachments[0].metadata.original_filename.as_str(),
+            "report.pdf"
+        );
     }
 
     #[test]
     fn test_attachment_metadata_serialization() {
         let metadata = AttachmentMetadata {
-            filename: "attachment_1.yaml".to_string(),
-            original_filename: "test.pdf".to_string(),
+            metadata_filename: NonEmptyText::new("attachment_1.yaml").unwrap(),
             hash: "abc123".to_string(),
-            file_storage_path: "files/sha256/ab/c1/abc123".to_string(),
+            file_storage_path: NonEmptyText::new("files/sha256/ab/c1/abc123").unwrap(),
             size_bytes: 1024,
-            media_type: Some("application/pdf".to_string()),
+            media_type: Some(NonEmptyText::new("application/pdf").unwrap()),
+            original_filename: NonEmptyText::new("test.pdf").unwrap(),
         };
 
         // Serialize to YAML
@@ -2143,7 +2153,7 @@ mod tests {
         // Deserialize back
         let deserialized: AttachmentMetadata =
             serde_yaml::from_str(&yaml).expect("should deserialize");
-        assert_eq!(deserialized.filename, metadata.filename);
+        assert_eq!(deserialized.metadata_filename, metadata.metadata_filename);
         assert_eq!(deserialized.original_filename, metadata.original_filename);
         assert_eq!(deserialized.hash, metadata.hash);
         assert_eq!(deserialized.size_bytes, metadata.size_bytes);

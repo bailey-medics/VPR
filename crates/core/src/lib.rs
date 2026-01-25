@@ -15,6 +15,7 @@ pub mod constants;
 pub mod markdown;
 pub mod paths;
 pub mod repositories;
+pub mod types;
 pub mod versioned_files;
 
 pub mod error;

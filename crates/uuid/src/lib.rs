@@ -9,6 +9,7 @@
 //! This module provides:
 //! - A small wrapper type ([`ShardableUuid`]) that *guarantees* the canonical format once
 //!   constructed.
+//! - A validated SHA-256 hash type ([`Sha256Hash`]) for content-addressed storage.
 //! - Shared sharding logic to derive patient directory locations from an identifier.
 //!
 //! ## Canonical UUID form
@@ -41,7 +42,7 @@
 mod service;
 
 // Re-export public types
-pub use service::{ShardableUuid, TimestampId, TimestampIdGenerator, Uuid};
+pub use service::{Sha256Hash, ShardableUuid, TimestampId, TimestampIdGenerator, Uuid};
 
 /// Error type for UUID operations.
 #[derive(Debug, thiserror::Error)]
