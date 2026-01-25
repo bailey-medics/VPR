@@ -1423,14 +1423,6 @@ fn verifying_key_from_public_key_or_cert_pem(pem_or_cert: &str) -> PatientResult
 static FORCE_CLEANUP_ERROR_FOR_THREADS: LazyLock<Mutex<HashSet<std::thread::ThreadId>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 
-#[cfg(test)]
-pub(crate) fn force_cleanup_error_for_current_thread() {
-    let mut guard = FORCE_CLEANUP_ERROR_FOR_THREADS
-        .lock()
-        .expect("FORCE_CLEANUP_ERROR_FOR_THREADS mutex poisoned");
-    guard.insert(std::thread::current().id());
-}
-
 /// Removes a patient directory and all its contents.
 ///
 /// This is a wrapper around [`std::fs::remove_dir_all`] with test instrumentation.
