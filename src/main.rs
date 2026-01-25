@@ -25,14 +25,13 @@ use api_grpc::{VprService, auth_interceptor};
 use api_shared::HealthService;
 use api_shared::pb;
 use api_shared::pb::vpr_server::VprServer;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use vpr_core::{
     Author, AuthorRegistration, CoreConfig,
     config::rm_system_version_from_env_value,
     repositories::clinical::ClinicalService,
     repositories::demographics::{DemographicsService, Uninitialised as DemographicsUninitialised},
-    repositories::shared::{TemplateDirKind, resolve_clinical_template_dir, validate_template},
 };
 
 type HealthRes = pb::HealthRes;
@@ -116,23 +115,6 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let template_override = std::env::var("VPR_CLINICAL_TEMPLATE_DIR")
-        .ok()
-        .map(PathBuf::from);
-    let clinical_template_dir =
-        resolve_clinical_template_dir(template_override).unwrap_or_else(|_| {
-            eprintln!("Error: Unable to resolve clinical template directory");
-            std::process::exit(1);
-        });
-    if let Err(e) = validate_template(&TemplateDirKind::Clinical, &clinical_template_dir) {
-        eprintln!(
-            "Error: Clinical template directory is not safe to copy: {} ({})",
-            clinical_template_dir.display(),
-            e
-        );
-        std::process::exit(1);
-    }
-
     let rm_system_version = rm_system_version_from_env_value(
         std::env::var("RM_SYSTEM_VERSION").ok(),
     )
@@ -145,7 +127,6 @@ async fn main() -> anyhow::Result<()> {
     let cfg = Arc::new(
         CoreConfig::new(
             patient_data_path.to_path_buf(),
-            clinical_template_dir,
             rm_system_version,
             vpr_namespace,
         )

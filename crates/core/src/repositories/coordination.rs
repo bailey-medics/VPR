@@ -963,14 +963,12 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
-    fn setup_test_env() -> (TempDir, TempDir, Arc<CoreConfig>, Author) {
+    fn setup_test_env() -> (TempDir, Arc<CoreConfig>, Author) {
         let temp_dir = TempDir::new().unwrap();
-        let template_dir = TempDir::new().unwrap();
 
         let cfg = Arc::new(
             CoreConfig::new(
                 temp_dir.path().to_path_buf(),
-                template_dir.path().to_path_buf(),
                 openehr::RmVersion::rm_1_1_0,
                 "test-namespace".to_string(),
             )
@@ -986,7 +984,7 @@ mod tests {
             certificate: None,
         };
 
-        (temp_dir, template_dir, cfg, author)
+        (temp_dir, cfg, author)
     }
 
     fn create_test_participants() -> Vec<MessageAuthor> {
@@ -1006,7 +1004,7 @@ mod tests {
 
     #[test]
     fn test_initialise_creates_coordination_repo() {
-        let (_temp, _template, cfg, author) = setup_test_env();
+        let (_temp, cfg, author) = setup_test_env();
         let clinical_id = Uuid::new_v4();
 
         let result = CoordinationService::new(cfg.clone()).initialise(
@@ -1024,7 +1022,7 @@ mod tests {
 
     #[test]
     fn test_initialise_validates_author() {
-        let (_temp, _template, cfg, _author) = setup_test_env();
+        let (_temp, cfg, _author) = setup_test_env();
         let clinical_id = Uuid::new_v4();
 
         let invalid_author = Author {
@@ -1047,7 +1045,7 @@ mod tests {
 
     #[test]
     fn test_communication_create_with_initial_message() {
-        let (_temp, _template, cfg, author) = setup_test_env();
+        let (_temp, cfg, author) = setup_test_env();
         let clinical_id = Uuid::new_v4();
 
         let service = CoordinationService::new(cfg.clone())
@@ -1086,7 +1084,7 @@ mod tests {
 
     #[test]
     fn test_communication_create_validates_empty_body() {
-        let (_temp, _template, cfg, author) = setup_test_env();
+        let (_temp, cfg, author) = setup_test_env();
         let clinical_id = Uuid::new_v4();
 
         let _service = CoordinationService::new(cfg.clone())
@@ -1131,7 +1129,7 @@ mod tests {
 
     #[test]
     fn test_message_add_appends_to_thread() {
-        let (_temp, _template, cfg, author) = setup_test_env();
+        let (_temp, cfg, author) = setup_test_env();
         let clinical_id = Uuid::new_v4();
 
         let service = CoordinationService::new(cfg.clone())
@@ -1178,7 +1176,7 @@ mod tests {
 
     #[test]
     fn test_message_add_with_correction() {
-        let (_temp, _template, cfg, author) = setup_test_env();
+        let (_temp, cfg, author) = setup_test_env();
         let clinical_id = Uuid::new_v4();
 
         let service = CoordinationService::new(cfg.clone())
@@ -1225,7 +1223,7 @@ mod tests {
 
     #[test]
     fn test_message_add_to_nonexistent_thread() {
-        let (_temp, _template, cfg, author) = setup_test_env();
+        let (_temp, cfg, author) = setup_test_env();
         let clinical_id = Uuid::new_v4();
 
         let service = CoordinationService::new(cfg.clone())
@@ -1252,7 +1250,7 @@ mod tests {
 
     #[test]
     fn test_read_communication_returns_complete_data() {
-        let (_temp, _template, cfg, author) = setup_test_env();
+        let (_temp, cfg, author) = setup_test_env();
         let clinical_id = Uuid::new_v4();
 
         let service = CoordinationService::new(cfg.clone())
@@ -1282,7 +1280,7 @@ mod tests {
 
     #[test]
     fn test_read_communication_nonexistent() {
-        let (_temp, _template, cfg, author) = setup_test_env();
+        let (_temp, cfg, author) = setup_test_env();
         let clinical_id = Uuid::new_v4();
 
         let service = CoordinationService::new(cfg.clone())
@@ -1296,7 +1294,7 @@ mod tests {
 
     #[test]
     fn test_update_communication_ledger_add_participants() {
-        let (_temp, _template, cfg, author) = setup_test_env();
+        let (_temp, cfg, author) = setup_test_env();
         let clinical_id = Uuid::new_v4();
 
         let service = CoordinationService::new(cfg.clone())
@@ -1348,7 +1346,7 @@ mod tests {
 
     #[test]
     fn test_update_communication_ledger_remove_participants() {
-        let (_temp, _template, cfg, author) = setup_test_env();
+        let (_temp, cfg, author) = setup_test_env();
         let clinical_id = Uuid::new_v4();
 
         let service = CoordinationService::new(cfg.clone())
@@ -1391,7 +1389,7 @@ mod tests {
 
     #[test]
     fn test_update_communication_ledger_change_status() {
-        let (_temp, _template, cfg, author) = setup_test_env();
+        let (_temp, cfg, author) = setup_test_env();
         let clinical_id = Uuid::new_v4();
 
         let service = CoordinationService::new(cfg.clone())
@@ -1432,7 +1430,7 @@ mod tests {
 
     #[test]
     fn test_update_communication_ledger_change_visibility() {
-        let (_temp, _template, cfg, author) = setup_test_env();
+        let (_temp, cfg, author) = setup_test_env();
         let clinical_id = Uuid::new_v4();
 
         let service = CoordinationService::new(cfg.clone())
@@ -1474,7 +1472,7 @@ mod tests {
 
     #[test]
     fn test_update_communication_ledger_change_policies() {
-        let (_temp, _template, cfg, author) = setup_test_env();
+        let (_temp, cfg, author) = setup_test_env();
         let clinical_id = Uuid::new_v4();
 
         let service = CoordinationService::new(cfg.clone())
