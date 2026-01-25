@@ -33,7 +33,7 @@ use crate::versioned_files::{
 use crate::ShardableUuid;
 use openehr::{
     extract_rm_version, validate_namespace_uri_safe, ClinicalList, EhrId, EhrStatus,
-    ExternalReference, Letter,
+    ExternalReference, Letter, LetterData,
 };
 use std::{
     fs,
@@ -96,6 +96,17 @@ pub struct LetterResult {
     pub letter_content: String,
     /// The generated timestamp ID
     pub timestamp_id: String,
+}
+
+/// Result of reading an existing letter.
+///
+/// Contains the body content and parsed composition metadata.
+#[derive(Debug, Clone)]
+pub struct ReadLetterResult {
+    /// The Markdown content from body.md
+    pub body_content: String,
+    /// Parsed composition metadata from composition.yaml
+    pub letter_data: LetterData,
 }
 
 /// Service for managing clinical record operations.
@@ -471,6 +482,72 @@ impl ClinicalService<Initialised> {
         VersionedFileService::write_and_commit_files(&patient_dir, author, &msg, &files_to_write)?;
 
         Ok(timestamp_id.to_string())
+    }
+
+    /// Reads an existing clinical letter.
+    ///
+    /// This function reads both the body.md and composition.yaml files for a letter,
+    /// parses the composition metadata, and returns them together.
+    ///
+    /// # Arguments
+    ///
+    /// * `timestamp_id` - The timestamp ID of the letter to read.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `ReadLetterResult` containing both the body content and parsed letter data.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `PatientError` if:
+    /// - The timestamp ID cannot be parsed
+    /// - The clinical UUID cannot be parsed
+    /// - The body.md or composition.yaml file does not exist
+    /// - Reading either file fails
+    /// - Parsing the composition.yaml fails
+    pub fn read_letter(&self, timestamp_id: &str) -> PatientResult<ReadLetterResult> {
+        let timestamp_id: vpr_uuid::TimestampId = timestamp_id
+            .parse()
+            .map_err(|e| PatientError::InvalidInput(format!("Invalid timestamp ID: {}", e)))?;
+        let letter_paths = LetterPaths::new(&timestamp_id);
+
+        let clinical_uuid = ShardableUuid::parse(&self.clinical_id().simple().to_string())?;
+        let patient_dir = self.clinical_patient_dir(&clinical_uuid);
+
+        let body_md_path = patient_dir.join(letter_paths.body_md());
+        let composition_yaml_path = patient_dir.join(letter_paths.composition_yaml());
+
+        // Check that both files exist
+        if !body_md_path.exists() {
+            return Err(PatientError::InvalidInput(format!(
+                "Letter body file not found: {}",
+                body_md_path.display()
+            )));
+        }
+
+        if !composition_yaml_path.exists() {
+            return Err(PatientError::InvalidInput(format!(
+                "Letter composition file not found: {}",
+                composition_yaml_path.display()
+            )));
+        }
+
+        // Read the body content
+        let body_content = fs::read_to_string(&body_md_path).map_err(PatientError::FileRead)?;
+
+        // Read and parse the composition
+        let composition_yaml =
+            fs::read_to_string(&composition_yaml_path).map_err(PatientError::FileRead)?;
+
+        let rm_version = extract_rm_version(&composition_yaml)?;
+
+        let letter_data = Letter::composition_parse(rm_version, &composition_yaml)
+            .map_err(PatientError::Openehr)?;
+
+        Ok(ReadLetterResult {
+            body_content,
+            letter_data,
+        })
     }
 }
 
