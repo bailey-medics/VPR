@@ -391,14 +391,9 @@ mod tests {
         let rm_system_version = rm_system_version_from_env_value(None)
             .expect("rm_system_version_from_env_value should succeed");
 
-        let clinical_template_dir = TempDir::new()
-            .expect("Failed to create temp clinical template dir")
-            .keep();
-
         Arc::new(
             CoreConfig::new(
                 patient_data_dir.to_path_buf(),
-                clinical_template_dir,
                 rm_system_version,
                 "vpr.dev.1".into(),
             )

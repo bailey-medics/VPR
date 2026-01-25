@@ -18,9 +18,6 @@ use api_shared::FILE_DESCRIPTOR_SET;
 use std::path::Path;
 use std::sync::Arc;
 use vpr_core::config::rm_system_version_from_env_value;
-use vpr_core::repositories::shared::{
-    resolve_clinical_template_dir, validate_template, TemplateDirKind,
-};
 use vpr_core::CoreConfig;
 
 /// Main entry point for the VPR gRPC server
@@ -55,12 +52,6 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    let template_override = std::env::var("VPR_CLINICAL_TEMPLATE_DIR")
-        .ok()
-        .map(std::path::PathBuf::from);
-    let clinical_template_dir = resolve_clinical_template_dir(template_override)?;
-    validate_template(&TemplateDirKind::Clinical, &clinical_template_dir)?;
-
     let rm_system_version =
         rm_system_version_from_env_value(std::env::var("RM_SYSTEM_VERSION").ok())?;
 
@@ -68,7 +59,6 @@ async fn main() -> anyhow::Result<()> {
 
     let cfg = Arc::new(CoreConfig::new(
         patient_data_path.to_path_buf(),
-        clinical_template_dir,
         rm_system_version,
         vpr_namespace,
     )?);
