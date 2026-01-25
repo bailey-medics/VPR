@@ -233,15 +233,15 @@ impl ClinicalService<Uninitialised> {
     ) -> PatientResult<ClinicalService<Initialised>> {
         author.validate_commit_author()?;
 
+        let clinical_dir = self.clinical_dir();
+        let (clinical_uuid, patient_dir) = create_uuid_and_shard_dir(&clinical_dir)?;
+
         let commit_message = VprCommitMessage::new(
             VprCommitDomain::Clinical(Record),
             VprCommitAction::Create,
             "Initialised the clinical record",
             care_location,
         )?;
-
-        let clinical_dir = self.clinical_dir();
-        let (clinical_uuid, patient_dir) = create_uuid_and_shard_dir(&clinical_dir)?;
 
         let rm_version = self.cfg.rm_system_version();
 
