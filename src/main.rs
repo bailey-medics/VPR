@@ -32,6 +32,7 @@ use vpr_core::{
     config::rm_system_version_from_env_value,
     repositories::clinical::ClinicalService,
     repositories::demographics::{DemographicsService, Uninitialised as DemographicsUninitialised},
+    types::NonEmptyText,
 };
 
 type HealthRes = pb::HealthRes;
@@ -298,8 +299,11 @@ async fn create_patient(
         },
         certificate: None,
     };
+    let care_location = NonEmptyText::new(&req.care_location)
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid care_location"))?;
+
     let clinical_service = ClinicalService::new(state.cfg.clone());
-    match clinical_service.initialise(author, req.care_location) {
+    match clinical_service.initialise(author, care_location) {
         Ok(service) => {
             let resp = CreatePatientRes {
                 filename: "".to_string(),
