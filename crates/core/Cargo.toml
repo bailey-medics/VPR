@@ -27,6 +27,7 @@ rand = "0.8"
 x509-parser = "0.16"
 openehr = { path = "../openehr", version = "0.1.0" }
 fhir = { path = "../fhir", version = "0.1.0" }
+vpr_files = { path = "../files", version = "0.1.0" }
 
 [dev-dependencies]
 tempfile = "3.0"

@@ -2965,6 +2965,7 @@ dependencies = [
  "tracing",
  "uuid",
  "vpr-uuid",
+ "vpr_files",
  "x509-parser",
 ]
 
