@@ -386,6 +386,7 @@ mod tests {
     use super::*;
     use crate::constants::DEMOGRAPHICS_DIR_NAME;
     use crate::{EmailAddress, NonEmptyText};
+    use chrono::NaiveDate;
     use std::fs;
     use tempfile::TempDir;
 

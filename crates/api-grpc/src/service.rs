@@ -135,10 +135,7 @@ impl Vpr for VprService {
         let registrations: Vec<AuthorRegistration> = req
             .author_registrations
             .into_iter()
-            .map(|r| AuthorRegistration {
-                authority: r.authority,
-                number: r.number,
-            })
+            .map(|r| AuthorRegistration::new(r.authority, r.number).expect("valid registration"))
             .collect();
 
         let author = Author {
@@ -1157,10 +1154,7 @@ fn build_author(
         role,
         registrations: registrations
             .into_iter()
-            .map(|r| AuthorRegistration {
-                authority: r.authority,
-                number: r.number,
-            })
+            .map(|r| AuthorRegistration::new(r.authority, r.number).expect("valid registration"))
             .collect(),
         signature: if signature.is_empty() {
             None

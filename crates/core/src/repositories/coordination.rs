@@ -1103,15 +1103,10 @@ mod tests {
             )
             .unwrap();
 
-        let participants = create_test_participants();
-        let result = MessageContent::new(
-            participants[0].clone(),
-            NonEmptyText::new("   ").unwrap(), // Empty after trim
-            None,
-        );
-
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), PatientError::InvalidInput(_)));
+        let _participants = create_test_participants();
+        // NonEmptyText::new should fail for whitespace-only string
+        let empty_body_result = NonEmptyText::new("   ");
+        assert!(empty_body_result.is_err());
     }
 
     #[test]
@@ -1122,14 +1117,9 @@ mod tests {
 
     #[test]
     fn test_validate_communication_authors_empty_name() {
-        let authors = vec![MessageAuthor {
-            id: Uuid::new_v4(),
-            name: NonEmptyText::new("   ").unwrap(),
-            role: fhir::AuthorRole::Clinician,
-        }];
-
-        let result = validate_communication_authors(&authors);
-        assert!(result.is_err());
+        // NonEmptyText::new should fail for whitespace-only string
+        let empty_name_result = NonEmptyText::new("   ");
+        assert!(empty_name_result.is_err());
     }
 
     #[test]

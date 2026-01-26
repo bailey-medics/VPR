@@ -363,8 +363,8 @@ impl fmt::Display for VprCommitAction {
 /// conventions and are sorted deterministically in rendered output.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub(crate) struct VprCommitTrailer {
-    key: String,
-    value: String,
+    key: NonEmptyText,
+    value: NonEmptyText,
 }
 
 impl VprCommitTrailer {
@@ -380,31 +380,38 @@ impl VprCommitTrailer {
     /// Returns `PatientError::InvalidInput` if validation fails.
     #[allow(dead_code)]
     pub(crate) fn new(key: impl Into<String>, value: impl Into<String>) -> PatientResult<Self> {
-        let key = key.into().trim().to_string();
-        let value = value.into().trim().to_string();
+        let key_str = key.into().trim().to_string();
+        let value_str = value.into().trim().to_string();
 
-        if key.is_empty()
-            || key.contains(['\n', '\r'])
-            || key.contains(':')
-            || value.is_empty()
-            || value.contains(['\n', '\r'])
+        if key_str.is_empty()
+            || key_str.contains(['\n', '\r'])
+            || key_str.contains(':')
+            || value_str.is_empty()
+            || value_str.contains(['\n', '\r'])
         {
             return Err(PatientError::InvalidInput(
                 "commit trailer key/value must be non-empty and single-line (key cannot contain ':')".into()
             ));
         }
 
+        let key = NonEmptyText::new(key_str).map_err(|_| {
+            PatientError::InvalidInput("commit trailer key must be non-empty".into())
+        })?;
+        let value = NonEmptyText::new(value_str).map_err(|_| {
+            PatientError::InvalidInput("commit trailer value must be non-empty".into())
+        })?;
+
         Ok(Self { key, value })
     }
 
     /// Get the trailer key.
     pub(crate) fn key(&self) -> &str {
-        &self.key
+        self.key.as_str()
     }
 
     /// Get the trailer value.
     pub(crate) fn value(&self) -> &str {
-        &self.value
+        self.value.as_str()
     }
 }
 
@@ -663,9 +670,9 @@ impl VprCommitMessage {
         for reg in regs {
             rendered.push('\n');
             rendered.push_str("Author-Registration: ");
-            rendered.push_str(reg.authority.trim());
+            rendered.push_str(reg.authority.as_str());
             rendered.push(' ');
-            rendered.push_str(reg.number.trim());
+            rendered.push_str(reg.number.as_str());
         }
 
         rendered.push('\n');

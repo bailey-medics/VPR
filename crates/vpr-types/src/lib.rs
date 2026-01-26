@@ -10,7 +10,7 @@ pub enum TextError {
 ///
 /// This type wraps a `String` and ensures it contains at least one non-whitespace character.
 /// The input is automatically trimmed of leading and trailing whitespace during construction.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct NonEmptyText(String);
 
 impl NonEmptyText {
@@ -38,6 +38,16 @@ impl NonEmptyText {
     /// Returns the inner string as a string slice.
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    /// Checks if the text starts with the given pattern.
+    pub fn starts_with(&self, pattern: &str) -> bool {
+        self.0.starts_with(pattern)
+    }
+
+    /// Checks if the text contains the given pattern.
+    pub fn contains(&self, pattern: &str) -> bool {
+        self.0.contains(pattern)
     }
 }
 

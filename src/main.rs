@@ -285,9 +285,8 @@ async fn create_patient(
     let registrations: Vec<AuthorRegistration> = req
         .author_registrations
         .into_iter()
-        .map(|r| AuthorRegistration {
-            authority: r.authority,
-            number: r.number,
+        .map(|r| {
+            AuthorRegistration::new(r.authority, r.number).expect("valid registration from request")
         })
         .collect();
 

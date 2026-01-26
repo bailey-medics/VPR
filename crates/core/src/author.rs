@@ -132,24 +132,29 @@ pub fn extract_embedded_commit_signature(
 /// `Author-Registration: <authority> <number>`
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct AuthorRegistration {
-    pub authority: String,
-    pub number: String,
+    pub authority: NonEmptyText,
+    pub number: NonEmptyText,
 }
 
 impl AuthorRegistration {
     pub fn new(authority: impl Into<String>, number: impl Into<String>) -> PatientResult<Self> {
-        let authority = authority.into().trim().to_string();
-        let number = number.into().trim().to_string();
+        let authority_str = authority.into().trim().to_string();
+        let number_str = number.into().trim().to_string();
 
-        if authority.is_empty()
-            || number.is_empty()
-            || authority.contains(['\n', '\r'])
-            || number.contains(['\n', '\r'])
-            || authority.chars().any(char::is_whitespace)
-            || number.chars().any(char::is_whitespace)
+        if authority_str.is_empty()
+            || number_str.is_empty()
+            || authority_str.contains(['\n', '\r'])
+            || number_str.contains(['\n', '\r'])
+            || authority_str.chars().any(char::is_whitespace)
+            || number_str.chars().any(char::is_whitespace)
         {
             return Err(PatientError::InvalidAuthorRegistration);
         }
+
+        let authority = NonEmptyText::new(authority_str)
+            .map_err(|_| PatientError::InvalidAuthorRegistration)?;
+        let number =
+            NonEmptyText::new(number_str).map_err(|_| PatientError::InvalidAuthorRegistration)?;
 
         Ok(Self { authority, number })
     }
@@ -161,9 +166,10 @@ impl Author {
     /// This validation is intended to run before commit creation/signing.
     pub fn validate_commit_author(&self) -> PatientResult<()> {
         // Role is guaranteed non-empty by NonEmptyText type
+        // Authority and number are guaranteed non-empty by NonEmptyText type
 
         for reg in &self.registrations {
-            AuthorRegistration::new(reg.authority.clone(), reg.number.clone())?;
+            AuthorRegistration::new(reg.authority.as_str(), reg.number.as_str())?;
         }
 
         Ok(())
@@ -187,25 +193,18 @@ mod author_tests {
 
     #[test]
     fn validate_commit_author_rejects_invalid_registration() {
-        let mut author = base_author();
-        author.registrations = vec![AuthorRegistration {
-            authority: "G MC".to_string(),
-            number: "12345".to_string(),
-        }];
-
-        let err = author
-            .validate_commit_author()
-            .expect_err("expected validation failure");
+        let _author = base_author();
+        // Try to create registration with invalid authority (contains space)
+        let err =
+            AuthorRegistration::new("G MC", "12345").expect_err("expected validation failure");
         assert!(matches!(err, PatientError::InvalidAuthorRegistration));
     }
 
     #[test]
     fn validate_commit_author_accepts_valid_author() {
         let mut author = base_author();
-        author.registrations = vec![AuthorRegistration {
-            authority: "GMC".to_string(),
-            number: "12345".to_string(),
-        }];
+        author.registrations =
+            vec![AuthorRegistration::new("GMC", "12345").expect("valid registration")];
 
         author
             .validate_commit_author()

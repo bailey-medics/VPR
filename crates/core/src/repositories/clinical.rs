@@ -1875,7 +1875,7 @@ mod tests {
             .new_letter(
                 &author,
                 NonEmptyText::new("Test Hospital").unwrap(),
-                letter_content.to_string(),
+                NonEmptyText::new(letter_content).unwrap(),
                 None,
             )
             .expect("new_letter should succeed");

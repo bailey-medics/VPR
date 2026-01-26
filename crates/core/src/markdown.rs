@@ -105,7 +105,10 @@ impl MarkdownService {
                 .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
         ));
         output.push_str(&format!("**Author ID:** {}\n", metadata.author.id));
-        output.push_str(&format!("**Author name:** {}\n", metadata.author.name));
+        output.push_str(&format!(
+            "**Author name:** {}\n",
+            metadata.author.name.as_str()
+        ));
 
         let role_str = serde_json::to_string(&metadata.author.role)
             .map_err(|e| PatientError::InvalidInput(format!("Invalid role: {}", e)))?
@@ -478,7 +481,7 @@ mod tests {
                 .with_timezone(&Utc),
             author: MessageAuthor {
                 id: Uuid::nil(),
-                name: "Test Author".to_string(),
+                name: NonEmptyText::new("Test Author").unwrap(),
                 role: AuthorRole::Clinician,
             },
         };
@@ -488,8 +491,8 @@ mod tests {
             corrects: None,
         };
         let result = service.thread_render(&[msg]).unwrap();
-        assert!(result.starts_with("# Thread\n\n"));
-        assert!(result.contains("Plain text content"));
+        assert!(result.as_str().starts_with("# Thread\n\n"));
+        assert!(result.as_str().contains("Plain text content"));
     }
 
     #[test]
@@ -504,12 +507,14 @@ mod tests {
                 .with_timezone(&Utc),
             author: MessageAuthor {
                 id: Uuid::nil(),
-                name: "Test Author".to_string(),
+                name: NonEmptyText::new("Test Author").unwrap(),
                 role: AuthorRole::Clinician,
             },
         };
         let result = service.message_render(&metadata, &body, None).unwrap();
-        assert!(result.contains("Patient #12345 has condition\n\\# This should be escaped"));
+        assert!(result
+            .as_str()
+            .contains("Patient #12345 has condition\n\\# This should be escaped"));
     }
 
     #[test]
@@ -523,12 +528,14 @@ mod tests {
                 .with_timezone(&Utc),
             author: MessageAuthor {
                 id: Uuid::nil(),
-                name: "Test Author".to_string(),
+                name: NonEmptyText::new("Test Author").unwrap(),
                 role: AuthorRole::Clinician,
             },
         };
         let result = service.message_render(&metadata, &body, None).unwrap();
-        assert!(result.contains("Example code: \\`\\`\\`python\nprint('hello')\n\\`\\`\\`"));
+        assert!(result
+            .as_str()
+            .contains("Example code: \\`\\`\\`python\nprint('hello')\n\\`\\`\\`"));
     }
 
     #[test]
@@ -542,14 +549,14 @@ mod tests {
                 .with_timezone(&Utc),
             author: MessageAuthor {
                 id: Uuid::nil(),
-                name: "Test Author".to_string(),
+                name: NonEmptyText::new("Test Author").unwrap(),
                 role: AuthorRole::Clinician,
             },
         };
         let result = service.message_render(&metadata, &body, None).unwrap();
-        assert!(result.contains("Line 1\n\\---"));
-        assert!(result.contains("Line 2\n\\***"));
-        assert!(result.contains("Line 3\n\\___"));
+        assert!(result.as_str().contains("Line 1\n\\---"));
+        assert!(result.as_str().contains("Line 2\n\\***"));
+        assert!(result.as_str().contains("Line 3\n\\___"));
     }
 
     #[test]
@@ -562,17 +569,19 @@ mod tests {
                 .with_timezone(&Utc),
             author: MessageAuthor {
                 id: Uuid::parse_str("550e8400-e29b-41d4-a716-446655440001").unwrap(),
-                name: "Dr Smith".to_string(),
+                name: NonEmptyText::new("Dr Smith").unwrap(),
                 role: AuthorRole::Clinician,
             },
         };
         let result = service
             .message_render(&metadata, &NonEmptyText::new("Some content").unwrap(), None)
             .unwrap();
-        assert!(result.contains("**Message ID:** 550e8400-e29b-41d4-a716-446655440000"));
-        assert!(result.contains("**Author name:** Dr Smith"));
-        assert!(result.contains("**Author role:** clinician"));
-        assert!(result.contains("Some content"));
+        assert!(result
+            .as_str()
+            .contains("**Message ID:** 550e8400-e29b-41d4-a716-446655440000"));
+        assert!(result.as_str().contains("**Author name:** Dr Smith"));
+        assert!(result.as_str().contains("**Author role:** clinician"));
+        assert!(result.as_str().contains("Some content"));
     }
 
     #[test]
@@ -597,7 +606,7 @@ mod tests {
                 .with_timezone(&Utc),
             author: MessageAuthor {
                 id: Uuid::nil(),
-                name: "Test Author".to_string(),
+                name: NonEmptyText::new("Test Author").unwrap(),
                 role: AuthorRole::Clinician,
             },
         };
@@ -609,10 +618,12 @@ mod tests {
         };
         let result = service.thread_render(&[msg]).unwrap();
 
-        assert!(result.starts_with("# Thread\n\n"));
-        assert!(result.contains("Patient #12345 presented with symptoms."));
-        assert!(result.contains("\\# Important note"));
-        assert!(result.contains("See details."));
+        assert!(result.as_str().starts_with("# Thread\n\n"));
+        assert!(result
+            .as_str()
+            .contains("Patient #12345 presented with symptoms."));
+        assert!(result.as_str().contains("\\# Important note"));
+        assert!(result.as_str().contains("See details."));
     }
 
     #[test]
@@ -620,7 +631,10 @@ mod tests {
         let service = MarkdownService::new();
         let escaped = "Patient #12345 has condition\n\\# This was escaped";
         let result = service.unescape_body(escaped);
-        assert_eq!(result, "Patient #12345 has condition\n# This was escaped");
+        assert_eq!(
+            result.as_str(),
+            "Patient #12345 has condition\n# This was escaped"
+        );
     }
 
     #[test]
@@ -628,7 +642,10 @@ mod tests {
         let service = MarkdownService::new();
         let escaped = "Example code: \\`\\`\\`python\nprint('hello')\n\\`\\`\\`";
         let result = service.unescape_body(escaped);
-        assert_eq!(result, "Example code: ```python\nprint('hello')\n```");
+        assert_eq!(
+            result.as_str(),
+            "Example code: ```python\nprint('hello')\n```"
+        );
     }
 
     #[test]
@@ -636,7 +653,7 @@ mod tests {
         let service = MarkdownService::new();
         let escaped = "Line 1\n\\---\nLine 2\n\\***\nLine 3\n\\___";
         let result = service.unescape_body(escaped);
-        assert_eq!(result, "Line 1\n---\nLine 2\n***\nLine 3\n___");
+        assert_eq!(result.as_str(), "Line 1\n---\nLine 2\n***\nLine 3\n___");
     }
 
     #[test]
@@ -644,8 +661,8 @@ mod tests {
         let service = MarkdownService::new();
         let original = "Patient #12345\n# Important\n---\n```code```";
         let escaped = service.escape_body(original);
-        let unescaped = service.unescape_body(&escaped);
-        assert_eq!(unescaped, original);
+        let unescaped = service.unescape_body(escaped.as_str());
+        assert_eq!(unescaped.as_str(), original);
     }
 
     #[test]
@@ -657,7 +674,7 @@ mod tests {
         assert_eq!(messages.len(), 1);
 
         let msg = &messages[0];
-        assert_eq!(msg.metadata.author.name, "Dr Smith");
+        assert_eq!(msg.metadata.author.name.as_str(), "Dr Smith");
         assert_eq!(msg.metadata.author.role, AuthorRole::Clinician);
         assert_eq!(msg.body.as_str(), "Patient presented with symptoms.");
     }
@@ -671,7 +688,7 @@ mod tests {
         assert_eq!(messages.len(), 1);
 
         let msg = &messages[0];
-        assert_eq!(msg.metadata.author.name, "System");
+        assert_eq!(msg.metadata.author.name.as_str(), "System");
         assert_eq!(msg.body.as_str(), "Simple body content.");
     }
 
@@ -735,7 +752,7 @@ mod tests {
                 .with_timezone(&Utc),
             author: MessageAuthor {
                 id: author_id,
-                name: "Dr Smith".to_string(),
+                name: NonEmptyText::new("Dr Smith").unwrap(),
                 role: AuthorRole::Clinician,
             },
         };
@@ -747,11 +764,11 @@ mod tests {
         let created = service.thread_render(&[msg]).unwrap();
 
         // Parse it back
-        let parsed = service.thread_parse(&created).unwrap();
+        let parsed = service.thread_parse(created.as_str()).unwrap();
         assert_eq!(parsed.len(), 1);
 
         let msg = &parsed[0];
-        assert_eq!(msg.metadata.author.name, "Dr Smith");
+        assert_eq!(msg.metadata.author.name.as_str(), "Dr Smith");
         assert_eq!(msg.metadata.author.role, AuthorRole::Clinician);
         assert_eq!(msg.body.as_str(), body);
     }
@@ -768,7 +785,7 @@ mod tests {
                 .with_timezone(&Utc),
             author: MessageAuthor {
                 id: Uuid::nil(),
-                name: "Author 1".to_string(),
+                name: NonEmptyText::new("Author 1").unwrap(),
                 role: AuthorRole::Clinician,
             },
         };
@@ -786,7 +803,7 @@ mod tests {
                 .with_timezone(&Utc),
             author: MessageAuthor {
                 id: Uuid::new_v4(),
-                name: "Author 2".to_string(),
+                name: NonEmptyText::new("Author 2").unwrap(),
                 role: AuthorRole::Patient,
             },
         };
@@ -800,7 +817,7 @@ mod tests {
         let thread = service.thread_render(&[msg1, msg2]).unwrap();
 
         // Parse back
-        let parsed = service.thread_parse(&thread).unwrap();
+        let parsed = service.thread_parse(thread.as_str()).unwrap();
         assert_eq!(parsed.len(), 2);
         assert_eq!(parsed[0].body.as_str(), "First message content");
         assert_eq!(parsed[1].body.as_str(), "Second message content");

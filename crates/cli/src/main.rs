@@ -659,9 +659,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }) => {
             let registrations: Vec<AuthorRegistration> = registration
                 .chunks(2)
-                .map(|chunk| AuthorRegistration {
-                    authority: chunk.first().cloned().unwrap_or_default(),
-                    number: chunk.get(1).cloned().unwrap_or_default(),
+                .map(|chunk| {
+                    AuthorRegistration::new(
+                        chunk.first().cloned().unwrap_or_default(),
+                        chunk.get(1).cloned().unwrap_or_default(),
+                    )
+                    .expect("valid registration")
                 })
                 .collect();
             let name = match NonEmptyText::new(&name) {
@@ -719,9 +722,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }) => {
             let registrations: Vec<AuthorRegistration> = registration
                 .chunks(2)
-                .map(|chunk| AuthorRegistration {
-                    authority: chunk.first().cloned().unwrap_or_default(),
-                    number: chunk.get(1).cloned().unwrap_or_default(),
+                .map(|chunk| {
+                    AuthorRegistration::new(
+                        chunk.first().cloned().unwrap_or_default(),
+                        chunk.get(1).cloned().unwrap_or_default(),
+                    )
+                    .expect("valid registration")
                 })
                 .collect();
             let name = match NonEmptyText::new(&name) {
@@ -782,9 +788,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }) => {
             let registrations: Vec<AuthorRegistration> = registration
                 .chunks(2)
-                .map(|chunk| AuthorRegistration {
-                    authority: chunk.first().cloned().unwrap_or_default(),
-                    number: chunk.get(1).cloned().unwrap_or_default(),
+                .map(|chunk| {
+                    AuthorRegistration::new(
+                        chunk.first().cloned().unwrap_or_default(),
+                        chunk.get(1).cloned().unwrap_or_default(),
+                    )
+                    .expect("valid registration")
                 })
                 .collect();
             let name = match NonEmptyText::new(&name) {
@@ -830,6 +839,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     return Ok(());
                 }
             };
+            let namespace = namespace.map(|ns| NonEmptyText::new(ns).expect("valid namespace"));
             let clinical_service = ClinicalService::with_id(cfg.clone(), clinical_uuid_parsed);
             match clinical_service.link_to_demographics(
                 &author,
@@ -850,6 +860,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let given_names_vec: Vec<String> = given_names
                 .split(',')
                 .map(|s| s.trim().to_string())
+                .collect();
+            let given_names_vec: Vec<NonEmptyText> = given_names_vec
+                .into_iter()
+                .map(|name| NonEmptyText::new(name).expect("valid given name"))
                 .collect();
 
             match DemographicsService::with_id(cfg.clone(), &demographics_uuid) {
@@ -888,10 +902,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .into());
                 }
 
-                registrations.push(AuthorRegistration {
-                    authority: authority.to_string(),
-                    number: number.to_string(),
-                });
+                registrations.push(
+                    AuthorRegistration::new(authority.to_string(), number.to_string())
+                        .expect("valid registration"),
+                );
             }
 
             let name = match NonEmptyText::new(&author_name) {
@@ -927,6 +941,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .split(',')
                 .map(|s| s.trim().to_string())
                 .collect();
+            let given_names_vec: Vec<NonEmptyText> = given_names_vec
+                .into_iter()
+                .map(|name| NonEmptyText::new(name).expect("valid given name"))
+                .collect();
+            let last_name = NonEmptyText::new(last_name).expect("valid last name");
+            let birth_date = NaiveDate::parse_from_str(&birth_date, "%Y-%m-%d")
+                .expect("valid birth date in YYYY-MM-DD format");
+            let namespace = namespace.map(|ns| NonEmptyText::new(ns).expect("valid namespace"));
             let care_location = match NonEmptyText::new(&care_location) {
                 Ok(cl) => cl,
                 Err(e) => {
@@ -1038,9 +1060,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }) => {
             let registrations: Vec<AuthorRegistration> = registration
                 .chunks(2)
-                .map(|chunk| AuthorRegistration {
-                    authority: chunk.first().cloned().unwrap_or_default(),
-                    number: chunk.get(1).cloned().unwrap_or_default(),
+                .map(|chunk| {
+                    AuthorRegistration::new(
+                        chunk.first().cloned().unwrap_or_default(),
+                        chunk.get(1).cloned().unwrap_or_default(),
+                    )
+                    .expect("valid registration")
                 })
                 .collect();
             let name = match NonEmptyText::new(&author_name) {
@@ -1088,6 +1113,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
+            let content = NonEmptyText::new(content).expect("valid letter content");
+
             let clinical_service = ClinicalService::with_id(cfg.clone(), clinical_uuid_parsed);
             match clinical_service.new_letter(&author, care_location, content, None) {
                 Ok(timestamp_id) => {
@@ -1129,9 +1156,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }) => {
             let registrations: Vec<AuthorRegistration> = registration
                 .chunks(2)
-                .map(|chunk| AuthorRegistration {
-                    authority: chunk.first().cloned().unwrap_or_default(),
-                    number: chunk.get(1).cloned().unwrap_or_default(),
+                .map(|chunk| {
+                    AuthorRegistration::new(
+                        chunk.first().cloned().unwrap_or_default(),
+                        chunk.get(1).cloned().unwrap_or_default(),
+                    )
+                    .expect("valid registration")
                 })
                 .collect();
             let name = match NonEmptyText::new(&author_name) {
@@ -1170,6 +1200,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     return Ok(());
                 }
             };
+            let care_location = NonEmptyText::new(care_location).expect("valid care location");
             let coordination_service = CoordinationService::new(cfg.clone());
             match coordination_service.initialise(author, care_location, clinical_id) {
                 Ok(service) => println!(
@@ -1192,9 +1223,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }) => {
             let registrations: Vec<AuthorRegistration> = registration
                 .chunks(2)
-                .map(|chunk| AuthorRegistration {
-                    authority: chunk.first().cloned().unwrap_or_default(),
-                    number: chunk.get(1).cloned().unwrap_or_default(),
+                .map(|chunk| {
+                    AuthorRegistration::new(
+                        chunk.first().cloned().unwrap_or_default(),
+                        chunk.get(1).cloned().unwrap_or_default(),
+                    )
+                    .expect("valid registration")
                 })
                 .collect();
             let name = match NonEmptyText::new(&author_name) {
@@ -1268,7 +1302,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 };
 
-                let display_name = participant[i + 2].clone();
+                let display_name =
+                    NonEmptyText::new(participant[i + 2].clone()).expect("valid display name");
 
                 participants.push(MessageAuthor {
                     id: participant_id,
@@ -1283,18 +1318,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Find thread author in participants to get their info
                 let message_author = participants
                     .iter()
-                    .find(|p| p.name == author.name.as_str())
+                    .find(|p| p.name.as_str() == author.name.as_str())
                     .cloned()
                     .unwrap_or_else(|| MessageAuthor {
                         id: uuid::Uuid::new_v4(),
-                        name: author.name.to_string(),
+                        name: author.name.clone(),
                         role: AuthorRole::System,
                     });
 
+                let body = NonEmptyText::new(body).expect("valid message body");
                 MessageContent::new(message_author, body, None)
                     .expect("Message body should not be empty")
             });
 
+            let care_location = NonEmptyText::new(care_location).expect("valid care location");
             let coordination_service =
                 CoordinationService::with_id(cfg.clone(), coordination_uuid_parsed);
             match coordination_service.communication_create(
@@ -1324,9 +1361,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }) => {
             let registrations: Vec<AuthorRegistration> = registration
                 .chunks(2)
-                .map(|chunk| AuthorRegistration {
-                    authority: chunk.first().cloned().unwrap_or_default(),
-                    number: chunk.get(1).cloned().unwrap_or_default(),
+                .map(|chunk| {
+                    AuthorRegistration::new(
+                        chunk.first().cloned().unwrap_or_default(),
+                        chunk.get(1).cloned().unwrap_or_default(),
+                    )
+                    .expect("valid registration")
                 })
                 .collect();
             let name = match NonEmptyText::new(&author_name) {
@@ -1405,6 +1445,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 None
             };
 
+            let message_author_name =
+                NonEmptyText::new(message_author_name).expect("valid message author name");
+            let message_body = NonEmptyText::new(message_body).expect("valid message body");
             let message = MessageContent::new(
                 MessageAuthor {
                     id: author_id,
@@ -1424,6 +1467,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
+            let care_location = NonEmptyText::new(care_location).expect("valid care location");
             let coordination_service =
                 CoordinationService::with_id(cfg.clone(), coordination_uuid_parsed);
             match coordination_service.message_add(
@@ -1532,9 +1576,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }) => {
             let registrations: Vec<AuthorRegistration> = registration
                 .chunks(2)
-                .map(|chunk| AuthorRegistration {
-                    authority: chunk.first().cloned().unwrap_or_default(),
-                    number: chunk.get(1).cloned().unwrap_or_default(),
+                .map(|chunk| {
+                    AuthorRegistration::new(
+                        chunk.first().cloned().unwrap_or_default(),
+                        chunk.get(1).cloned().unwrap_or_default(),
+                    )
+                    .expect("valid registration")
                 })
                 .collect();
             let name = match NonEmptyText::new(&author_name) {
@@ -1617,9 +1664,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }) => {
             let registrations: Vec<AuthorRegistration> = registration
                 .chunks(2)
-                .map(|chunk| AuthorRegistration {
-                    authority: chunk.first().cloned().unwrap_or_default(),
-                    number: chunk.get(1).cloned().unwrap_or_default(),
+                .map(|chunk| {
+                    AuthorRegistration::new(
+                        chunk.first().cloned().unwrap_or_default(),
+                        chunk.get(1).cloned().unwrap_or_default(),
+                    )
+                    .expect("valid registration")
                 })
                 .collect();
             let name = match NonEmptyText::new(&author_name) {
@@ -1673,6 +1723,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     return Ok(());
                 }
             };
+
+            let content = NonEmptyText::new(content).expect("valid letter content");
 
             let clinical_service = ClinicalService::with_id(cfg.clone(), clinical_uuid_parsed);
             match clinical_service.create_letter(
@@ -1757,9 +1809,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }) => {
             let registrations: Vec<AuthorRegistration> = registration
                 .chunks(2)
-                .map(|chunk| AuthorRegistration {
-                    authority: chunk.first().cloned().unwrap_or_default(),
-                    number: chunk.get(1).cloned().unwrap_or_default(),
+                .map(|chunk| {
+                    AuthorRegistration::new(
+                        chunk.first().cloned().unwrap_or_default(),
+                        chunk.get(1).cloned().unwrap_or_default(),
+                    )
+                    .expect("valid registration")
                 })
                 .collect();
             let name = match NonEmptyText::new(&author_name) {
@@ -1841,7 +1896,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 };
 
-                let display_name = add_participant[i + 2].clone();
+                let display_name =
+                    NonEmptyText::new(add_participant[i + 2].clone()).expect("valid display name");
 
                 add_participants.push(MessageAuthor {
                     id: participant_id,
@@ -1933,6 +1989,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 set_policies,
             };
 
+            let care_location = NonEmptyText::new(care_location).expect("valid care location");
             let coordination_service =
                 CoordinationService::with_id(cfg.clone(), coordination_uuid_parsed);
             match coordination_service.update_communication_ledger(
@@ -1960,9 +2017,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }) => {
             let registrations: Vec<AuthorRegistration> = registration
                 .chunks(2)
-                .map(|chunk| AuthorRegistration {
-                    authority: chunk.first().cloned().unwrap_or_default(),
-                    number: chunk.get(1).cloned().unwrap_or_default(),
+                .map(|chunk| {
+                    AuthorRegistration::new(
+                        chunk.first().cloned().unwrap_or_default(),
+                        chunk.get(1).cloned().unwrap_or_default(),
+                    )
+                    .expect("valid registration")
                 })
                 .collect();
             let name = match NonEmptyText::new(&author_name) {
@@ -2026,6 +2086,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 set_record_modifiable: record_modifiable,
             };
 
+            let care_location = NonEmptyText::new(care_location).expect("valid care location");
             let coordination_service =
                 CoordinationService::with_id(cfg.clone(), coordination_uuid_parsed);
             match coordination_service.update_coordination_status(
