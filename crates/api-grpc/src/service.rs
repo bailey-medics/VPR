@@ -26,8 +26,8 @@ use vpr_core::{
         CoordinationService, CoordinationStatusUpdate, LedgerUpdate, MessageContent,
     },
     repositories::demographics::{DemographicsService, Uninitialised as DemographicsUninitialised},
-    Author, AuthorRegistration, CoreConfig, NonEmptyText, PatientService, ShardableUuid,
-    TimestampId,
+    Author, AuthorRegistration, CoreConfig, EmailAddress, NonEmptyText, PatientService,
+    ShardableUuid, TimestampId,
 };
 
 /// Authentication interceptor for gRPC requests.
@@ -141,14 +141,17 @@ impl Vpr for VprService {
             .collect();
 
         let author = Author {
-            name: req.author_name,
-            role: req.author_role,
-            email: req.author_email,
+            name: NonEmptyText::new(&req.author_name)
+                .map_err(|_| Status::invalid_argument("Invalid author name"))?,
+            role: NonEmptyText::new(&req.author_role)
+                .map_err(|_| Status::invalid_argument("Invalid author role"))?,
+            email: EmailAddress::parse(&req.author_email)
+                .map_err(|_| Status::invalid_argument("Invalid author email"))?,
             registrations,
             signature: if req.author_signature.is_empty() {
                 None
             } else {
-                Some(req.author_signature)
+                Some(req.author_signature.into_bytes())
             },
             certificate: None,
         };
@@ -221,7 +224,7 @@ impl Vpr for VprService {
             req.author_role,
             req.author_registrations,
             req.author_signature,
-        );
+        )?;
 
         let care_location = NonEmptyText::new(&req.care_location)
             .map_err(|e| Status::invalid_argument(format!("Invalid care_location: {}", e)))?;
@@ -269,7 +272,7 @@ impl Vpr for VprService {
             req.author_role,
             req.author_registrations,
             req.author_signature,
-        );
+        )?;
 
         let care_location = NonEmptyText::new(&req.care_location)
             .map_err(|e| Status::invalid_argument(format!("Invalid care_location: {}", e)))?;
@@ -330,7 +333,7 @@ impl Vpr for VprService {
             req.author_role,
             req.author_registrations,
             req.author_signature,
-        );
+        )?;
 
         let care_location = NonEmptyText::new(&req.care_location)
             .map_err(|e| Status::invalid_argument(format!("Invalid care_location: {}", e)))?;
@@ -365,7 +368,7 @@ impl Vpr for VprService {
             req.author_role,
             req.author_registrations,
             req.author_signature,
-        );
+        )?;
 
         let clinical_uuid = ShardableUuid::parse(&req.clinical_uuid)
             .map_err(|e| Status::invalid_argument(format!("Invalid clinical UUID: {}", e)))?
@@ -411,7 +414,7 @@ impl Vpr for VprService {
             req.author_role,
             req.author_registrations,
             req.author_signature,
-        );
+        )?;
 
         let clinical_uuid = ShardableUuid::parse(&req.clinical_uuid)
             .map_err(|e| Status::invalid_argument(format!("Invalid clinical UUID: {}", e)))?
@@ -483,7 +486,7 @@ impl Vpr for VprService {
             req.author_role,
             req.author_registrations,
             req.author_signature,
-        );
+        )?;
 
         let clinical_uuid = ShardableUuid::parse(&req.clinical_uuid)
             .map_err(|e| Status::invalid_argument(format!("Invalid clinical UUID: {}", e)))?
@@ -551,7 +554,7 @@ impl Vpr for VprService {
             req.author_role,
             req.author_registrations,
             req.author_signature,
-        );
+        )?;
 
         let clinical_uuid = ShardableUuid::parse(&req.clinical_uuid)
             .map_err(|e| Status::invalid_argument(format!("Invalid clinical UUID: {}", e)))?
@@ -663,7 +666,7 @@ impl Vpr for VprService {
             req.author_role,
             req.author_registrations,
             req.author_signature,
-        );
+        )?;
 
         let clinical_uuid = uuid::Uuid::parse_str(&req.clinical_uuid)
             .map_err(|e| Status::invalid_argument(format!("Invalid clinical UUID: {}", e)))?;
@@ -698,7 +701,7 @@ impl Vpr for VprService {
             req.author_role,
             req.author_registrations,
             req.author_signature,
-        );
+        )?;
 
         let coordination_uuid = ShardableUuid::parse(&req.coordination_uuid)
             .map_err(|e| Status::invalid_argument(format!("Invalid coordination UUID: {}", e)))?
@@ -767,7 +770,7 @@ impl Vpr for VprService {
             req.author_role,
             req.author_registrations,
             req.author_signature,
-        );
+        )?;
 
         let coordination_uuid = ShardableUuid::parse(&req.coordination_uuid)
             .map_err(|e| Status::invalid_argument(format!("Invalid coordination UUID: {}", e)))?
@@ -902,7 +905,7 @@ impl Vpr for VprService {
             req.author_role,
             req.author_registrations,
             req.author_signature,
-        );
+        )?;
 
         let coordination_uuid = ShardableUuid::parse(&req.coordination_uuid)
             .map_err(|e| Status::invalid_argument(format!("Invalid coordination UUID: {}", e)))?
@@ -1012,7 +1015,7 @@ impl Vpr for VprService {
             req.author_role,
             req.author_registrations,
             req.author_signature,
-        );
+        )?;
 
         let coordination_uuid = ShardableUuid::parse(&req.coordination_uuid)
             .map_err(|e| Status::invalid_argument(format!("Invalid coordination UUID: {}", e)))?
@@ -1050,14 +1053,22 @@ impl Vpr for VprService {
 }
 
 // Helper functions
+#[allow(clippy::result_large_err)]
 fn build_author(
     name: String,
     email: String,
     role: String,
     registrations: Vec<pb::AuthorRegistration>,
     signature: String,
-) -> Author {
-    Author {
+) -> Result<Author, Status> {
+    let name =
+        NonEmptyText::new(&name).map_err(|_| Status::invalid_argument("Invalid author name"))?;
+    let role =
+        NonEmptyText::new(&role).map_err(|_| Status::invalid_argument("Invalid author role"))?;
+    let email = EmailAddress::parse(&email)
+        .map_err(|_| Status::invalid_argument("Invalid author email"))?;
+
+    Ok(Author {
         name,
         email,
         role,
@@ -1071,10 +1082,10 @@ fn build_author(
         signature: if signature.is_empty() {
             None
         } else {
-            Some(signature)
+            Some(signature.into_bytes())
         },
         certificate: None,
-    }
+    })
 }
 
 #[allow(clippy::result_large_err)]

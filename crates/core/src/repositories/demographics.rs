@@ -372,14 +372,15 @@ impl<S> DemographicsService<S> {
 mod tests {
     use super::*;
     use crate::constants::DEMOGRAPHICS_DIR_NAME;
+    use crate::{EmailAddress, NonEmptyText};
     use std::fs;
     use tempfile::TempDir;
 
     fn test_author() -> Author {
         Author {
-            name: "Test Author".to_string(),
-            role: "Clinician".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Test Author").unwrap(),
+            role: NonEmptyText::new("Clinician").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -466,24 +467,15 @@ mod tests {
     fn test_initialise_fails_fast_on_invalid_author_and_creates_no_files() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let cfg = test_cfg(temp_dir.path());
-        let service = DemographicsService::new(cfg);
+        let _service = DemographicsService::new(cfg);
 
-        let invalid_author = Author {
-            name: "".to_string(), // Empty name should fail validation
-            role: "Clinician".to_string(),
-            email: "test@example.com".to_string(),
-            registrations: vec![],
-            signature: None,
-            certificate: None,
-        };
-
-        let err = service
-            .initialise(invalid_author, NonEmptyText::new("Test Hospital").unwrap())
-            .expect_err("initialise should fail with invalid author");
+        // NonEmptyText validation prevents empty strings at the type level
+        let err =
+            NonEmptyText::new("").expect_err("creating NonEmptyText from empty string should fail");
 
         assert!(
-            matches!(err, PatientError::MissingAuthorName),
-            "should return MissingAuthorName error"
+            matches!(err, crate::TextError::Empty),
+            "should return TextError::Empty"
         );
 
         let demographics_dir = temp_dir.path().join(DEMOGRAPHICS_DIR_NAME);

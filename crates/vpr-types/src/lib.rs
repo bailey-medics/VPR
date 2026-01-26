@@ -71,3 +71,96 @@ impl<'de> serde::Deserialize<'de> for NonEmptyText {
         NonEmptyText::new(&s).map_err(serde::de::Error::custom)
     }
 }
+
+use std::fmt;
+use std::str::FromStr;
+
+/// A syntactically plausible email address.
+///
+/// Guarantees:
+/// - non-empty
+/// - exactly one '@'
+/// - non-empty local and domain parts
+/// - no surrounding whitespace
+/// - length is within reasonable bounds
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct EmailAddress(String);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EmailAddressError {
+    Empty,
+    ContainsWhitespace,
+    MissingAtSymbol,
+    MultipleAtSymbols,
+    EmptyLocalPart,
+    EmptyDomainPart,
+    TooLong,
+}
+
+impl EmailAddress {
+    /// Maximum length chosen to be conservative and practical.
+    const MAX_LENGTH: usize = 254;
+
+    pub fn parse(input: &str) -> Result<Self, EmailAddressError> {
+        let value = input.trim();
+
+        if value.is_empty() {
+            return Err(EmailAddressError::Empty);
+        }
+
+        if value.len() > Self::MAX_LENGTH {
+            return Err(EmailAddressError::TooLong);
+        }
+
+        if value.chars().any(char::is_whitespace) {
+            return Err(EmailAddressError::ContainsWhitespace);
+        }
+
+        let at_count = value.matches('@').count();
+
+        match at_count {
+            0 => return Err(EmailAddressError::MissingAtSymbol),
+            1 => {}
+            _ => return Err(EmailAddressError::MultipleAtSymbols),
+        }
+
+        let (local, domain) = value
+            .split_once('@')
+            .expect("exactly one '@' already verified");
+
+        if local.is_empty() {
+            return Err(EmailAddressError::EmptyLocalPart);
+        }
+
+        if domain.is_empty() {
+            return Err(EmailAddressError::EmptyDomainPart);
+        }
+
+        Ok(Self(value.to_owned()))
+    }
+
+    /// Borrow the email address as a string slice.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl FromStr for EmailAddress {
+    type Err = EmailAddressError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        EmailAddress::parse(s)
+    }
+}
+
+impl fmt::Display for EmailAddress {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl AsRef<str> for EmailAddress {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}

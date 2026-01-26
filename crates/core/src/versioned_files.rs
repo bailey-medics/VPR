@@ -655,10 +655,10 @@ impl VprCommitMessage {
 
         rendered.push_str("\n\n");
         rendered.push_str("Author-Name: ");
-        rendered.push_str(author.name.trim());
+        rendered.push_str(author.name.as_str());
         rendered.push('\n');
         rendered.push_str("Author-Role: ");
-        rendered.push_str(author.role.trim());
+        rendered.push_str(author.role.as_str());
 
         for reg in regs {
             rendered.push('\n');
@@ -1151,7 +1151,7 @@ impl VersionedFileService {
             .find_tree(tree_id)
             .map_err(PatientError::GitFindTree)?;
 
-        let sig = git2::Signature::now(&author.name, &author.email)
+        let sig = git2::Signature::now(author.name.as_str(), author.email.as_str())
             .map_err(PatientError::GitSignature)?;
 
         if let Some(private_key_pem) = &author.signature {
@@ -1166,7 +1166,9 @@ impl VersionedFileService {
             let buf_str = String::from_utf8(buf.as_ref().to_vec())
                 .map_err(PatientError::CommitBufferToString)?;
 
-            let key_pem = Self::load_private_key_pem(private_key_pem)?;
+            let private_key_str = std::str::from_utf8(private_key_pem)
+                .map_err(|e| PatientError::EcdsaPrivateKeyParse(Box::new(e)))?;
+            let key_pem = Self::load_private_key_pem(private_key_str)?;
             let signing_key = SigningKey::from_pkcs8_pem(&key_pem)
                 .map_err(|e| PatientError::EcdsaPrivateKeyParse(Box::new(e)))?;
 
@@ -1425,6 +1427,7 @@ fn cleanup_patient_dir(patient_dir: &Path) -> std::io::Result<()> {
 mod tests {
     use super::ClinicalDomain::*;
     use super::*;
+    use crate::{EmailAddress, NonEmptyText};
     use tempfile::TempDir;
 
     #[test]
@@ -1572,9 +1575,9 @@ mod tests {
     #[test]
     fn render_with_author_includes_care_location_after_author_trailers() {
         let author = Author {
-            name: "Test Author".to_string(),
-            role: "Clinician".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Test Author").unwrap(),
+            role: NonEmptyText::new("Clinician").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,

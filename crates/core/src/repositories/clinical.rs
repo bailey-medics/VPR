@@ -515,7 +515,7 @@ impl ClinicalService<Initialised> {
         let letter_data = openehr::LetterData {
             rm_version,
             uid: timestamp_id.clone(),
-            composer_name: author.name.clone(),
+            composer_name: author.name.to_string(),
             composer_role: "Clinical Practitioner".to_string(),
             start_time,
             clinical_lists: clinical_lists
@@ -649,7 +649,7 @@ impl ClinicalService<Initialised> {
         let letter_data = openehr::LetterData {
             rm_version,
             uid: timestamp_id.clone(),
-            composer_name: author.name.clone(),
+            composer_name: author.name.to_string(),
             composer_role: "Clinical Practitioner".to_string(),
             start_time,
             clinical_lists: clinical_lists
@@ -912,6 +912,7 @@ impl<S> ClinicalService<S> {
 mod tests {
     use super::*;
     use crate::config::rm_system_version_from_env_value;
+    use crate::{EmailAddress, NonEmptyText};
 
     use crate::CoreConfig;
     use p256::ecdsa::SigningKey;
@@ -1065,21 +1066,12 @@ mod tests {
             .expect("CoreConfig::new should succeed"),
         );
 
-        let service = ClinicalService::new(cfg);
+        let _service = ClinicalService::new(cfg);
 
-        let author = Author {
-            name: " ".to_string(),
-            role: "Clinician".to_string(),
-            email: "test@example.com".to_string(),
-            registrations: vec![],
-            signature: None,
-            certificate: None,
-        };
-
-        let err = service
-            .initialise(author, NonEmptyText::new("Test Hospital").unwrap())
-            .expect_err("initialise should fail for invalid author");
-        assert!(matches!(err, PatientError::MissingAuthorName));
+        // NonEmptyText validation prevents whitespace-only strings at the type level
+        let err =
+            NonEmptyText::new(" ").expect_err("creating NonEmptyText from whitespace should fail");
+        assert!(matches!(err, crate::TextError::Empty));
 
         assert!(
             !patient_data_dir.path().join(CLINICAL_DIR_NAME).exists(),
@@ -1106,9 +1098,9 @@ mod tests {
         let _service = ClinicalService::new(cfg);
 
         let _author = Author {
-            name: "Test Author".to_string(),
-            role: "Clinician".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Test Author").unwrap(),
+            role: NonEmptyText::new("Clinician").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -1132,9 +1124,9 @@ mod tests {
 
         // Create a test author
         let author = Author {
-            name: "Test Author".to_string(),
-            role: "Clinician".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Test Author").unwrap(),
+            role: NonEmptyText::new("Clinician").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -1185,9 +1177,9 @@ mod tests {
 
         // Create a test author
         let author = Author {
-            name: "Test Author".to_string(),
-            role: "Clinician".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Test Author").unwrap(),
+            role: NonEmptyText::new("Clinician").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -1242,9 +1234,9 @@ mod tests {
 
         // Create a valid clinical record first
         let author = Author {
-            name: "Test Author".to_string(),
-            role: "Clinician".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Test Author").unwrap(),
+            role: NonEmptyText::new("Clinician").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -1274,9 +1266,9 @@ mod tests {
 
         // Create a valid clinical record
         let author = Author {
-            name: "Test Author".to_string(),
-            role: "Clinician".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Test Author").unwrap(),
+            role: NonEmptyText::new("Clinician").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -1316,9 +1308,9 @@ mod tests {
         VersionedFileService::init(&patient_dir).expect("Failed to init git");
 
         let author = Author {
-            name: "Test Author".to_string(),
-            role: "Clinician".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Test Author").unwrap(),
+            role: NonEmptyText::new("Clinician").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -1364,9 +1356,9 @@ mod tests {
             .expect("Failed to write corrupted file");
 
         let author = Author {
-            name: "Test Author".to_string(),
-            role: "Clinician".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Test Author").unwrap(),
+            role: NonEmptyText::new("Clinician").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -1419,11 +1411,11 @@ mod tests {
             .patient_data_dir()
             .join(crate::constants::CLINICAL_DIR_NAME);
         let author = Author {
-            name: "Test Author".to_string(),
-            role: "Clinician".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Test Author").unwrap(),
+            role: NonEmptyText::new("Clinician").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
-            signature: Some(private_key_pem.to_string()),
+            signature: Some(private_key_pem.to_string().into_bytes()),
             certificate: None,
         };
 
@@ -1483,11 +1475,11 @@ mod tests {
             .patient_data_dir()
             .join(crate::constants::CLINICAL_DIR_NAME);
         let author = Author {
-            name: "Test Author".to_string(),
-            role: "Clinician".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Test Author").unwrap(),
+            role: NonEmptyText::new("Clinician").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
-            signature: Some(private_key_pem.to_string()),
+            signature: Some(private_key_pem.to_string().into_bytes()),
             certificate: None,
         };
 
@@ -1540,11 +1532,11 @@ mod tests {
         let cfg = test_cfg(temp_dir.path());
         let service = ClinicalService::new(cfg);
         let author = Author {
-            name: "Test Author".to_string(),
-            role: "Clinician".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Test Author").unwrap(),
+            role: NonEmptyText::new("Clinician").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
-            signature: Some(private_key_pem.to_string()),
+            signature: Some(private_key_pem.to_string().into_bytes()),
             certificate: Some(cert_pem.into_bytes()),
         };
 
@@ -1569,11 +1561,11 @@ mod tests {
         let cfg = test_cfg(temp_dir.path());
         let service = ClinicalService::new(cfg);
         let author = Author {
-            name: "Test Author".to_string(),
-            role: "Clinician".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Test Author").unwrap(),
+            role: NonEmptyText::new("Clinician").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
-            signature: Some(private_key_pem.to_string()),
+            signature: Some(private_key_pem.to_string().into_bytes()),
             certificate: None,
         };
 
@@ -1609,9 +1601,9 @@ mod tests {
             .join(crate::constants::CLINICAL_DIR_NAME);
 
         let author = Author {
-            name: "Test Author".to_string(),
-            role: "Clinician".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Test Author").unwrap(),
+            role: NonEmptyText::new("Clinician").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -1650,9 +1642,9 @@ mod tests {
         let cfg = test_cfg(patient_data_dir.path());
 
         let author = Author {
-            name: "Test Author".to_string(),
-            role: "Clinician".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Test Author").unwrap(),
+            role: NonEmptyText::new("Clinician").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -1688,9 +1680,9 @@ mod tests {
 
         let service = ClinicalService::new(cfg.clone());
         let author = Author {
-            name: "Dr. Test".to_string(),
-            role: "Consultant".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Dr. Test").unwrap(),
+            role: NonEmptyText::new("Consultant").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -1761,9 +1753,9 @@ mod tests {
 
         let service = ClinicalService::new(cfg.clone());
         let author = Author {
-            name: "Dr. Test".to_string(),
-            role: "Consultant".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Dr. Test").unwrap(),
+            role: NonEmptyText::new("Consultant").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -1826,9 +1818,9 @@ mod tests {
 
         let service = ClinicalService::new(cfg.clone());
         let author = Author {
-            name: "Dr. Test".to_string(),
-            role: "Consultant".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Dr. Test").unwrap(),
+            role: NonEmptyText::new("Consultant").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -1865,9 +1857,9 @@ mod tests {
 
         let service = ClinicalService::new(cfg.clone());
         let author = Author {
-            name: "Dr. Test".to_string(),
-            role: "Consultant".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Dr. Test").unwrap(),
+            role: NonEmptyText::new("Consultant").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -1908,9 +1900,9 @@ mod tests {
 
         let service = ClinicalService::new(cfg.clone());
         let author = Author {
-            name: "Dr. Test".to_string(),
-            role: "Consultant".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Dr. Test").unwrap(),
+            role: NonEmptyText::new("Consultant").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -1934,9 +1926,9 @@ mod tests {
 
         let service = ClinicalService::new(cfg.clone());
         let author = Author {
-            name: "Dr. Test".to_string(),
-            role: "Consultant".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Dr. Test").unwrap(),
+            role: NonEmptyText::new("Consultant").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -1961,9 +1953,9 @@ mod tests {
 
         let service = ClinicalService::new(cfg.clone());
         let author = Author {
-            name: "Dr. Test".to_string(),
-            role: "Consultant".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Dr. Test").unwrap(),
+            role: NonEmptyText::new("Consultant").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -1995,9 +1987,9 @@ mod tests {
 
         let service = ClinicalService::new(cfg.clone());
         let author = Author {
-            name: "Dr. Test".to_string(),
-            role: "Consultant".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Dr. Test").unwrap(),
+            role: NonEmptyText::new("Consultant").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -2058,9 +2050,9 @@ mod tests {
 
         let service = ClinicalService::new(cfg.clone());
         let author = Author {
-            name: "Dr. Test".to_string(),
-            role: "Consultant".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Dr. Test").unwrap(),
+            role: NonEmptyText::new("Consultant").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -2083,9 +2075,9 @@ mod tests {
 
         let service = ClinicalService::new(cfg.clone());
         let author = Author {
-            name: "Dr. Test".to_string(),
-            role: "Consultant".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Dr. Test").unwrap(),
+            role: NonEmptyText::new("Consultant").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,

@@ -960,6 +960,7 @@ fn validate_communication_authors(authors: &[MessageAuthor]) -> PatientResult<()
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{EmailAddress, NonEmptyText};
     use std::fs;
     use tempfile::TempDir;
 
@@ -976,9 +977,9 @@ mod tests {
         );
 
         let author = Author {
-            name: "Dr. Test".to_string(),
-            role: "Clinician".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Dr. Test").unwrap(),
+            role: NonEmptyText::new("Clinician").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -1022,25 +1023,13 @@ mod tests {
 
     #[test]
     fn test_initialise_validates_author() {
-        let (_temp, cfg, _author) = setup_test_env();
-        let clinical_id = Uuid::new_v4();
+        let (_temp, _cfg, _author) = setup_test_env();
+        let _clinical_id = Uuid::new_v4();
 
-        let invalid_author = Author {
-            name: "".to_string(),
-            role: "Clinician".to_string(),
-            email: "test@example.com".to_string(),
-            registrations: vec![],
-            signature: None,
-            certificate: None,
-        };
-
-        let result = CoordinationService::new(cfg.clone()).initialise(
-            invalid_author,
-            "Test Location".to_string(),
-            clinical_id,
-        );
-
-        assert!(result.is_err());
+        // NonEmptyText validation prevents empty strings at the type level
+        let err =
+            NonEmptyText::new("").expect_err("creating NonEmptyText from empty string should fail");
+        assert!(matches!(err, crate::TextError::Empty));
     }
 
     #[test]

@@ -27,7 +27,8 @@ use vpr_core::{
     repositories::clinical::ClinicalService,
     repositories::coordination::CoordinationService,
     repositories::demographics::{DemographicsService, Uninitialised as DemographicsUninitialised},
-    Author, AuthorRegistration, CoreConfig, NonEmptyText, PatientService, ShardableUuid,
+    Author, AuthorRegistration, CoreConfig, EmailAddress, NonEmptyText, PatientService,
+    ShardableUuid,
 };
 
 /// Application state for the REST API server
@@ -254,15 +255,22 @@ async fn create_patient(
         })
         .collect();
 
+    let name = NonEmptyText::new(&req.author_name)
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid author name"))?;
+    let role = NonEmptyText::new(&req.author_role)
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid author role"))?;
+    let email = EmailAddress::parse(&req.author_email)
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid author email"))?;
+
     let author = Author {
-        name: req.author_name,
-        role: req.author_role,
-        email: req.author_email,
+        name,
+        role,
+        email,
         registrations,
         signature: if req.author_signature.is_empty() {
             None
         } else {
-            Some(req.author_signature)
+            Some(req.author_signature.into_bytes())
         },
         certificate: None,
     };
@@ -310,7 +318,7 @@ async fn initialise_full_record(
         req.author_role,
         req.author_registrations,
         req.author_signature,
-    );
+    )?;
     let care_location = NonEmptyText::new(&req.care_location)
         .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid care_location"))?;
 
@@ -359,7 +367,7 @@ async fn initialise_demographics(
         req.author_role,
         req.author_registrations,
         req.author_signature,
-    );
+    )?;
     let care_location = NonEmptyText::new(&req.care_location)
         .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid care_location"))?;
 
@@ -431,7 +439,7 @@ async fn initialise_clinical(
         req.author_role,
         req.author_registrations,
         req.author_signature,
-    );
+    )?;
     let care_location = NonEmptyText::new(&req.care_location)
         .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid care_location"))?;
 
@@ -471,7 +479,7 @@ async fn link_to_demographics(
         req.author_role,
         req.author_registrations,
         req.author_signature,
-    );
+    )?;
 
     let clinical_uuid = match ShardableUuid::parse(&req.clinical_uuid) {
         Ok(uuid) => uuid.uuid(),
@@ -526,7 +534,7 @@ async fn new_letter(
         req.author_role,
         req.author_registrations,
         req.author_signature,
-    );
+    )?;
 
     let clinical_uuid = match ShardableUuid::parse(&req.clinical_uuid) {
         Ok(uuid) => uuid.uuid(),
@@ -572,7 +580,7 @@ async fn new_letter_complete(
         req.author_role,
         req.author_registrations,
         req.author_signature,
-    );
+    )?;
 
     let clinical_uuid = match ShardableUuid::parse(&req.clinical_uuid) {
         Ok(uuid) => uuid.uuid(),
@@ -696,7 +704,7 @@ async fn initialise_coordination(
         req.author_role,
         req.author_registrations,
         req.author_signature,
-    );
+    )?;
 
     let clinical_uuid = match uuid::Uuid::parse_str(&req.clinical_uuid) {
         Ok(uuid) => uuid,
@@ -725,8 +733,15 @@ fn build_author(
     role: String,
     registrations: Vec<pb::AuthorRegistration>,
     signature: String,
-) -> Author {
-    Author {
+) -> Result<Author, (StatusCode, &'static str)> {
+    let name =
+        NonEmptyText::new(&name).map_err(|_| (StatusCode::BAD_REQUEST, "Invalid author name"))?;
+    let role =
+        NonEmptyText::new(&role).map_err(|_| (StatusCode::BAD_REQUEST, "Invalid author role"))?;
+    let email = EmailAddress::parse(&email)
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid author email"))?;
+
+    Ok(Author {
         name,
         email,
         role,
@@ -740,8 +755,8 @@ fn build_author(
         signature: if signature.is_empty() {
             None
         } else {
-            Some(signature)
+            Some(signature.into_bytes())
         },
         certificate: None,
-    }
+    })
 }

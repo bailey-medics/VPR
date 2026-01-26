@@ -21,8 +21,8 @@ use vpr_core::{
     },
     repositories::demographics::DemographicsService,
     versioned_files::VersionedFileService,
-    Author, AuthorRegistration, CoreConfig, NonEmptyText, PatientService, ShardableUuid,
-    TimestampId,
+    Author, AuthorRegistration, CoreConfig, EmailAddress, NonEmptyText, PatientService,
+    ShardableUuid, TimestampId,
 };
 
 use base64::{engine::general_purpose, Engine as _};
@@ -663,12 +663,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     number: chunk.get(1).cloned().unwrap_or_default(),
                 })
                 .collect();
+            let name = match NonEmptyText::new(&name) {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("Invalid author name: {}", e);
+                    return Ok(());
+                }
+            };
+            let role = match NonEmptyText::new(&role) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Invalid author role: {}", e);
+                    return Ok(());
+                }
+            };
+            let email = match EmailAddress::parse(&email) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("Invalid author email: {:?}", e);
+                    return Ok(());
+                }
+            };
             let author = Author {
                 name,
                 role,
                 email,
                 registrations,
-                signature,
+                signature: signature.map(|s| s.into_bytes()),
                 certificate: None,
             };
             let care_location = match NonEmptyText::new(&care_location) {
@@ -702,12 +723,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     number: chunk.get(1).cloned().unwrap_or_default(),
                 })
                 .collect();
+            let name = match NonEmptyText::new(&name) {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("Invalid author name: {}", e);
+                    return Ok(());
+                }
+            };
+            let role = match NonEmptyText::new(&role) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Invalid author role: {}", e);
+                    return Ok(());
+                }
+            };
+            let email = match EmailAddress::parse(&email) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("Invalid author email: {:?}", e);
+                    return Ok(());
+                }
+            };
             let author = Author {
                 name,
                 role,
                 email,
                 registrations,
-                signature,
+                signature: signature.map(|s| s.into_bytes()),
                 certificate: None,
             };
             let care_location = match NonEmptyText::new(&care_location) {
@@ -744,12 +786,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     number: chunk.get(1).cloned().unwrap_or_default(),
                 })
                 .collect();
+            let name = match NonEmptyText::new(&name) {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("Invalid author name: {}", e);
+                    return Ok(());
+                }
+            };
+            let role = match NonEmptyText::new(&role) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Invalid author role: {}", e);
+                    return Ok(());
+                }
+            };
+            let email = match EmailAddress::parse(&email) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("Invalid author email: {:?}", e);
+                    return Ok(());
+                }
+            };
             let author = Author {
                 name,
                 role,
                 email,
                 registrations,
-                signature,
+                signature: signature.map(|s| s.into_bytes()),
                 certificate: None,
             };
             let clinical_uuid_parsed = match ShardableUuid::parse(&clinical_uuid) {
@@ -830,12 +893,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 });
             }
 
+            let name = match NonEmptyText::new(&author_name) {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("Invalid author name: {}", e);
+                    return Ok(());
+                }
+            };
+            let author_role = match NonEmptyText::new(&author_role) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Invalid author role: {}", e);
+                    return Ok(());
+                }
+            };
+            let email = match EmailAddress::parse(&author_email) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("Invalid author email: {:?}", e);
+                    return Ok(());
+                }
+            };
             let author = Author {
-                name: author_name,
+                name,
                 role: author_role,
-                email: author_email,
+                email,
                 registrations,
-                signature,
+                signature: signature.map(|s| s.into_bytes()),
                 certificate: None,
             };
             let given_names_vec: Vec<String> = given_names
@@ -958,12 +1042,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     number: chunk.get(1).cloned().unwrap_or_default(),
                 })
                 .collect();
+            let name = match NonEmptyText::new(&author_name) {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("Invalid author name: {}", e);
+                    return Ok(());
+                }
+            };
+            let role = match NonEmptyText::new(&role) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Invalid author role: {}", e);
+                    return Ok(());
+                }
+            };
+            let email = match EmailAddress::parse(&author_email) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("Invalid author email: {:?}", e);
+                    return Ok(());
+                }
+            };
             let author = Author {
-                name: author_name,
+                name,
                 role,
-                email: author_email,
+                email,
                 registrations,
-                signature,
+                signature: signature.map(|s| s.into_bytes()),
                 certificate: None,
             };
 
@@ -1028,12 +1133,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     number: chunk.get(1).cloned().unwrap_or_default(),
                 })
                 .collect();
+            let name = match NonEmptyText::new(&author_name) {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("Invalid author name: {}", e);
+                    return Ok(());
+                }
+            };
+            let role = match NonEmptyText::new(&role) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Invalid author role: {}", e);
+                    return Ok(());
+                }
+            };
+            let email = match EmailAddress::parse(&author_email) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("Invalid author email: {:?}", e);
+                    return Ok(());
+                }
+            };
             let author = Author {
-                name: author_name,
+                name,
                 role,
-                email: author_email,
+                email,
                 registrations,
-                signature,
+                signature: signature.map(|s| s.into_bytes()),
                 certificate: None,
             };
             let clinical_id = match uuid::Uuid::parse_str(&clinical_uuid) {
@@ -1070,12 +1196,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     number: chunk.get(1).cloned().unwrap_or_default(),
                 })
                 .collect();
+            let name = match NonEmptyText::new(&author_name) {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("Invalid author name: {}", e);
+                    return Ok(());
+                }
+            };
+            let role = match NonEmptyText::new(&role) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Invalid author role: {}", e);
+                    return Ok(());
+                }
+            };
+            let email = match EmailAddress::parse(&author_email) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("Invalid author email: {:?}", e);
+                    return Ok(());
+                }
+            };
             let author = Author {
-                name: author_name,
+                name,
                 role,
-                email: author_email,
+                email,
                 registrations,
-                signature,
+                signature: signature.map(|s| s.into_bytes()),
                 certificate: None,
             };
 
@@ -1135,11 +1282,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Find thread author in participants to get their info
                 let message_author = participants
                     .iter()
-                    .find(|p| p.name == author.name)
+                    .find(|p| p.name == author.name.as_str())
                     .cloned()
                     .unwrap_or_else(|| MessageAuthor {
                         id: uuid::Uuid::new_v4(),
-                        name: author.name.clone(),
+                        name: author.name.to_string(),
                         role: AuthorRole::System,
                     });
 
@@ -1181,12 +1328,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     number: chunk.get(1).cloned().unwrap_or_default(),
                 })
                 .collect();
+            let name = match NonEmptyText::new(&author_name) {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("Invalid author name: {}", e);
+                    return Ok(());
+                }
+            };
+            let role = match NonEmptyText::new(&role) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Invalid author role: {}", e);
+                    return Ok(());
+                }
+            };
+            let email = match EmailAddress::parse(&author_email) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("Invalid author email: {:?}", e);
+                    return Ok(());
+                }
+            };
             let author = Author {
-                name: author_name,
+                name,
                 role,
-                email: author_email,
+                email,
                 registrations,
-                signature,
+                signature: signature.map(|s| s.into_bytes()),
                 certificate: None,
             };
 
@@ -1368,12 +1536,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     number: chunk.get(1).cloned().unwrap_or_default(),
                 })
                 .collect();
+            let name = match NonEmptyText::new(&author_name) {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("Invalid author name: {}", e);
+                    return Ok(());
+                }
+            };
+            let role = match NonEmptyText::new(&role) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Invalid author role: {}", e);
+                    return Ok(());
+                }
+            };
+            let email = match EmailAddress::parse(&author_email) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("Invalid author email: {:?}", e);
+                    return Ok(());
+                }
+            };
             let author = Author {
-                name: author_name,
+                name,
                 role,
-                email: author_email,
+                email,
                 registrations,
-                signature,
+                signature: signature.map(|s| s.into_bytes()),
                 certificate: None,
             };
 
@@ -1432,12 +1621,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     number: chunk.get(1).cloned().unwrap_or_default(),
                 })
                 .collect();
+            let name = match NonEmptyText::new(&author_name) {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("Invalid author name: {}", e);
+                    return Ok(());
+                }
+            };
+            let role = match NonEmptyText::new(&role) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Invalid author role: {}", e);
+                    return Ok(());
+                }
+            };
+            let email = match EmailAddress::parse(&author_email) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("Invalid author email: {:?}", e);
+                    return Ok(());
+                }
+            };
             let author = Author {
-                name: author_name,
+                name,
                 role,
-                email: author_email,
+                email,
                 registrations,
-                signature,
+                signature: signature.map(|s| s.into_bytes()),
                 certificate: None,
             };
 
@@ -1551,12 +1761,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     number: chunk.get(1).cloned().unwrap_or_default(),
                 })
                 .collect();
+            let name = match NonEmptyText::new(&author_name) {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("Invalid author name: {}", e);
+                    return Ok(());
+                }
+            };
+            let role = match NonEmptyText::new(&role) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Invalid author role: {}", e);
+                    return Ok(());
+                }
+            };
+            let email = match EmailAddress::parse(&author_email) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("Invalid author email: {:?}", e);
+                    return Ok(());
+                }
+            };
             let author = Author {
-                name: author_name,
+                name,
                 role,
-                email: author_email,
+                email,
                 registrations,
-                signature,
+                signature: signature.map(|s| s.into_bytes()),
                 certificate: None,
             };
 
@@ -1733,12 +1964,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     number: chunk.get(1).cloned().unwrap_or_default(),
                 })
                 .collect();
+            let name = match NonEmptyText::new(&author_name) {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("Invalid author name: {}", e);
+                    return Ok(());
+                }
+            };
+            let role = match NonEmptyText::new(&role) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Invalid author role: {}", e);
+                    return Ok(());
+                }
+            };
+            let email = match EmailAddress::parse(&author_email) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("Invalid author email: {:?}", e);
+                    return Ok(());
+                }
+            };
             let author = Author {
-                name: author_name,
+                name,
                 role,
-                email: author_email,
+                email,
                 registrations,
-                signature,
+                signature: signature.map(|s| s.into_bytes()),
                 certificate: None,
             };
 

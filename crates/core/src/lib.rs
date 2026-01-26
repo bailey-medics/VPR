@@ -36,4 +36,4 @@ pub use patient::PatientService;
 pub use vpr_uuid::{ShardableUuid, TimestampId, TimestampIdGenerator, Uuid};
 
 // Re-export types from vpr-types crate
-pub use vpr_types::{NonEmptyText, TextError};
+pub use vpr_types::{EmailAddress, NonEmptyText, TextError};

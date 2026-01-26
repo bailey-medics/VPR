@@ -28,7 +28,7 @@ use api_shared::pb::vpr_server::VprServer;
 use std::path::Path;
 use std::sync::Arc;
 use vpr_core::{
-    Author, AuthorRegistration, CoreConfig, NonEmptyText,
+    Author, AuthorRegistration, CoreConfig, EmailAddress, NonEmptyText,
     config::rm_system_version_from_env_value,
     repositories::clinical::ClinicalService,
     repositories::demographics::{DemographicsService, Uninitialised as DemographicsUninitialised},
@@ -286,15 +286,22 @@ async fn create_patient(
         })
         .collect();
 
+    let name = NonEmptyText::new(&req.author_name)
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid author name"))?;
+    let role = NonEmptyText::new(&req.author_role)
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid author role"))?;
+    let email = EmailAddress::parse(&req.author_email)
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid author email"))?;
+
     let author = Author {
-        name: req.author_name,
-        role: req.author_role,
-        email: req.author_email,
+        name,
+        role,
+        email,
         registrations,
         signature: if req.author_signature.is_empty() {
             None
         } else {
-            Some(req.author_signature)
+            Some(req.author_signature.into_bytes())
         },
         certificate: None,
     };
