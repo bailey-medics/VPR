@@ -28,11 +28,10 @@ use api_shared::pb::vpr_server::VprServer;
 use std::path::Path;
 use std::sync::Arc;
 use vpr_core::{
-    Author, AuthorRegistration, CoreConfig,
+    Author, AuthorRegistration, CoreConfig, NonEmptyText,
     config::rm_system_version_from_env_value,
     repositories::clinical::ClinicalService,
     repositories::demographics::{DemographicsService, Uninitialised as DemographicsUninitialised},
-    types::NonEmptyText,
 };
 
 type HealthRes = pb::HealthRes;

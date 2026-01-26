@@ -9,6 +9,7 @@ members = [
 	"crates/files",
 	"crates/openehr",
 	"crates/uuid",
+	"crates/vpr-types",
 ]
 resolver = "2"
 

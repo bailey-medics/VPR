@@ -36,11 +36,11 @@ use crate::constants::{DEFAULT_GITIGNORE, DEMOGRAPHICS_DIR_NAME};
 use crate::error::{PatientError, PatientResult};
 use crate::paths::common::GitIgnoreFile;
 use crate::paths::demographics::patient::PatientFile;
-use crate::types::NonEmptyText;
 use crate::versioned_files::{
     DemographicsDomain::Record, FileToWrite, VersionedFileService, VprCommitAction,
     VprCommitDomain, VprCommitMessage,
 };
+use crate::NonEmptyText;
 use crate::ShardableUuid;
 use api_shared::pb;
 use chrono::Utc;
@@ -506,7 +506,7 @@ mod tests {
             NonEmptyText::new("").expect_err("creating NonEmptyText from empty string should fail");
 
         assert!(
-            matches!(err, crate::types::TextError::Empty),
+            matches!(err, crate::TextError::Empty),
             "should return TextError::Empty"
         );
 

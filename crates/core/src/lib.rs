@@ -15,7 +15,6 @@ pub mod constants;
 pub mod markdown;
 pub mod paths;
 pub mod repositories;
-pub mod types;
 pub mod versioned_files;
 
 pub mod error;
@@ -35,3 +34,6 @@ pub use patient::PatientService;
 
 // Re-export UUID types from vpr-uuid crate
 pub use vpr_uuid::{ShardableUuid, TimestampId, TimestampIdGenerator, Uuid};
+
+// Re-export types from vpr-types crate
+pub use vpr_types::{NonEmptyText, TextError};

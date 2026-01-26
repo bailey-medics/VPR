@@ -20,9 +20,9 @@ use vpr_core::{
         CoordinationService, CoordinationStatusUpdate, LedgerUpdate, MessageContent,
     },
     repositories::demographics::DemographicsService,
-    types::NonEmptyText,
     versioned_files::VersionedFileService,
-    Author, AuthorRegistration, CoreConfig, PatientService, ShardableUuid, TimestampId,
+    Author, AuthorRegistration, CoreConfig, NonEmptyText, PatientService, ShardableUuid,
+    TimestampId,
 };
 
 use base64::{engine::general_purpose, Engine as _};

@@ -26,8 +26,8 @@ use vpr_core::{
         CoordinationService, CoordinationStatusUpdate, LedgerUpdate, MessageContent,
     },
     repositories::demographics::{DemographicsService, Uninitialised as DemographicsUninitialised},
-    types::NonEmptyText,
-    Author, AuthorRegistration, CoreConfig, PatientService, ShardableUuid, TimestampId,
+    Author, AuthorRegistration, CoreConfig, NonEmptyText, PatientService, ShardableUuid,
+    TimestampId,
 };
 
 /// Authentication interceptor for gRPC requests.

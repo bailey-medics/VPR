@@ -16,7 +16,7 @@ use crate::paths::{
     common::GitIgnoreFile,
 };
 use crate::repositories::shared::create_uuid_and_shard_dir;
-use crate::types::NonEmptyText;
+use crate::NonEmptyText;
 
 // TODO: need to check if this is really needed
 #[cfg(test)]
@@ -1117,7 +1117,7 @@ mod tests {
         // NonEmptyText validation prevents whitespace-only strings at the type level
         let err = NonEmptyText::new(" \t\n")
             .expect_err("creating NonEmptyText from whitespace should fail");
-        assert!(matches!(err, crate::types::TextError::Empty));
+        assert!(matches!(err, crate::TextError::Empty));
 
         assert!(
             !patient_data_dir.path().join(CLINICAL_DIR_NAME).exists(),

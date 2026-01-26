@@ -2967,6 +2967,7 @@ dependencies = [
  "tonic",
  "tracing",
  "uuid",
+ "vpr-types",
  "vpr-uuid",
  "vpr_files",
  "x509-parser",
@@ -2998,6 +2999,14 @@ dependencies = [
  "utoipa-swagger-ui",
  "uuid",
  "vpr-core",
+]
+
+[[package]]
+name = "vpr-types"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror 2.0.17",
 ]
 
 [[package]]

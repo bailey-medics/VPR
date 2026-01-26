@@ -27,8 +27,7 @@ use vpr_core::{
     repositories::clinical::ClinicalService,
     repositories::coordination::CoordinationService,
     repositories::demographics::{DemographicsService, Uninitialised as DemographicsUninitialised},
-    types::NonEmptyText,
-    Author, AuthorRegistration, CoreConfig, PatientService, ShardableUuid,
+    Author, AuthorRegistration, CoreConfig, NonEmptyText, PatientService, ShardableUuid,
 };
 
 /// Application state for the REST API server

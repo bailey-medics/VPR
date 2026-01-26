@@ -66,7 +66,7 @@
 
 use crate::author::Author;
 use crate::error::{PatientError, PatientResult};
-use crate::types::NonEmptyText;
+use crate::NonEmptyText;
 use crate::ShardableUuid;
 use base64::{engine::general_purpose, Engine as _};
 use p256::ecdsa::signature::{Signer, Verifier};

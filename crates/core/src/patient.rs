@@ -6,7 +6,7 @@
 use crate::{
     author::Author, error::PatientResult, repositories::clinical::ClinicalService,
     repositories::coordination::CoordinationService,
-    repositories::demographics::DemographicsService, types::NonEmptyText,
+    repositories::demographics::DemographicsService, NonEmptyText,
 };
 
 /// Represents a complete patient record with both demographics and clinical components.
