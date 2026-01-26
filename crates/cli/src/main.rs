@@ -6,6 +6,7 @@
 
 #![allow(rustdoc::invalid_html_tags)]
 
+use chrono::NaiveDate;
 use clap::{Parser, Subcommand};
 use fhir::{
     coordination_status::LifecycleState, messaging::SensitivityLevel,
@@ -20,9 +21,9 @@ use vpr_core::{
         CoordinationService, CoordinationStatusUpdate, LedgerUpdate, MessageContent,
     },
     repositories::demographics::DemographicsService,
-    types::NonEmptyText,
     versioned_files::VersionedFileService,
-    Author, AuthorRegistration, CoreConfig, PatientService, ShardableUuid, TimestampId,
+    Author, AuthorRegistration, CoreConfig, EmailAddress, NonEmptyText, PatientService,
+    ShardableUuid, TimestampId,
 };
 
 use base64::{engine::general_purpose, Engine as _};
@@ -658,17 +659,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }) => {
             let registrations: Vec<AuthorRegistration> = registration
                 .chunks(2)
-                .map(|chunk| AuthorRegistration {
-                    authority: chunk.first().cloned().unwrap_or_default(),
-                    number: chunk.get(1).cloned().unwrap_or_default(),
+                .map(|chunk| {
+                    AuthorRegistration::new(
+                        chunk.first().cloned().unwrap_or_default(),
+                        chunk.get(1).cloned().unwrap_or_default(),
+                    )
+                    .expect("valid registration")
                 })
                 .collect();
+            let name = match NonEmptyText::new(&name) {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("Invalid author name: {}", e);
+                    return Ok(());
+                }
+            };
+            let role = match NonEmptyText::new(&role) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Invalid author role: {}", e);
+                    return Ok(());
+                }
+            };
+            let email = match EmailAddress::parse(&email) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("Invalid author email: {:?}", e);
+                    return Ok(());
+                }
+            };
             let author = Author {
                 name,
                 role,
                 email,
                 registrations,
-                signature,
+                signature: signature.map(|s| s.into_bytes()),
                 certificate: None,
             };
             let care_location = match NonEmptyText::new(&care_location) {
@@ -697,17 +722,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }) => {
             let registrations: Vec<AuthorRegistration> = registration
                 .chunks(2)
-                .map(|chunk| AuthorRegistration {
-                    authority: chunk.first().cloned().unwrap_or_default(),
-                    number: chunk.get(1).cloned().unwrap_or_default(),
+                .map(|chunk| {
+                    AuthorRegistration::new(
+                        chunk.first().cloned().unwrap_or_default(),
+                        chunk.get(1).cloned().unwrap_or_default(),
+                    )
+                    .expect("valid registration")
                 })
                 .collect();
+            let name = match NonEmptyText::new(&name) {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("Invalid author name: {}", e);
+                    return Ok(());
+                }
+            };
+            let role = match NonEmptyText::new(&role) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Invalid author role: {}", e);
+                    return Ok(());
+                }
+            };
+            let email = match EmailAddress::parse(&email) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("Invalid author email: {:?}", e);
+                    return Ok(());
+                }
+            };
             let author = Author {
                 name,
                 role,
                 email,
                 registrations,
-                signature,
+                signature: signature.map(|s| s.into_bytes()),
                 certificate: None,
             };
             let care_location = match NonEmptyText::new(&care_location) {
@@ -739,17 +788,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }) => {
             let registrations: Vec<AuthorRegistration> = registration
                 .chunks(2)
-                .map(|chunk| AuthorRegistration {
-                    authority: chunk.first().cloned().unwrap_or_default(),
-                    number: chunk.get(1).cloned().unwrap_or_default(),
+                .map(|chunk| {
+                    AuthorRegistration::new(
+                        chunk.first().cloned().unwrap_or_default(),
+                        chunk.get(1).cloned().unwrap_or_default(),
+                    )
+                    .expect("valid registration")
                 })
                 .collect();
+            let name = match NonEmptyText::new(&name) {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("Invalid author name: {}", e);
+                    return Ok(());
+                }
+            };
+            let role = match NonEmptyText::new(&role) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Invalid author role: {}", e);
+                    return Ok(());
+                }
+            };
+            let email = match EmailAddress::parse(&email) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("Invalid author email: {:?}", e);
+                    return Ok(());
+                }
+            };
             let author = Author {
                 name,
                 role,
                 email,
                 registrations,
-                signature,
+                signature: signature.map(|s| s.into_bytes()),
                 certificate: None,
             };
             let clinical_uuid_parsed = match ShardableUuid::parse(&clinical_uuid) {
@@ -766,6 +839,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     return Ok(());
                 }
             };
+            let namespace = namespace.map(|ns| NonEmptyText::new(ns).expect("valid namespace"));
             let clinical_service = ClinicalService::with_id(cfg.clone(), clinical_uuid_parsed);
             match clinical_service.link_to_demographics(
                 &author,
@@ -786,6 +860,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let given_names_vec: Vec<String> = given_names
                 .split(',')
                 .map(|s| s.trim().to_string())
+                .collect();
+            let given_names_vec: Vec<NonEmptyText> = given_names_vec
+                .into_iter()
+                .map(|name| NonEmptyText::new(name).expect("valid given name"))
                 .collect();
 
             match DemographicsService::with_id(cfg.clone(), &demographics_uuid) {
@@ -824,24 +902,53 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .into());
                 }
 
-                registrations.push(AuthorRegistration {
-                    authority: authority.to_string(),
-                    number: number.to_string(),
-                });
+                registrations.push(
+                    AuthorRegistration::new(authority.to_string(), number.to_string())
+                        .expect("valid registration"),
+                );
             }
 
+            let name = match NonEmptyText::new(&author_name) {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("Invalid author name: {}", e);
+                    return Ok(());
+                }
+            };
+            let author_role = match NonEmptyText::new(&author_role) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Invalid author role: {}", e);
+                    return Ok(());
+                }
+            };
+            let email = match EmailAddress::parse(&author_email) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("Invalid author email: {:?}", e);
+                    return Ok(());
+                }
+            };
             let author = Author {
-                name: author_name,
+                name,
                 role: author_role,
-                email: author_email,
+                email,
                 registrations,
-                signature,
+                signature: signature.map(|s| s.into_bytes()),
                 certificate: None,
             };
             let given_names_vec: Vec<String> = given_names
                 .split(',')
                 .map(|s| s.trim().to_string())
                 .collect();
+            let given_names_vec: Vec<NonEmptyText> = given_names_vec
+                .into_iter()
+                .map(|name| NonEmptyText::new(name).expect("valid given name"))
+                .collect();
+            let last_name = NonEmptyText::new(last_name).expect("valid last name");
+            let birth_date = NaiveDate::parse_from_str(&birth_date, "%Y-%m-%d")
+                .expect("valid birth date in YYYY-MM-DD format");
+            let namespace = namespace.map(|ns| NonEmptyText::new(ns).expect("valid namespace"));
             let care_location = match NonEmptyText::new(&care_location) {
                 Ok(cl) => cl,
                 Err(e) => {
@@ -953,17 +1060,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }) => {
             let registrations: Vec<AuthorRegistration> = registration
                 .chunks(2)
-                .map(|chunk| AuthorRegistration {
-                    authority: chunk.first().cloned().unwrap_or_default(),
-                    number: chunk.get(1).cloned().unwrap_or_default(),
+                .map(|chunk| {
+                    AuthorRegistration::new(
+                        chunk.first().cloned().unwrap_or_default(),
+                        chunk.get(1).cloned().unwrap_or_default(),
+                    )
+                    .expect("valid registration")
                 })
                 .collect();
+            let name = match NonEmptyText::new(&author_name) {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("Invalid author name: {}", e);
+                    return Ok(());
+                }
+            };
+            let role = match NonEmptyText::new(&role) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Invalid author role: {}", e);
+                    return Ok(());
+                }
+            };
+            let email = match EmailAddress::parse(&author_email) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("Invalid author email: {:?}", e);
+                    return Ok(());
+                }
+            };
             let author = Author {
-                name: author_name,
+                name,
                 role,
-                email: author_email,
+                email,
                 registrations,
-                signature,
+                signature: signature.map(|s| s.into_bytes()),
                 certificate: None,
             };
 
@@ -981,6 +1112,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     return Ok(());
                 }
             };
+
+            let content = NonEmptyText::new(content).expect("valid letter content");
 
             let clinical_service = ClinicalService::with_id(cfg.clone(), clinical_uuid_parsed);
             match clinical_service.new_letter(&author, care_location, content, None) {
@@ -1023,17 +1156,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }) => {
             let registrations: Vec<AuthorRegistration> = registration
                 .chunks(2)
-                .map(|chunk| AuthorRegistration {
-                    authority: chunk.first().cloned().unwrap_or_default(),
-                    number: chunk.get(1).cloned().unwrap_or_default(),
+                .map(|chunk| {
+                    AuthorRegistration::new(
+                        chunk.first().cloned().unwrap_or_default(),
+                        chunk.get(1).cloned().unwrap_or_default(),
+                    )
+                    .expect("valid registration")
                 })
                 .collect();
+            let name = match NonEmptyText::new(&author_name) {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("Invalid author name: {}", e);
+                    return Ok(());
+                }
+            };
+            let role = match NonEmptyText::new(&role) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Invalid author role: {}", e);
+                    return Ok(());
+                }
+            };
+            let email = match EmailAddress::parse(&author_email) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("Invalid author email: {:?}", e);
+                    return Ok(());
+                }
+            };
             let author = Author {
-                name: author_name,
+                name,
                 role,
-                email: author_email,
+                email,
                 registrations,
-                signature,
+                signature: signature.map(|s| s.into_bytes()),
                 certificate: None,
             };
             let clinical_id = match uuid::Uuid::parse_str(&clinical_uuid) {
@@ -1043,6 +1200,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     return Ok(());
                 }
             };
+            let care_location = NonEmptyText::new(care_location).expect("valid care location");
             let coordination_service = CoordinationService::new(cfg.clone());
             match coordination_service.initialise(author, care_location, clinical_id) {
                 Ok(service) => println!(
@@ -1065,17 +1223,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }) => {
             let registrations: Vec<AuthorRegistration> = registration
                 .chunks(2)
-                .map(|chunk| AuthorRegistration {
-                    authority: chunk.first().cloned().unwrap_or_default(),
-                    number: chunk.get(1).cloned().unwrap_or_default(),
+                .map(|chunk| {
+                    AuthorRegistration::new(
+                        chunk.first().cloned().unwrap_or_default(),
+                        chunk.get(1).cloned().unwrap_or_default(),
+                    )
+                    .expect("valid registration")
                 })
                 .collect();
+            let name = match NonEmptyText::new(&author_name) {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("Invalid author name: {}", e);
+                    return Ok(());
+                }
+            };
+            let role = match NonEmptyText::new(&role) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Invalid author role: {}", e);
+                    return Ok(());
+                }
+            };
+            let email = match EmailAddress::parse(&author_email) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("Invalid author email: {:?}", e);
+                    return Ok(());
+                }
+            };
             let author = Author {
-                name: author_name,
+                name,
                 role,
-                email: author_email,
+                email,
                 registrations,
-                signature,
+                signature: signature.map(|s| s.into_bytes()),
                 certificate: None,
             };
 
@@ -1120,7 +1302,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 };
 
-                let display_name = participant[i + 2].clone();
+                let display_name =
+                    NonEmptyText::new(participant[i + 2].clone()).expect("valid display name");
 
                 participants.push(MessageAuthor {
                     id: participant_id,
@@ -1135,7 +1318,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Find thread author in participants to get their info
                 let message_author = participants
                     .iter()
-                    .find(|p| p.name == author.name)
+                    .find(|p| p.name.as_str() == author.name.as_str())
                     .cloned()
                     .unwrap_or_else(|| MessageAuthor {
                         id: uuid::Uuid::new_v4(),
@@ -1143,10 +1326,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         role: AuthorRole::System,
                     });
 
+                let body = NonEmptyText::new(body).expect("valid message body");
                 MessageContent::new(message_author, body, None)
                     .expect("Message body should not be empty")
             });
 
+            let care_location = NonEmptyText::new(care_location).expect("valid care location");
             let coordination_service =
                 CoordinationService::with_id(cfg.clone(), coordination_uuid_parsed);
             match coordination_service.communication_create(
@@ -1176,17 +1361,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }) => {
             let registrations: Vec<AuthorRegistration> = registration
                 .chunks(2)
-                .map(|chunk| AuthorRegistration {
-                    authority: chunk.first().cloned().unwrap_or_default(),
-                    number: chunk.get(1).cloned().unwrap_or_default(),
+                .map(|chunk| {
+                    AuthorRegistration::new(
+                        chunk.first().cloned().unwrap_or_default(),
+                        chunk.get(1).cloned().unwrap_or_default(),
+                    )
+                    .expect("valid registration")
                 })
                 .collect();
+            let name = match NonEmptyText::new(&author_name) {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("Invalid author name: {}", e);
+                    return Ok(());
+                }
+            };
+            let role = match NonEmptyText::new(&role) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Invalid author role: {}", e);
+                    return Ok(());
+                }
+            };
+            let email = match EmailAddress::parse(&author_email) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("Invalid author email: {:?}", e);
+                    return Ok(());
+                }
+            };
             let author = Author {
-                name: author_name,
+                name,
                 role,
-                email: author_email,
+                email,
                 registrations,
-                signature,
+                signature: signature.map(|s| s.into_bytes()),
                 certificate: None,
             };
 
@@ -1236,6 +1445,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 None
             };
 
+            let message_author_name =
+                NonEmptyText::new(message_author_name).expect("valid message author name");
+            let message_body = NonEmptyText::new(message_body).expect("valid message body");
             let message = MessageContent::new(
                 MessageAuthor {
                     id: author_id,
@@ -1255,6 +1467,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
+            let care_location = NonEmptyText::new(care_location).expect("valid care location");
             let coordination_service =
                 CoordinationService::with_id(cfg.clone(), coordination_uuid_parsed);
             match coordination_service.message_add(
@@ -1363,17 +1576,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }) => {
             let registrations: Vec<AuthorRegistration> = registration
                 .chunks(2)
-                .map(|chunk| AuthorRegistration {
-                    authority: chunk.first().cloned().unwrap_or_default(),
-                    number: chunk.get(1).cloned().unwrap_or_default(),
+                .map(|chunk| {
+                    AuthorRegistration::new(
+                        chunk.first().cloned().unwrap_or_default(),
+                        chunk.get(1).cloned().unwrap_or_default(),
+                    )
+                    .expect("valid registration")
                 })
                 .collect();
+            let name = match NonEmptyText::new(&author_name) {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("Invalid author name: {}", e);
+                    return Ok(());
+                }
+            };
+            let role = match NonEmptyText::new(&role) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Invalid author role: {}", e);
+                    return Ok(());
+                }
+            };
+            let email = match EmailAddress::parse(&author_email) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("Invalid author email: {:?}", e);
+                    return Ok(());
+                }
+            };
             let author = Author {
-                name: author_name,
+                name,
                 role,
-                email: author_email,
+                email,
                 registrations,
-                signature,
+                signature: signature.map(|s| s.into_bytes()),
                 certificate: None,
             };
 
@@ -1427,17 +1664,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }) => {
             let registrations: Vec<AuthorRegistration> = registration
                 .chunks(2)
-                .map(|chunk| AuthorRegistration {
-                    authority: chunk.first().cloned().unwrap_or_default(),
-                    number: chunk.get(1).cloned().unwrap_or_default(),
+                .map(|chunk| {
+                    AuthorRegistration::new(
+                        chunk.first().cloned().unwrap_or_default(),
+                        chunk.get(1).cloned().unwrap_or_default(),
+                    )
+                    .expect("valid registration")
                 })
                 .collect();
+            let name = match NonEmptyText::new(&author_name) {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("Invalid author name: {}", e);
+                    return Ok(());
+                }
+            };
+            let role = match NonEmptyText::new(&role) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Invalid author role: {}", e);
+                    return Ok(());
+                }
+            };
+            let email = match EmailAddress::parse(&author_email) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("Invalid author email: {:?}", e);
+                    return Ok(());
+                }
+            };
             let author = Author {
-                name: author_name,
+                name,
                 role,
-                email: author_email,
+                email,
                 registrations,
-                signature,
+                signature: signature.map(|s| s.into_bytes()),
                 certificate: None,
             };
 
@@ -1462,6 +1723,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     return Ok(());
                 }
             };
+
+            let content = NonEmptyText::new(content).expect("valid letter content");
 
             let clinical_service = ClinicalService::with_id(cfg.clone(), clinical_uuid_parsed);
             match clinical_service.create_letter(
@@ -1546,17 +1809,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }) => {
             let registrations: Vec<AuthorRegistration> = registration
                 .chunks(2)
-                .map(|chunk| AuthorRegistration {
-                    authority: chunk.first().cloned().unwrap_or_default(),
-                    number: chunk.get(1).cloned().unwrap_or_default(),
+                .map(|chunk| {
+                    AuthorRegistration::new(
+                        chunk.first().cloned().unwrap_or_default(),
+                        chunk.get(1).cloned().unwrap_or_default(),
+                    )
+                    .expect("valid registration")
                 })
                 .collect();
+            let name = match NonEmptyText::new(&author_name) {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("Invalid author name: {}", e);
+                    return Ok(());
+                }
+            };
+            let role = match NonEmptyText::new(&role) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Invalid author role: {}", e);
+                    return Ok(());
+                }
+            };
+            let email = match EmailAddress::parse(&author_email) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("Invalid author email: {:?}", e);
+                    return Ok(());
+                }
+            };
             let author = Author {
-                name: author_name,
+                name,
                 role,
-                email: author_email,
+                email,
                 registrations,
-                signature,
+                signature: signature.map(|s| s.into_bytes()),
                 certificate: None,
             };
 
@@ -1609,7 +1896,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 };
 
-                let display_name = add_participant[i + 2].clone();
+                let display_name =
+                    NonEmptyText::new(add_participant[i + 2].clone()).expect("valid display name");
 
                 add_participants.push(MessageAuthor {
                     id: participant_id,
@@ -1701,6 +1989,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 set_policies,
             };
 
+            let care_location = NonEmptyText::new(care_location).expect("valid care location");
             let coordination_service =
                 CoordinationService::with_id(cfg.clone(), coordination_uuid_parsed);
             match coordination_service.update_communication_ledger(
@@ -1728,17 +2017,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }) => {
             let registrations: Vec<AuthorRegistration> = registration
                 .chunks(2)
-                .map(|chunk| AuthorRegistration {
-                    authority: chunk.first().cloned().unwrap_or_default(),
-                    number: chunk.get(1).cloned().unwrap_or_default(),
+                .map(|chunk| {
+                    AuthorRegistration::new(
+                        chunk.first().cloned().unwrap_or_default(),
+                        chunk.get(1).cloned().unwrap_or_default(),
+                    )
+                    .expect("valid registration")
                 })
                 .collect();
+            let name = match NonEmptyText::new(&author_name) {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("Invalid author name: {}", e);
+                    return Ok(());
+                }
+            };
+            let role = match NonEmptyText::new(&role) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Invalid author role: {}", e);
+                    return Ok(());
+                }
+            };
+            let email = match EmailAddress::parse(&author_email) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("Invalid author email: {:?}", e);
+                    return Ok(());
+                }
+            };
             let author = Author {
-                name: author_name,
+                name,
                 role,
-                email: author_email,
+                email,
                 registrations,
-                signature,
+                signature: signature.map(|s| s.into_bytes()),
                 certificate: None,
             };
 
@@ -1773,6 +2086,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 set_record_modifiable: record_modifiable,
             };
 
+            let care_location = NonEmptyText::new(care_location).expect("valid care location");
             let coordination_service =
                 CoordinationService::with_id(cfg.clone(), coordination_uuid_parsed);
             match coordination_service.update_coordination_status(
@@ -1804,9 +2118,15 @@ fn build_core_config_from_env() -> Result<Arc<CoreConfig>, Box<dyn std::error::E
         .into());
     }
 
-    let rm_system_version =
-        rm_system_version_from_env_value(std::env::var("RM_SYSTEM_VERSION").ok())?;
-    let vpr_namespace = std::env::var("VPR_NAMESPACE").unwrap_or_else(|_| "vpr.dev.1".into());
+    let rm_system_version = rm_system_version_from_env_value(
+        std::env::var("RM_SYSTEM_VERSION")
+            .ok()
+            .and_then(|s| vpr_core::NonEmptyText::new(s).ok()),
+    )?;
+    let vpr_namespace = std::env::var("VPR_NAMESPACE")
+        .ok()
+        .and_then(|s| vpr_core::NonEmptyText::new(s).ok())
+        .unwrap_or_else(|| vpr_core::NonEmptyText::new("vpr.dev.1").unwrap());
 
     Ok(Arc::new(CoreConfig::new(
         patient_data_path.to_path_buf(),

@@ -28,11 +28,10 @@ use api_shared::pb::vpr_server::VprServer;
 use std::path::Path;
 use std::sync::Arc;
 use vpr_core::{
-    Author, AuthorRegistration, CoreConfig,
+    Author, AuthorRegistration, CoreConfig, EmailAddress, NonEmptyText,
     config::rm_system_version_from_env_value,
     repositories::clinical::ClinicalService,
     repositories::demographics::{DemographicsService, Uninitialised as DemographicsUninitialised},
-    types::NonEmptyText,
 };
 
 type HealthRes = pb::HealthRes;
@@ -117,13 +116,18 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let rm_system_version = rm_system_version_from_env_value(
-        std::env::var("RM_SYSTEM_VERSION").ok(),
+        std::env::var("RM_SYSTEM_VERSION")
+            .ok()
+            .and_then(|s| vpr_core::NonEmptyText::new(s).ok()),
     )
     .unwrap_or_else(|e| {
         eprintln!("Error: Invalid RM_SYSTEM_VERSION ({})", e);
         std::process::exit(1);
     });
-    let vpr_namespace = std::env::var("VPR_NAMESPACE").unwrap_or_else(|_| "vpr.dev.1".into());
+    let vpr_namespace = std::env::var("VPR_NAMESPACE")
+        .ok()
+        .and_then(|s| vpr_core::NonEmptyText::new(s).ok())
+        .unwrap_or_else(|| vpr_core::NonEmptyText::new("vpr.dev.1").unwrap());
 
     let cfg = Arc::new(
         CoreConfig::new(
@@ -281,21 +285,27 @@ async fn create_patient(
     let registrations: Vec<AuthorRegistration> = req
         .author_registrations
         .into_iter()
-        .map(|r| AuthorRegistration {
-            authority: r.authority,
-            number: r.number,
+        .map(|r| {
+            AuthorRegistration::new(r.authority, r.number).expect("valid registration from request")
         })
         .collect();
 
+    let name = NonEmptyText::new(&req.author_name)
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid author name"))?;
+    let role = NonEmptyText::new(&req.author_role)
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid author role"))?;
+    let email = EmailAddress::parse(&req.author_email)
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid author email"))?;
+
     let author = Author {
-        name: req.author_name,
-        role: req.author_role,
-        email: req.author_email,
+        name,
+        role,
+        email,
         registrations,
         signature: if req.author_signature.is_empty() {
             None
         } else {
-            Some(req.author_signature)
+            Some(req.author_signature.into_bytes())
         },
         certificate: None,
     };

@@ -18,6 +18,7 @@ use crate::{FhirError, TimestampId};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+use vpr_types::NonEmptyText;
 
 // ============================================================================
 // Public exports for external use
@@ -152,7 +153,7 @@ pub struct MessageParticipant {
     pub id: Uuid,
 
     /// Human-readable display name for this participant.
-    pub name: String,
+    pub name: NonEmptyText,
 
     /// Role of this participant in the conversation.
     pub role: ParticipantRole,
@@ -215,7 +216,7 @@ impl ParticipantRole {
     ///
     /// # Arguments
     ///
-    /// * `s` - String representation of the role (case-insensitive)
+    /// * `s` - NonEmptyText representation of the role (case-insensitive)
     ///
     /// # Returns
     ///
@@ -406,7 +407,9 @@ fn wire_to_domain(wire: Ledger) -> Result<LedgerDataNested, FhirError> {
 
         participants.push(MessageParticipant {
             id: participant_id,
-            name: p.display_name.clone(),
+            name: NonEmptyText::new(&p.display_name).map_err(|_| {
+                FhirError::Translation(format!("Empty display name in participants[{idx}]"))
+            })?,
             role: p.role,
         });
     }
@@ -440,7 +443,7 @@ fn domain_to_wire(data: &LedgerDataNested) -> Ledger {
             .iter()
             .map(|p| Participant {
                 participant_id: p.id.to_string(),
-                display_name: p.name.clone(),
+                display_name: p.name.to_string(),
                 role: p.role,
             })
             .collect(),

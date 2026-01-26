@@ -18,6 +18,7 @@ use crate::{LetterData, OpenEhrError, RmVersion, TimestampId};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+use vpr_types::NonEmptyText;
 
 /// RM 1.x-aligned wire representation of `COMPOSITION` (letter) for on-disk YAML.
 ///
@@ -35,24 +36,6 @@ struct Composition {
     pub composer: Composer,
     pub context: Context,
     pub content: Vec<ContentItem>,
-}
-
-impl Composition {
-    /// Convert this Composition to its YAML string representation.
-    ///
-    /// # Returns
-    ///
-    /// Returns a YAML string representation of this Composition.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`OpenEhrError`] if serialisation fails.
-    #[cfg(test)]
-    pub fn to_string(&self) -> Result<String, OpenEhrError> {
-        serde_yaml::to_string(self).map_err(|e| {
-            OpenEhrError::Translation(format!("Failed to serialize Composition: {}", e))
-        })
-    }
 }
 
 /// Returns the archetype node ID for the letter Composition.
@@ -237,16 +220,20 @@ struct Code {
 ///
 /// let wire_list: ClinicalList = (&public_list).into();
 /// ```
-impl From<&PublicClinicalList> for ClinicalList {
-    fn from(list: &PublicClinicalList) -> Self {
-        ClinicalList {
+impl ClinicalList {
+    fn try_from_public(list: &PublicClinicalList) -> Result<Self, OpenEhrError> {
+        Ok(ClinicalList {
             archetype_node_id: snapshot_archetype_node_id().to_string(),
             name: DvText {
-                value: list.name.clone(),
+                value: NonEmptyText::new(&list.name).map_err(|_| {
+                    OpenEhrError::InvalidInput("list name cannot be empty".to_string())
+                })?,
             },
             data: ClinicalListData {
                 kind: DvText {
-                    value: list.kind.clone(),
+                    value: NonEmptyText::new(&list.kind).map_err(|_| {
+                        OpenEhrError::InvalidInput("list kind cannot be empty".to_string())
+                    })?,
                 },
                 items: list
                     .items
@@ -260,7 +247,7 @@ impl From<&PublicClinicalList> for ClinicalList {
                     })
                     .collect(),
             },
-        }
+        })
     }
 }
 
@@ -307,8 +294,8 @@ impl From<Composition> for LetterData {
                 match &section_item.evaluation.data {
                     EvaluationData::ClinicalList { kind, items } => {
                         clinical_lists.push(PublicClinicalList {
-                            name: section_item.evaluation.name.value.clone(),
-                            kind: kind.value.clone(),
+                            name: section_item.evaluation.name.value.to_string(),
+                            kind: kind.value.to_string(),
                             items: items
                                 .iter()
                                 .map(|item| crate::public_structs::letter::ClinicalListItem {
@@ -405,6 +392,7 @@ impl From<&LetterData> for Composition {
                 attachments: &data.attachments,
             },
         )
+        .expect("letter_init should not fail with valid LetterData")
     }
 }
 
@@ -484,6 +472,10 @@ pub fn composition_render(data: &LetterData) -> Result<String, OpenEhrError> {
 /// # Returns
 ///
 /// Returns a new [`Composition`] wire struct.
+///
+/// # Errors
+///
+/// Returns [`OpenEhrError`] if creating NonEmptyText values fails.
 fn letter_init(
     rm_version: &str,
     uid: &str,
@@ -491,7 +483,7 @@ fn letter_init(
     composer_role: &str,
     start_time: DateTime<Utc>,
     content: LetterContent<'_>,
-) -> Composition {
+) -> Result<Composition, OpenEhrError> {
     let mut section_items = Vec::new();
 
     // Add body.md narrative if present
@@ -500,7 +492,8 @@ fn letter_init(
             evaluation: Evaluation {
                 archetype_node_id: evaluation_archetype_node_id().to_string(),
                 name: DvText {
-                    value: EVALUATION_NAME.to_string(),
+                    value: NonEmptyText::new(EVALUATION_NAME)
+                        .expect("EVALUATION_NAME is non-empty"),
                 },
                 data: EvaluationData::Narrative {
                     narrative: Narrative {
@@ -518,7 +511,8 @@ fn letter_init(
             evaluation: Evaluation {
                 archetype_node_id: evaluation_archetype_node_id().to_string(),
                 name: DvText {
-                    value: EVALUATION_NAME.to_string(),
+                    value: NonEmptyText::new(EVALUATION_NAME)
+                        .expect("EVALUATION_NAME is non-empty"),
                 },
                 data: EvaluationData::Narrative {
                     narrative: Narrative {
@@ -533,7 +527,8 @@ fn letter_init(
     // Add snapshot evaluations if provided
     if let Some(lists) = content.clinical_lists {
         for list in lists {
-            let snapshot: ClinicalList = list.into();
+            let snapshot = ClinicalList::try_from_public(list)
+                .map_err(|e| OpenEhrError::InvalidInput(e.to_string()))?;
             section_items.push(SectionItem {
                 evaluation: Evaluation {
                     archetype_node_id: snapshot.archetype_node_id,
@@ -547,15 +542,15 @@ fn letter_init(
         }
     }
 
-    Composition {
+    Ok(Composition {
         rm_version: rm_version.to_string(),
         uid: uid.to_string(),
         archetype_node_id: archetype_node_id().to_string(),
         name: DvText {
-            value: NAME.to_string(),
+            value: NonEmptyText::new(NAME).expect("NAME is non-empty"),
         },
         category: DvText {
-            value: CATEGORY.to_string(),
+            value: NonEmptyText::new(CATEGORY).expect("CATEGORY is non-empty"),
         },
         composer: Composer {
             name: composer_name.to_string(),
@@ -566,12 +561,12 @@ fn letter_init(
             section: Section {
                 archetype_node_id: section_archetype_node_id().to_string(),
                 name: DvText {
-                    value: SECTION_NAME.to_string(),
+                    value: NonEmptyText::new(SECTION_NAME).expect("SECTION_NAME is non-empty"),
                 },
                 items: section_items,
             },
         }],
-    }
+    })
 }
 
 #[cfg(test)]
@@ -817,13 +812,14 @@ content:
                 has_body: true,
                 attachments: &[],
             },
-        );
+        )
+        .expect("letter_init should succeed");
 
         assert_eq!(letter.rm_version, "rm_1_1_0");
         assert_eq!(letter.uid, "test-uid");
         assert_eq!(letter.archetype_node_id, archetype_node_id().to_string());
-        assert_eq!(letter.name.value, NAME);
-        assert_eq!(letter.category.value, CATEGORY);
+        assert_eq!(letter.name.value.as_str(), NAME);
+        assert_eq!(letter.category.value.as_str(), CATEGORY);
         assert_eq!(letter.composer.name, "Dr Test");
         assert_eq!(letter.composer.role, "Test Role");
         assert_eq!(letter.context.start_time, start_time);
@@ -851,9 +847,10 @@ content:
                 has_body: true,
                 attachments: &[],
             },
-        );
+        )
+        .expect("letter_init should succeed");
 
-        let yaml_string = letter.to_string().expect("to_string should work");
+        let yaml_string = serde_yaml::to_string(&letter).expect("to_string should work");
 
         assert!(yaml_string.contains("rm_version:"));
         assert!(yaml_string.contains(&format!("uid: {}", test_uid)));

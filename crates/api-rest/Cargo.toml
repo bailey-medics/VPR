@@ -17,6 +17,7 @@ path = "src/main.rs"
 api-shared = { path = "../api-shared", version = "0.1.0" }
 anyhow = "1"
 axum = { version = "0.7", features = ["macros"] }
+chrono = "0.4"
 vpr-core = { path = "../core", version = "0.1.0" }
 fhir = { path = "../fhir", version = "0.1.0" }
 uuid = { version = "1", features = ["v4"] }

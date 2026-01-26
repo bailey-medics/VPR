@@ -15,7 +15,7 @@
 
 use crate::FhirError;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
+use vpr_uuid::ShardableUuid;
 
 // ============================================================================
 // Public domain-level types
@@ -28,10 +28,10 @@ use uuid::Uuid;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CoordinationStatusData {
     /// Unique identifier for this coordination record (UUID).
-    pub coordination_id: Uuid,
+    pub coordination_id: ShardableUuid,
 
     /// Reference to the associated clinical record (UUID).
-    pub clinical_id: Uuid,
+    pub clinical_id: ShardableUuid,
 
     /// Current lifecycle state of the coordination record.
     pub lifecycle_state: LifecycleState,
@@ -170,16 +170,16 @@ struct StatusWire {
 ///
 /// This performs validation and conversion of string identifiers to proper types.
 fn wire_to_domain(wire: CoordinationStatusWire) -> Result<CoordinationStatusData, FhirError> {
-    // Parse coordination_id as UUID
-    let coordination_id = Uuid::parse_str(&wire.coordination_id).map_err(|_| {
+    // Parse coordination_id as ShardableUuid
+    let coordination_id = ShardableUuid::parse(&wire.coordination_id).map_err(|_| {
         FhirError::InvalidUuid(format!(
             "Invalid UUID in coordination_id: {}",
             wire.coordination_id
         ))
     })?;
 
-    // Parse clinical_id as UUID
-    let clinical_id = Uuid::parse_str(&wire.clinical_id).map_err(|_| {
+    // Parse clinical_id as ShardableUuid
+    let clinical_id = ShardableUuid::parse(&wire.clinical_id).map_err(|_| {
         FhirError::InvalidUuid(format!("Invalid UUID in clinical_id: {}", wire.clinical_id))
     })?;
 
@@ -213,8 +213,8 @@ mod tests {
 
     #[test]
     fn round_trips_sample_yaml() {
-        let input = r#"coordination_id: "7f4c2e9d-4b0a-4f3a-9a2c-0e9a6b5d1c88"
-clinical_id: "a4f91c6d-3b2e-4c5f-9d7a-1e8b6c0a9f12"
+        let input = r#"coordination_id: 7f4c2e9d4b0a4f3a9a2c0e9a6b5d1c88
+clinical_id: a4f91c6d3b2e4c5f9d7a1e8b6c0a9f12
 status:
   lifecycle_state: active
   record_open: true
@@ -230,8 +230,8 @@ status:
 
     #[test]
     fn strict_validation_rejects_unknown_keys() {
-        let input = r#"coordination_id: "7f4c2e9d-4b0a-4f3a-9a2c-0e9a6b5d1c88"
-clinical_id: "a4f91c6d-3b2e-4c5f-9d7a-1e8b6c0a9f12"
+        let input = r#"coordination_id: 7f4c2e9d4b0a4f3a9a2c0e9a6b5d1c88
+clinical_id: a4f91c6d3b2e4c5f9d7a1e8b6c0a9f12
 status:
   lifecycle_state: active
   record_open: true
@@ -251,8 +251,8 @@ unexpected_key: should_fail
 
     #[test]
     fn strict_validation_rejects_wrong_types() {
-        let input = r#"coordination_id: "7f4c2e9d-4b0a-4f3a-9a2c-0e9a6b5d1c88"
-clinical_id: "a4f91c6d-3b2e-4c5f-9d7a-1e8b6c0a9f12"
+        let input = r#"coordination_id: 7f4c2e9d4b0a4f3a9a2c0e9a6b5d1c88
+clinical_id: a4f91c6d3b2e4c5f9d7a1e8b6c0a9f12
 status:
   lifecycle_state: active
   record_open: "not_a_boolean"
@@ -271,8 +271,8 @@ status:
 
     #[test]
     fn rejects_invalid_coordination_id() {
-        let input = r#"coordination_id: "not-a-valid-uuid"
-clinical_id: "a4f91c6d-3b2e-4c5f-9d7a-1e8b6c0a9f12"
+        let input = r#"coordination_id: not-a-valid-uuid
+clinical_id: a4f91c6d3b2e4c5f9d7a1e8b6c0a9f12
 status:
   lifecycle_state: active
   record_open: true
@@ -292,8 +292,8 @@ status:
 
     #[test]
     fn rejects_invalid_clinical_id() {
-        let input = r#"coordination_id: "7f4c2e9d-4b0a-4f3a-9a2c-0e9a6b5d1c88"
-clinical_id: "not-a-valid-uuid"
+        let input = r#"coordination_id: 7f4c2e9d4b0a4f3a9a2c0e9a6b5d1c88
+clinical_id: not-a-valid-uuid
 status:
   lifecycle_state: active
   record_open: true
@@ -312,8 +312,8 @@ status:
 
     #[test]
     fn handles_all_lifecycle_states() {
-        let base = r#"coordination_id: "7f4c2e9d-4b0a-4f3a-9a2c-0e9a6b5d1c88"
-clinical_id: "a4f91c6d-3b2e-4c5f-9d7a-1e8b6c0a9f12"
+        let base = r#"coordination_id: 7f4c2e9d4b0a4f3a9a2c0e9a6b5d1c88
+clinical_id: a4f91c6d3b2e4c5f9d7a1e8b6c0a9f12
 status:
   lifecycle_state: active
   record_open: true
@@ -335,8 +335,8 @@ status:
 
     #[test]
     fn handles_false_permissions() {
-        let input = r#"coordination_id: "7f4c2e9d-4b0a-4f3a-9a2c-0e9a6b5d1c88"
-clinical_id: "a4f91c6d-3b2e-4c5f-9d7a-1e8b6c0a9f12"
+        let input = r#"coordination_id: 7f4c2e9d4b0a4f3a9a2c0e9a6b5d1c88
+clinical_id: a4f91c6d3b2e4c5f9d7a1e8b6c0a9f12
 status:
   lifecycle_state: suspended
   record_open: false
@@ -353,8 +353,8 @@ status:
 
     #[test]
     fn parses_minimal_valid_status() {
-        let input = r#"coordination_id: "7f4c2e9d-4b0a-4f3a-9a2c-0e9a6b5d1c88"
-clinical_id: "a4f91c6d-3b2e-4c5f-9d7a-1e8b6c0a9f12"
+        let input = r#"coordination_id: 7f4c2e9d4b0a4f3a9a2c0e9a6b5d1c88
+clinical_id: a4f91c6d3b2e4c5f9d7a1e8b6c0a9f12
 status:
   lifecycle_state: active
   record_open: true
@@ -365,11 +365,11 @@ status:
         let result = CoordinationStatus::parse(input).expect("should parse minimal status");
         assert_eq!(
             result.coordination_id.to_string(),
-            "7f4c2e9d-4b0a-4f3a-9a2c-0e9a6b5d1c88"
+            "7f4c2e9d4b0a4f3a9a2c0e9a6b5d1c88"
         );
         assert_eq!(
             result.clinical_id.to_string(),
-            "a4f91c6d-3b2e-4c5f-9d7a-1e8b6c0a9f12"
+            "a4f91c6d3b2e4c5f9d7a1e8b6c0a9f12"
         );
         assert_eq!(result.lifecycle_state, LifecycleState::Active);
         assert!(result.record_open);

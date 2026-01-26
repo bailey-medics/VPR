@@ -14,6 +14,7 @@ use axum::{
     routing::{get, post, put},
     Router,
 };
+use chrono::NaiveDate;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -27,8 +28,8 @@ use vpr_core::{
     repositories::clinical::ClinicalService,
     repositories::coordination::CoordinationService,
     repositories::demographics::{DemographicsService, Uninitialised as DemographicsUninitialised},
-    types::NonEmptyText,
-    Author, AuthorRegistration, CoreConfig, PatientService, ShardableUuid,
+    Author, AuthorRegistration, CoreConfig, EmailAddress, NonEmptyText, PatientService,
+    ShardableUuid,
 };
 
 /// Application state for the REST API server
@@ -124,9 +125,15 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    let rm_system_version =
-        rm_system_version_from_env_value(std::env::var("RM_SYSTEM_VERSION").ok())?;
-    let vpr_namespace = std::env::var("VPR_NAMESPACE").unwrap_or_else(|_| "vpr.dev.1".into());
+    let rm_system_version = rm_system_version_from_env_value(
+        std::env::var("RM_SYSTEM_VERSION")
+            .ok()
+            .and_then(|s| vpr_core::NonEmptyText::new(s).ok()),
+    )?;
+    let vpr_namespace = std::env::var("VPR_NAMESPACE")
+        .ok()
+        .and_then(|s| vpr_core::NonEmptyText::new(s).ok())
+        .unwrap_or_else(|| vpr_core::NonEmptyText::new("vpr.dev.1").unwrap());
 
     let cfg = Arc::new(CoreConfig::new(
         patient_data_path.to_path_buf(),
@@ -249,21 +256,25 @@ async fn create_patient(
     let registrations: Vec<AuthorRegistration> = req
         .author_registrations
         .into_iter()
-        .map(|r| AuthorRegistration {
-            authority: r.authority,
-            number: r.number,
-        })
+        .map(|r| AuthorRegistration::new(r.authority, r.number).expect("valid registration"))
         .collect();
 
+    let name = NonEmptyText::new(&req.author_name)
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid author name"))?;
+    let role = NonEmptyText::new(&req.author_role)
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid author role"))?;
+    let email = EmailAddress::parse(&req.author_email)
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid author email"))?;
+
     let author = Author {
-        name: req.author_name,
-        role: req.author_role,
-        email: req.author_email,
+        name,
+        role,
+        email,
         registrations,
         signature: if req.author_signature.is_empty() {
             None
         } else {
-            Some(req.author_signature)
+            Some(req.author_signature.into_bytes())
         },
         certificate: None,
     };
@@ -311,27 +322,47 @@ async fn initialise_full_record(
         req.author_role,
         req.author_registrations,
         req.author_signature,
-    );
+    )?;
     let care_location = NonEmptyText::new(&req.care_location)
         .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid care_location"))?;
 
     let patient_service = PatientService::new(state.cfg.clone());
+
+    let given_names: Vec<NonEmptyText> = req
+        .given_names
+        .into_iter()
+        .map(|name| {
+            NonEmptyText::new(name).map_err(|_| (StatusCode::BAD_REQUEST, "Invalid given name"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let last_name = NonEmptyText::new(req.last_name)
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid last name"))?;
+
+    let birth_date = NaiveDate::parse_from_str(&req.birth_date, "%Y-%m-%d")
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid birth date"))?;
+
+    let namespace = if req.namespace.is_empty() {
+        None
+    } else {
+        Some(
+            NonEmptyText::new(req.namespace)
+                .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid namespace"))?,
+        )
+    };
+
     match patient_service.initialise_full_record(
         author,
         care_location,
-        req.given_names,
-        req.last_name,
-        req.birth_date,
-        if req.namespace.is_empty() {
-            None
-        } else {
-            Some(req.namespace)
-        },
+        given_names,
+        last_name,
+        birth_date,
+        namespace,
     ) {
         Ok(record) => Ok(Json(pb::InitialiseFullRecordRes {
-            demographics_uuid: record.demographics_uuid,
-            clinical_uuid: record.clinical_uuid,
-            coordination_uuid: record.coordination_uuid,
+            demographics_uuid: record.demographics_uuid.to_string(),
+            clinical_uuid: record.clinical_uuid.to_string(),
+            coordination_uuid: record.coordination_uuid.to_string(),
         })),
         Err(e) => {
             tracing::error!("Initialise full record error: {:?}", e);
@@ -360,7 +391,7 @@ async fn initialise_demographics(
         req.author_role,
         req.author_registrations,
         req.author_signature,
-    );
+    )?;
     let care_location = NonEmptyText::new(&req.care_location)
         .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid care_location"))?;
 
@@ -403,7 +434,23 @@ async fn update_demographics(
             }
         };
 
-    match demographics_service.update(req.given_names, &req.last_name, &req.birth_date) {
+    let given_names: Vec<NonEmptyText> = req
+        .given_names
+        .into_iter()
+        .map(|name| {
+            NonEmptyText::new(name).map_err(|_| (StatusCode::BAD_REQUEST, "Invalid given name"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let last_name = NonEmptyText::new(req.last_name)
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid last name"))?;
+
+    let birth_date = NaiveDate::parse_from_str(&req.birth_date, "%Y-%m-%d")
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid birth date"))?;
+
+    let birth_date_str = birth_date.format("%Y-%m-%d").to_string();
+
+    match demographics_service.update(given_names, last_name.as_str(), &birth_date_str) {
         Ok(()) => Ok(Json(pb::UpdateDemographicsRes { success: true })),
         Err(e) => {
             tracing::error!("Update demographics error: {:?}", e);
@@ -432,7 +479,7 @@ async fn initialise_clinical(
         req.author_role,
         req.author_registrations,
         req.author_signature,
-    );
+    )?;
     let care_location = NonEmptyText::new(&req.care_location)
         .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid care_location"))?;
 
@@ -472,7 +519,7 @@ async fn link_to_demographics(
         req.author_role,
         req.author_registrations,
         req.author_signature,
-    );
+    )?;
 
     let clinical_uuid = match ShardableUuid::parse(&req.clinical_uuid) {
         Ok(uuid) => uuid.uuid(),
@@ -485,15 +532,21 @@ async fn link_to_demographics(
         .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid care_location"))?;
 
     let clinical_service = ClinicalService::with_id(state.cfg.clone(), clinical_uuid);
+
+    let namespace = if req.namespace.is_empty() {
+        None
+    } else {
+        Some(
+            NonEmptyText::new(req.namespace)
+                .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid namespace"))?,
+        )
+    };
+
     match clinical_service.link_to_demographics(
         &author,
         care_location,
         &req.demographics_uuid,
-        if req.namespace.is_empty() {
-            None
-        } else {
-            Some(req.namespace)
-        },
+        namespace,
     ) {
         Ok(()) => Ok(Json(pb::LinkToDemographicsRes { success: true })),
         Err(e) => {
@@ -527,7 +580,7 @@ async fn new_letter(
         req.author_role,
         req.author_registrations,
         req.author_signature,
-    );
+    )?;
 
     let clinical_uuid = match ShardableUuid::parse(&req.clinical_uuid) {
         Ok(uuid) => uuid.uuid(),
@@ -540,8 +593,14 @@ async fn new_letter(
         .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid care_location"))?;
 
     let clinical_service = ClinicalService::with_id(state.cfg.clone(), clinical_uuid);
-    match clinical_service.new_letter(&author, care_location, req.content, None) {
-        Ok(timestamp_id) => Ok(Json(pb::NewLetterRes { timestamp_id })),
+
+    let content =
+        NonEmptyText::new(req.content).map_err(|_| (StatusCode::BAD_REQUEST, "Invalid content"))?;
+
+    match clinical_service.new_letter(&author, care_location, content, None) {
+        Ok(timestamp_id) => Ok(Json(pb::NewLetterRes {
+            timestamp_id: timestamp_id.to_string(),
+        })),
         Err(e) => {
             tracing::error!("New letter error: {:?}", e);
             Err((StatusCode::INTERNAL_SERVER_ERROR, "Internal error"))
@@ -573,7 +632,7 @@ async fn new_letter_complete(
         req.author_role,
         req.author_registrations,
         req.author_signature,
-    );
+    )?;
 
     let clinical_uuid = match ShardableUuid::parse(&req.clinical_uuid) {
         Ok(uuid) => uuid.uuid(),
@@ -608,11 +667,14 @@ async fn new_letter_complete(
     let care_location = NonEmptyText::new(&req.care_location)
         .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid care_location"))?;
 
+    let content =
+        NonEmptyText::new(req.content).map_err(|_| (StatusCode::BAD_REQUEST, "Invalid content"))?;
+
     let clinical_service = ClinicalService::with_id(state.cfg.clone(), clinical_uuid);
     let result = clinical_service.create_letter(
         &author,
         care_location,
-        Some(req.content),
+        Some(content),
         &attachment_paths,
         None,
     );
@@ -621,7 +683,9 @@ async fn new_letter_complete(
     let _ = std::fs::remove_dir_all(&temp_dir);
 
     match result {
-        Ok(timestamp_id) => Ok(Json(pb::NewLetterCompleteRes { timestamp_id })),
+        Ok(timestamp_id) => Ok(Json(pb::NewLetterCompleteRes {
+            timestamp_id: timestamp_id.to_string(),
+        })),
         Err(e) => {
             tracing::error!("New complete letter error: {:?}", e);
             Err((StatusCode::INTERNAL_SERVER_ERROR, "Internal error"))
@@ -697,7 +761,7 @@ async fn initialise_coordination(
         req.author_role,
         req.author_registrations,
         req.author_signature,
-    );
+    )?;
 
     let clinical_uuid = match uuid::Uuid::parse_str(&req.clinical_uuid) {
         Ok(uuid) => uuid,
@@ -708,7 +772,11 @@ async fn initialise_coordination(
     };
 
     let coordination_service = CoordinationService::new(state.cfg.clone());
-    match coordination_service.initialise(author, req.care_location, clinical_uuid) {
+
+    let care_location = NonEmptyText::new(req.care_location)
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid care_location"))?;
+
+    match coordination_service.initialise(author, care_location, clinical_uuid) {
         Ok(service) => Ok(Json(pb::InitialiseCoordinationRes {
             coordination_uuid: service.coordination_id().to_string(),
         })),
@@ -726,23 +794,27 @@ fn build_author(
     role: String,
     registrations: Vec<pb::AuthorRegistration>,
     signature: String,
-) -> Author {
-    Author {
+) -> Result<Author, (StatusCode, &'static str)> {
+    let name =
+        NonEmptyText::new(&name).map_err(|_| (StatusCode::BAD_REQUEST, "Invalid author name"))?;
+    let role =
+        NonEmptyText::new(&role).map_err(|_| (StatusCode::BAD_REQUEST, "Invalid author role"))?;
+    let email = EmailAddress::parse(&email)
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid author email"))?;
+
+    Ok(Author {
         name,
         email,
         role,
         registrations: registrations
             .into_iter()
-            .map(|r| AuthorRegistration {
-                authority: r.authority,
-                number: r.number,
-            })
+            .map(|r| AuthorRegistration::new(r.authority, r.number).expect("valid registration"))
             .collect(),
         signature: if signature.is_empty() {
             None
         } else {
-            Some(signature)
+            Some(signature.into_bytes())
         },
         certificate: None,
-    }
+    })
 }

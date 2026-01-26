@@ -16,7 +16,7 @@ use crate::paths::{
     common::GitIgnoreFile,
 };
 use crate::repositories::shared::create_uuid_and_shard_dir;
-use crate::types::NonEmptyText;
+use crate::NonEmptyText;
 
 // TODO: need to check if this is really needed
 #[cfg(test)]
@@ -35,7 +35,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use vpr_uuid::{Sha256Hash, TimestampIdGenerator};
+use vpr_uuid::{Sha256Hash, TimestampId, TimestampIdGenerator};
 
 #[cfg(test)]
 use std::io::ErrorKind;
@@ -323,7 +323,7 @@ impl ClinicalService<Initialised> {
         author: &Author,
         care_location: NonEmptyText,
         demographics_uuid: &str,
-        namespace: Option<String>,
+        namespace: Option<NonEmptyText>,
     ) -> PatientResult<()> {
         author.validate_commit_author()?;
 
@@ -338,7 +338,8 @@ impl ClinicalService<Initialised> {
         let demographics_uuid = ShardableUuid::parse(demographics_uuid)?;
 
         let namespace = namespace
-            .as_deref()
+            .as_ref()
+            .map(|n| n.as_str())
             .unwrap_or(self.cfg.vpr_namespace())
             .trim();
 
@@ -414,10 +415,10 @@ impl ClinicalService<Initialised> {
         &self,
         author: &Author,
         care_location: NonEmptyText,
-        body_content: Option<String>,
+        body_content: Option<NonEmptyText>,
         attachment_files: &[PathBuf],
         clinical_lists: Option<&[ClinicalList]>,
-    ) -> PatientResult<String> {
+    ) -> PatientResult<TimestampId> {
         // Validate: at least one of body or attachments must be present
         if body_content.is_none() && attachment_files.is_empty() {
             return Err(PatientError::InvalidInput(
@@ -463,12 +464,13 @@ impl ClinicalService<Initialised> {
                     metadata_filename: NonEmptyText::new(&attachment_filename).map_err(|e| {
                         PatientError::InvalidInput(format!("Invalid attachment filename: {}", e))
                     })?,
-                    hash: Sha256Hash::parse(&file_metadata.hash).map_err(|e| {
+                    hash: Sha256Hash::parse(file_metadata.hash.as_str()).map_err(|e| {
                         PatientError::InvalidInput(format!("Invalid SHA-256 hash: {}", e))
                     })?,
-                    file_storage_path: NonEmptyText::new(&file_metadata.relative_path).map_err(
-                        |e| PatientError::InvalidInput(format!("Invalid file storage path: {}", e)),
-                    )?,
+                    file_storage_path: NonEmptyText::new(file_metadata.relative_path.as_str())
+                        .map_err(|e| {
+                            PatientError::InvalidInput(format!("Invalid file storage path: {}", e))
+                        })?,
                     size_bytes: file_metadata.size_bytes,
                     media_type: file_metadata
                         .media_type
@@ -515,7 +517,7 @@ impl ClinicalService<Initialised> {
         let letter_data = openehr::LetterData {
             rm_version,
             uid: timestamp_id.clone(),
-            composer_name: author.name.clone(),
+            composer_name: author.name.to_string(),
             composer_role: "Clinical Practitioner".to_string(),
             start_time,
             clinical_lists: clinical_lists
@@ -545,25 +547,24 @@ impl ClinicalService<Initialised> {
             body_md_relative_path = letter_paths.body_md();
             files_to_write_vec.push(FileToWrite {
                 relative_path: &body_md_relative_path,
-                content: body,
+                content: body.as_str(),
                 old_content: None,
             });
         }
 
         // Add attachment metadata files
-        let attachment_contents: Vec<String> = attachment_files_to_write
-            .iter()
-            .map(|(_, content)| content.clone())
-            .collect();
         let attachment_paths: Vec<PathBuf> = attachment_files_to_write
             .iter()
             .map(|(path, _)| path.clone())
             .collect();
 
-        for (path, content) in attachment_paths.iter().zip(attachment_contents.iter()) {
+        for (path, content) in attachment_paths
+            .iter()
+            .zip(attachment_files_to_write.iter())
+        {
             files_to_write_vec.push(FileToWrite {
                 relative_path: path,
-                content,
+                content: content.1.as_str(),
                 old_content: None,
             });
         }
@@ -575,7 +576,7 @@ impl ClinicalService<Initialised> {
             &files_to_write_vec,
         )?;
 
-        Ok(timestamp_id.to_string())
+        Ok(timestamp_id)
     }
 
     /// Creates a new clinical letter with body content.
@@ -620,9 +621,9 @@ impl ClinicalService<Initialised> {
         &self,
         author: &Author,
         care_location: NonEmptyText,
-        letter_content: String,
+        letter_content: NonEmptyText,
         clinical_lists: Option<&[ClinicalList]>,
-    ) -> PatientResult<String> {
+    ) -> PatientResult<TimestampId> {
         author.validate_commit_author()?;
 
         let msg = VprCommitMessage::new(
@@ -649,7 +650,7 @@ impl ClinicalService<Initialised> {
         let letter_data = openehr::LetterData {
             rm_version,
             uid: timestamp_id.clone(),
-            composer_name: author.name.clone(),
+            composer_name: author.name.to_string(),
             composer_role: "Clinical Practitioner".to_string(),
             start_time,
             clinical_lists: clinical_lists
@@ -672,14 +673,14 @@ impl ClinicalService<Initialised> {
             },
             FileToWrite {
                 relative_path: &body_md_relative_path,
-                content: &letter_content,
+                content: letter_content.as_str(),
                 old_content: None,
             },
         ];
 
         VersionedFileService::write_and_commit_files(&patient_dir, author, &msg, &files_to_write)?;
 
-        Ok(timestamp_id.to_string())
+        Ok(timestamp_id)
     }
 
     /// Reads an existing clinical letter.
@@ -863,7 +864,7 @@ impl ClinicalService<Initialised> {
         care_location: NonEmptyText,
         attachment_files: &[PathBuf],
         clinical_lists: Option<&[ClinicalList]>,
-    ) -> PatientResult<String> {
+    ) -> PatientResult<TimestampId> {
         self.create_letter(
             author,
             care_location,
@@ -912,6 +913,7 @@ impl<S> ClinicalService<S> {
 mod tests {
     use super::*;
     use crate::config::rm_system_version_from_env_value;
+    use crate::{EmailAddress, NonEmptyText};
 
     use crate::CoreConfig;
     use p256::ecdsa::SigningKey;
@@ -929,7 +931,7 @@ mod tests {
             CoreConfig::new(
                 patient_data_dir.to_path_buf(),
                 rm_system_version,
-                "vpr.dev.1".into(),
+                crate::NonEmptyText::new("vpr.dev.1").unwrap(),
             )
             .expect("CoreConfig::new should succeed"),
         )
@@ -1060,26 +1062,17 @@ mod tests {
             CoreConfig::new(
                 patient_data_dir.path().to_path_buf(),
                 rm_system_version,
-                "vpr.dev.1".into(),
+                crate::NonEmptyText::new("vpr.dev.1").unwrap(),
             )
             .expect("CoreConfig::new should succeed"),
         );
 
-        let service = ClinicalService::new(cfg);
+        let _service = ClinicalService::new(cfg);
 
-        let author = Author {
-            name: " ".to_string(),
-            role: "Clinician".to_string(),
-            email: "test@example.com".to_string(),
-            registrations: vec![],
-            signature: None,
-            certificate: None,
-        };
-
-        let err = service
-            .initialise(author, NonEmptyText::new("Test Hospital").unwrap())
-            .expect_err("initialise should fail for invalid author");
-        assert!(matches!(err, PatientError::MissingAuthorName));
+        // NonEmptyText validation prevents whitespace-only strings at the type level
+        let err =
+            NonEmptyText::new(" ").expect_err("creating NonEmptyText from whitespace should fail");
+        assert!(matches!(err, crate::TextError::Empty));
 
         assert!(
             !patient_data_dir.path().join(CLINICAL_DIR_NAME).exists(),
@@ -1098,7 +1091,7 @@ mod tests {
             CoreConfig::new(
                 patient_data_dir.path().to_path_buf(),
                 rm_system_version,
-                "vpr.dev.1".into(),
+                crate::NonEmptyText::new("vpr.dev.1").unwrap(),
             )
             .expect("CoreConfig::new should succeed"),
         );
@@ -1106,9 +1099,9 @@ mod tests {
         let _service = ClinicalService::new(cfg);
 
         let _author = Author {
-            name: "Test Author".to_string(),
-            role: "Clinician".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Test Author").unwrap(),
+            role: NonEmptyText::new("Clinician").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -1117,7 +1110,7 @@ mod tests {
         // NonEmptyText validation prevents whitespace-only strings at the type level
         let err = NonEmptyText::new(" \t\n")
             .expect_err("creating NonEmptyText from whitespace should fail");
-        assert!(matches!(err, crate::types::TextError::Empty));
+        assert!(matches!(err, crate::TextError::Empty));
 
         assert!(
             !patient_data_dir.path().join(CLINICAL_DIR_NAME).exists(),
@@ -1132,9 +1125,9 @@ mod tests {
 
         // Create a test author
         let author = Author {
-            name: "Test Author".to_string(),
-            role: "Clinician".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Test Author").unwrap(),
+            role: NonEmptyText::new("Clinician").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -1185,9 +1178,9 @@ mod tests {
 
         // Create a test author
         let author = Author {
-            name: "Test Author".to_string(),
-            role: "Clinician".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Test Author").unwrap(),
+            role: NonEmptyText::new("Clinician").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -1242,9 +1235,9 @@ mod tests {
 
         // Create a valid clinical record first
         let author = Author {
-            name: "Test Author".to_string(),
-            role: "Clinician".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Test Author").unwrap(),
+            role: NonEmptyText::new("Clinician").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -1274,9 +1267,9 @@ mod tests {
 
         // Create a valid clinical record
         let author = Author {
-            name: "Test Author".to_string(),
-            role: "Clinician".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Test Author").unwrap(),
+            role: NonEmptyText::new("Clinician").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -1295,7 +1288,7 @@ mod tests {
                 &author,
                 NonEmptyText::new("Test Hospital").unwrap(),
                 &demographics_uuid_str,
-                Some("unsafe<namespace>with/special\\chars".to_string()),
+                Some(NonEmptyText::new("unsafe<namespace>with/special\\chars").unwrap()),
             )
             .expect_err("expected validation failure for unsafe namespace");
         assert!(matches!(err, PatientError::Openehr(_)));
@@ -1316,9 +1309,9 @@ mod tests {
         VersionedFileService::init(&patient_dir).expect("Failed to init git");
 
         let author = Author {
-            name: "Test Author".to_string(),
-            role: "Clinician".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Test Author").unwrap(),
+            role: NonEmptyText::new("Clinician").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -1364,9 +1357,9 @@ mod tests {
             .expect("Failed to write corrupted file");
 
         let author = Author {
-            name: "Test Author".to_string(),
-            role: "Clinician".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Test Author").unwrap(),
+            role: NonEmptyText::new("Clinician").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -1419,11 +1412,11 @@ mod tests {
             .patient_data_dir()
             .join(crate::constants::CLINICAL_DIR_NAME);
         let author = Author {
-            name: "Test Author".to_string(),
-            role: "Clinician".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Test Author").unwrap(),
+            role: NonEmptyText::new("Clinician").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
-            signature: Some(private_key_pem.to_string()),
+            signature: Some(private_key_pem.to_string().into_bytes()),
             certificate: None,
         };
 
@@ -1483,11 +1476,11 @@ mod tests {
             .patient_data_dir()
             .join(crate::constants::CLINICAL_DIR_NAME);
         let author = Author {
-            name: "Test Author".to_string(),
-            role: "Clinician".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Test Author").unwrap(),
+            role: NonEmptyText::new("Clinician").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
-            signature: Some(private_key_pem.to_string()),
+            signature: Some(private_key_pem.to_string().into_bytes()),
             certificate: None,
         };
 
@@ -1540,11 +1533,11 @@ mod tests {
         let cfg = test_cfg(temp_dir.path());
         let service = ClinicalService::new(cfg);
         let author = Author {
-            name: "Test Author".to_string(),
-            role: "Clinician".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Test Author").unwrap(),
+            role: NonEmptyText::new("Clinician").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
-            signature: Some(private_key_pem.to_string()),
+            signature: Some(private_key_pem.to_string().into_bytes()),
             certificate: Some(cert_pem.into_bytes()),
         };
 
@@ -1569,11 +1562,11 @@ mod tests {
         let cfg = test_cfg(temp_dir.path());
         let service = ClinicalService::new(cfg);
         let author = Author {
-            name: "Test Author".to_string(),
-            role: "Clinician".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Test Author").unwrap(),
+            role: NonEmptyText::new("Clinician").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
-            signature: Some(private_key_pem.to_string()),
+            signature: Some(private_key_pem.to_string().into_bytes()),
             certificate: None,
         };
 
@@ -1609,9 +1602,9 @@ mod tests {
             .join(crate::constants::CLINICAL_DIR_NAME);
 
         let author = Author {
-            name: "Test Author".to_string(),
-            role: "Clinician".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Test Author").unwrap(),
+            role: NonEmptyText::new("Clinician").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -1650,9 +1643,9 @@ mod tests {
         let cfg = test_cfg(patient_data_dir.path());
 
         let author = Author {
-            name: "Test Author".to_string(),
-            role: "Clinician".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Test Author").unwrap(),
+            role: NonEmptyText::new("Clinician").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -1666,7 +1659,7 @@ mod tests {
         let result = service.new_letter(
             &author,
             NonEmptyText::new("Test Hospital").unwrap(),
-            "Letter content".to_string(),
+            NonEmptyText::new("Letter content").unwrap(),
             None,
         );
 
@@ -1674,9 +1667,10 @@ mod tests {
         let timestamp_id = result.unwrap();
         println!("Timestamp ID: {}", timestamp_id);
 
-        assert!(!timestamp_id.is_empty());
+        let timestamp_str = timestamp_id.to_string();
+        assert!(!timestamp_str.is_empty());
         assert!(
-            timestamp_id.contains("Z-"),
+            timestamp_str.contains("Z-"),
             "timestamp_id should contain 'Z-' separator"
         );
     }
@@ -1688,9 +1682,9 @@ mod tests {
 
         let service = ClinicalService::new(cfg.clone());
         let author = Author {
-            name: "Dr. Test".to_string(),
-            role: "Consultant".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Dr. Test").unwrap(),
+            role: NonEmptyText::new("Consultant").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -1722,11 +1716,7 @@ mod tests {
         let clinical_uuid = ShardableUuid::parse(&service.clinical_id().simple().to_string())
             .expect("should parse clinical UUID");
         let patient_dir = service.clinical_patient_dir(&clinical_uuid);
-        let letter_paths = LetterPaths::new(
-            &timestamp_id
-                .parse::<vpr_uuid::TimestampId>()
-                .expect("should parse timestamp ID"),
-        );
+        let letter_paths = LetterPaths::new(&timestamp_id);
 
         // Check composition.yaml exists
         let composition_path = patient_dir.join(letter_paths.composition_yaml());
@@ -1761,9 +1751,9 @@ mod tests {
 
         let service = ClinicalService::new(cfg.clone());
         let author = Author {
-            name: "Dr. Test".to_string(),
-            role: "Consultant".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Dr. Test").unwrap(),
+            role: NonEmptyText::new("Consultant").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -1796,7 +1786,7 @@ mod tests {
 
         // Retrieve attachments
         let attachments = service
-            .get_letter_attachments(&timestamp_id)
+            .get_letter_attachments(&timestamp_id.to_string())
             .expect("get_letter_attachments should succeed");
 
         // Verify we got 2 attachments
@@ -1826,9 +1816,9 @@ mod tests {
 
         let service = ClinicalService::new(cfg.clone());
         let author = Author {
-            name: "Dr. Test".to_string(),
-            role: "Consultant".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Dr. Test").unwrap(),
+            role: NonEmptyText::new("Consultant").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -1844,14 +1834,14 @@ mod tests {
             .new_letter(
                 &author,
                 NonEmptyText::new("Test Hospital").unwrap(),
-                "Test content".to_string(),
+                NonEmptyText::new("Test content").unwrap(),
                 None,
             )
             .expect("new_letter should succeed");
 
         // Try to retrieve attachments
         let attachments = service
-            .get_letter_attachments(&timestamp_id)
+            .get_letter_attachments(&timestamp_id.to_string())
             .expect("get_letter_attachments should succeed");
 
         // Should return empty vector
@@ -1865,9 +1855,9 @@ mod tests {
 
         let service = ClinicalService::new(cfg.clone());
         let author = Author {
-            name: "Dr. Test".to_string(),
-            role: "Consultant".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Dr. Test").unwrap(),
+            role: NonEmptyText::new("Consultant").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -1885,14 +1875,14 @@ mod tests {
             .new_letter(
                 &author,
                 NonEmptyText::new("Test Hospital").unwrap(),
-                letter_content.to_string(),
+                NonEmptyText::new(letter_content).unwrap(),
                 None,
             )
             .expect("new_letter should succeed");
 
         // Read letter back
         let result = service
-            .read_letter(&timestamp_id)
+            .read_letter(&timestamp_id.to_string())
             .expect("read_letter should succeed");
 
         // Verify content
@@ -1908,9 +1898,9 @@ mod tests {
 
         let service = ClinicalService::new(cfg.clone());
         let author = Author {
-            name: "Dr. Test".to_string(),
-            role: "Consultant".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Dr. Test").unwrap(),
+            role: NonEmptyText::new("Consultant").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -1934,9 +1924,9 @@ mod tests {
 
         let service = ClinicalService::new(cfg.clone());
         let author = Author {
-            name: "Dr. Test".to_string(),
-            role: "Consultant".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Dr. Test").unwrap(),
+            role: NonEmptyText::new("Consultant").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -1961,9 +1951,9 @@ mod tests {
 
         let service = ClinicalService::new(cfg.clone());
         let author = Author {
-            name: "Dr. Test".to_string(),
-            role: "Consultant".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Dr. Test").unwrap(),
+            role: NonEmptyText::new("Consultant").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -1995,9 +1985,9 @@ mod tests {
 
         let service = ClinicalService::new(cfg.clone());
         let author = Author {
-            name: "Dr. Test".to_string(),
-            role: "Consultant".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Dr. Test").unwrap(),
+            role: NonEmptyText::new("Consultant").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -2034,11 +2024,7 @@ mod tests {
         let clinical_uuid = ShardableUuid::parse(&service.clinical_id().simple().to_string())
             .expect("should parse clinical UUID");
         let patient_dir = service.clinical_patient_dir(&clinical_uuid);
-        let letter_paths = LetterPaths::new(
-            &timestamp_id
-                .parse::<vpr_uuid::TimestampId>()
-                .expect("should parse timestamp ID"),
-        );
+        let letter_paths = LetterPaths::new(&timestamp_id);
 
         for i in 1..=3 {
             let attachment_path =
@@ -2058,9 +2044,9 @@ mod tests {
 
         let service = ClinicalService::new(cfg.clone());
         let author = Author {
-            name: "Dr. Test".to_string(),
-            role: "Consultant".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Dr. Test").unwrap(),
+            role: NonEmptyText::new("Consultant").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -2083,9 +2069,9 @@ mod tests {
 
         let service = ClinicalService::new(cfg.clone());
         let author = Author {
-            name: "Dr. Test".to_string(),
-            role: "Consultant".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Dr. Test").unwrap(),
+            role: NonEmptyText::new("Consultant").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,
@@ -2120,7 +2106,7 @@ mod tests {
 
         // Verify attachment is retrievable
         let attachments = service
-            .get_letter_attachments(&timestamp_id)
+            .get_letter_attachments(&timestamp_id.to_string())
             .expect("get_letter_attachments should succeed");
 
         assert_eq!(attachments.len(), 1);

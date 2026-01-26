@@ -16,3 +16,4 @@ serde_path_to_error = "0.1"
 thiserror = "1.0"
 uuid = { version = "1" }
 vpr-uuid = { path = "../uuid" }
+vpr-types = { path = "../vpr-types" }

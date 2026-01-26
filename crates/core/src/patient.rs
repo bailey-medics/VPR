@@ -6,18 +6,19 @@
 use crate::{
     author::Author, error::PatientResult, repositories::clinical::ClinicalService,
     repositories::coordination::CoordinationService,
-    repositories::demographics::DemographicsService, types::NonEmptyText,
+    repositories::demographics::DemographicsService, NonEmptyText, ShardableUuid,
 };
+use chrono::NaiveDate;
 
 /// Represents a complete patient record with both demographics and clinical components.
 #[derive(Debug)]
 pub struct FullRecord {
     /// The UUID of the demographics record.
-    pub demographics_uuid: String,
+    pub demographics_uuid: ShardableUuid,
     /// The UUID of the clinical record.
-    pub clinical_uuid: String,
+    pub clinical_uuid: ShardableUuid,
     /// The UUID of the coordination record.
-    pub coordination_uuid: String,
+    pub coordination_uuid: ShardableUuid,
 }
 
 /// Pure patient data operations - no API concerns
@@ -45,7 +46,7 @@ impl PatientService {
     /// * `author` - The author information for Git commits.
     /// * `given_names` - A vector of the patient's given names.
     /// * `last_name` - The patient's family/last name.
-    /// * `birth_date` - The patient's date of birth as a string (e.g., "YYYY-MM-DD").
+    /// * `birth_date` - The patient's date of birth.
     /// * `namespace` - Optional namespace for the clinical-demographics link.
     ///
     /// # Returns
@@ -62,10 +63,10 @@ impl PatientService {
         &self,
         author: Author,
         care_location: NonEmptyText,
-        given_names: Vec<String>,
-        last_name: String,
-        birth_date: String,
-        namespace: Option<String>,
+        given_names: Vec<NonEmptyText>,
+        last_name: NonEmptyText,
+        birth_date: NaiveDate,
+        namespace: Option<NonEmptyText>,
     ) -> PatientResult<FullRecord> {
         let demographics_service = DemographicsService::new(self.cfg.clone());
         // Initialise demographics
@@ -76,7 +77,7 @@ impl PatientService {
         let demographics_uuid = demographics_service.demographics_id().to_string();
 
         // Update demographics with patient information
-        demographics_service.update(given_names, &last_name, &birth_date)?;
+        demographics_service.update(given_names, last_name.as_str(), &birth_date.to_string())?;
 
         // Initialise clinical
         let clinical_service = ClinicalService::new(self.cfg.clone());
@@ -94,17 +95,14 @@ impl PatientService {
 
         // Initialise coordination record linked to clinical
         let coordination_service = CoordinationService::new(self.cfg.clone());
-        let coordination_service = coordination_service.initialise(
-            author,
-            care_location.as_str().to_string(),
-            clinical_uuid,
-        )?;
+        let coordination_service =
+            coordination_service.initialise(author, care_location, clinical_uuid)?;
         let coordination_uuid = coordination_service.coordination_id();
 
         Ok(FullRecord {
-            demographics_uuid,
-            clinical_uuid: clinical_uuid.simple().to_string(),
-            coordination_uuid: coordination_uuid.to_string(),
+            demographics_uuid: ShardableUuid::parse(&demographics_uuid)?,
+            clinical_uuid: ShardableUuid::parse(&clinical_uuid.simple().to_string())?,
+            coordination_uuid: coordination_uuid.clone(),
         })
     }
 }

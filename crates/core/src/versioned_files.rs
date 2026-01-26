@@ -66,7 +66,7 @@
 
 use crate::author::Author;
 use crate::error::{PatientError, PatientResult};
-use crate::types::NonEmptyText;
+use crate::NonEmptyText;
 use crate::ShardableUuid;
 use base64::{engine::general_purpose, Engine as _};
 use p256::ecdsa::signature::{Signer, Verifier};
@@ -363,8 +363,8 @@ impl fmt::Display for VprCommitAction {
 /// conventions and are sorted deterministically in rendered output.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub(crate) struct VprCommitTrailer {
-    key: String,
-    value: String,
+    key: NonEmptyText,
+    value: NonEmptyText,
 }
 
 impl VprCommitTrailer {
@@ -380,31 +380,38 @@ impl VprCommitTrailer {
     /// Returns `PatientError::InvalidInput` if validation fails.
     #[allow(dead_code)]
     pub(crate) fn new(key: impl Into<String>, value: impl Into<String>) -> PatientResult<Self> {
-        let key = key.into().trim().to_string();
-        let value = value.into().trim().to_string();
+        let key_str = key.into().trim().to_string();
+        let value_str = value.into().trim().to_string();
 
-        if key.is_empty()
-            || key.contains(['\n', '\r'])
-            || key.contains(':')
-            || value.is_empty()
-            || value.contains(['\n', '\r'])
+        if key_str.is_empty()
+            || key_str.contains(['\n', '\r'])
+            || key_str.contains(':')
+            || value_str.is_empty()
+            || value_str.contains(['\n', '\r'])
         {
             return Err(PatientError::InvalidInput(
                 "commit trailer key/value must be non-empty and single-line (key cannot contain ':')".into()
             ));
         }
 
+        let key = NonEmptyText::new(key_str).map_err(|_| {
+            PatientError::InvalidInput("commit trailer key must be non-empty".into())
+        })?;
+        let value = NonEmptyText::new(value_str).map_err(|_| {
+            PatientError::InvalidInput("commit trailer value must be non-empty".into())
+        })?;
+
         Ok(Self { key, value })
     }
 
     /// Get the trailer key.
     pub(crate) fn key(&self) -> &str {
-        &self.key
+        self.key.as_str()
     }
 
     /// Get the trailer value.
     pub(crate) fn value(&self) -> &str {
-        &self.value
+        self.value.as_str()
     }
 }
 
@@ -655,17 +662,17 @@ impl VprCommitMessage {
 
         rendered.push_str("\n\n");
         rendered.push_str("Author-Name: ");
-        rendered.push_str(author.name.trim());
+        rendered.push_str(author.name.as_str());
         rendered.push('\n');
         rendered.push_str("Author-Role: ");
-        rendered.push_str(author.role.trim());
+        rendered.push_str(author.role.as_str());
 
         for reg in regs {
             rendered.push('\n');
             rendered.push_str("Author-Registration: ");
-            rendered.push_str(reg.authority.trim());
+            rendered.push_str(reg.authority.as_str());
             rendered.push(' ');
-            rendered.push_str(reg.number.trim());
+            rendered.push_str(reg.number.as_str());
         }
 
         rendered.push('\n');
@@ -1151,7 +1158,7 @@ impl VersionedFileService {
             .find_tree(tree_id)
             .map_err(PatientError::GitFindTree)?;
 
-        let sig = git2::Signature::now(&author.name, &author.email)
+        let sig = git2::Signature::now(author.name.as_str(), author.email.as_str())
             .map_err(PatientError::GitSignature)?;
 
         if let Some(private_key_pem) = &author.signature {
@@ -1166,7 +1173,9 @@ impl VersionedFileService {
             let buf_str = String::from_utf8(buf.as_ref().to_vec())
                 .map_err(PatientError::CommitBufferToString)?;
 
-            let key_pem = Self::load_private_key_pem(private_key_pem)?;
+            let private_key_str = std::str::from_utf8(private_key_pem)
+                .map_err(|e| PatientError::EcdsaPrivateKeyParse(Box::new(e)))?;
+            let key_pem = Self::load_private_key_pem(private_key_str)?;
             let signing_key = SigningKey::from_pkcs8_pem(&key_pem)
                 .map_err(|e| PatientError::EcdsaPrivateKeyParse(Box::new(e)))?;
 
@@ -1425,6 +1434,7 @@ fn cleanup_patient_dir(patient_dir: &Path) -> std::io::Result<()> {
 mod tests {
     use super::ClinicalDomain::*;
     use super::*;
+    use crate::{EmailAddress, NonEmptyText};
     use tempfile::TempDir;
 
     #[test]
@@ -1572,9 +1582,9 @@ mod tests {
     #[test]
     fn render_with_author_includes_care_location_after_author_trailers() {
         let author = Author {
-            name: "Test Author".to_string(),
-            role: "Clinician".to_string(),
-            email: "test@example.com".to_string(),
+            name: NonEmptyText::new("Test Author").unwrap(),
+            role: NonEmptyText::new("Clinician").unwrap(),
+            email: EmailAddress::parse("test@example.com").unwrap(),
             registrations: vec![],
             signature: None,
             certificate: None,

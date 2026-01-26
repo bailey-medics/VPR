@@ -2,13 +2,12 @@
   "version": "0.2",
   "language": "en-GB",
   "ignorePaths": [
-    "Cargo.toml",
+    "/Cargo.toml",
     "Cargo.lock",
     "target/**",
     "Justfile",
     "**/Justfile",
-    "Dockerfile",
-    "**/*.rs"
+    "Dockerfile"
   ],
   "words": [
     "Adnane",

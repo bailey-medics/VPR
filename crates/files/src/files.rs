@@ -57,12 +57,13 @@
 //! - The service implements `Debug` but not `Clone` (single-owner semantics)
 
 use crate::{FilesError, FILES_FOLDER_NAME};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use vpr_uuid::ShardableUuid;
+use vpr_types::NonEmptyText;
+use vpr_uuid::{Sha256Hash, ShardableUuid};
 
 /// Metadata for a stored file
 ///
@@ -77,13 +78,13 @@ use vpr_uuid::ShardableUuid;
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct FileMetadata {
     /// Hashing algorithm used (always "sha256" for current implementation)
-    pub hash_algorithm: String,
+    pub hash_algorithm: NonEmptyText,
 
     /// Hexadecimal digest of the file content
-    pub hash: String,
+    pub hash: Sha256Hash,
 
     /// Path relative to repository root where the file is stored
-    pub relative_path: String,
+    pub relative_path: NonEmptyText,
 
     /// Size of the file in bytes
     pub size_bytes: u64,
@@ -92,13 +93,13 @@ pub struct FileMetadata {
     ///
     /// This is a best-effort detection and should not be considered authoritative.
     /// May be `None` if the media type cannot be determined.
-    pub media_type: Option<String>,
+    pub media_type: Option<NonEmptyText>,
 
     /// Original filename from the source path
-    pub original_filename: String,
+    pub original_filename: NonEmptyText,
 
     /// UTC timestamp when the file was stored (ISO 8601 format)
-    pub stored_at: String,
+    pub stored_at: DateTime<Utc>,
 }
 
 /// Service for managing files within a repository
@@ -241,14 +242,15 @@ impl FilesService {
         let mut hasher = Sha256::new();
         hasher.update(&buffer);
         let hash_bytes = hasher.finalize();
-        let hash_hex = hex::encode(hash_bytes);
+        let hash_array: [u8; 32] = hash_bytes.into();
+        let hash = Sha256Hash::from_bytes(&hash_array);
 
         // Create sharded path for storage
-        let storage_path = self.compute_storage_path(&hash_hex);
+        let storage_path = self.compute_storage_path(hash.as_str());
 
         // Check if file already exists (immutability check)
         if storage_path.exists() {
-            return Err(FilesError::FileAlreadyExists(hash_hex));
+            return Err(FilesError::FileAlreadyExists(hash.to_string()));
         }
 
         // Create parent directories
@@ -274,25 +276,29 @@ impl FilesService {
         })?;
 
         // Extract original filename
-        let original_filename = source_path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown")
-            .to_string();
+        let original_filename = NonEmptyText::new(
+            source_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown"),
+        )
+        .expect("filename is non-empty");
 
         // Detect media type (best-effort)
-        let media_type = infer::get(&buffer).map(|kind| kind.mime_type().to_string());
+        let media_type = infer::get(&buffer)
+            .map(|kind| NonEmptyText::new(kind.mime_type()).expect("mime type is non-empty"));
 
         // Compute relative path from repository root
-        let relative_path = self.compute_relative_path(&hash_hex);
+        let relative_path = self.compute_relative_path(hash.as_str());
 
         // Get current timestamp
-        let stored_at = Utc::now().to_rfc3339();
+        let stored_at = Utc::now();
 
         Ok(FileMetadata {
-            hash_algorithm: "sha256".to_string(),
-            hash: hash_hex,
-            relative_path,
+            hash_algorithm: NonEmptyText::new("sha256").expect("sha256 is non-empty"),
+            hash,
+            relative_path: NonEmptyText::new(&relative_path)
+                .expect("relative path is always non-empty"),
             size_bytes: buffer.len() as u64,
             media_type,
             original_filename,
@@ -356,7 +362,7 @@ impl FilesService {
     /// Example: hash `abcdef123...` produces `<repository_root>/files/sha256/ab/cd/abcdef123...`
     fn compute_storage_path(&self, hash_hex: &str) -> PathBuf {
         self.repository_root()
-            .join(self.compute_relative_path(hash_hex))
+            .join(self.compute_relative_path(hash_hex).as_str())
     }
 
     /// Computes the relative path from repository root to the stored file
@@ -368,10 +374,11 @@ impl FilesService {
     /// # Returns
     ///
     /// Relative path string in the format: `files/sha256/<shard1>/<shard2>/<hash>`
-    fn compute_relative_path(&self, hash_hex: &str) -> String {
+    fn compute_relative_path(&self, hash_hex: &str) -> NonEmptyText {
         let shard1 = &hash_hex[0..2];
         let shard2 = &hash_hex[2..4];
-        format!("files/sha256/{}/{}/{}", shard1, shard2, hash_hex)
+        NonEmptyText::new(format!("files/sha256/{}/{}/{}", shard1, shard2, hash_hex))
+            .expect("computed path is non-empty")
     }
 
     /// Returns the root directory containing all repositories
@@ -686,13 +693,13 @@ mod tests {
         let metadata = service.add(&source_file).unwrap();
 
         // Verify metadata
-        assert_eq!(metadata.hash_algorithm, "sha256");
+        assert_eq!(metadata.hash_algorithm.as_str(), "sha256");
         assert_eq!(metadata.size_bytes, 13);
-        assert_eq!(metadata.original_filename, "test.txt");
-        assert!(metadata.hash.len() == 64); // SHA-256 hex length
+        assert_eq!(metadata.original_filename.as_str(), "test.txt");
+        assert!(metadata.hash.as_str().len() == 64); // SHA-256 hex length
 
         // Verify file was stored
-        let stored_path = service.compute_storage_path(&metadata.hash);
+        let stored_path = service.compute_storage_path(metadata.hash.as_str());
         assert!(stored_path.exists());
 
         // Verify content
@@ -742,7 +749,10 @@ mod tests {
         let metadata = service.add(&source_file).unwrap();
 
         // Should detect PNG media type
-        assert_eq!(metadata.media_type, Some("image/png".to_string()));
+        assert_eq!(
+            metadata.media_type.as_ref().map(|t| t.as_str()),
+            Some("image/png")
+        );
     }
 
     #[test]
@@ -792,7 +802,7 @@ mod tests {
         let hash = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
         let relative = service.compute_relative_path(hash);
 
-        assert_eq!(relative, format!("files/sha256/ab/cd/{}", hash));
+        assert_eq!(relative.as_str(), format!("files/sha256/ab/cd/{}", hash));
     }
 
     #[test]
@@ -800,13 +810,16 @@ mod tests {
         use super::FileMetadata;
 
         let metadata = FileMetadata {
-            hash_algorithm: "sha256".to_string(),
-            hash: "abc123".to_string(),
-            relative_path: "files/sha256/ab/c1/abc123".to_string(),
+            hash_algorithm: NonEmptyText::new("sha256").unwrap(),
+            hash: Sha256Hash::parse(
+                "abc1230000000000000000000000000000000000000000000000000000000000",
+            )
+            .unwrap(),
+            relative_path: NonEmptyText::new("files/sha256/ab/c1/abc123").unwrap(),
             size_bytes: 1024,
-            media_type: Some("text/plain".to_string()),
-            original_filename: "document.txt".to_string(),
-            stored_at: "2024-01-01T00:00:00Z".to_string(),
+            media_type: Some(NonEmptyText::new("text/plain").unwrap()),
+            original_filename: NonEmptyText::new("document.txt").unwrap(),
+            stored_at: "2024-01-01T00:00:00Z".parse::<DateTime<Utc>>().unwrap(),
         };
 
         // Test that it can be serialized (would use serde_yaml in practice)
@@ -835,7 +848,7 @@ mod tests {
         assert_eq!(metadata.size_bytes, 256);
 
         // Verify stored content matches
-        let stored_path = service.compute_storage_path(&metadata.hash);
+        let stored_path = service.compute_storage_path(metadata.hash.as_str());
         let stored_content = fs::read(&stored_path).unwrap();
         let expected: Vec<u8> = (0..=255).collect();
         assert_eq!(stored_content, expected);
@@ -859,7 +872,7 @@ mod tests {
         let metadata = service.add(&source_file).unwrap();
 
         // Read the file back using its hash
-        let retrieved_content = service.read(&metadata.hash).unwrap();
+        let retrieved_content = service.read(metadata.hash.as_str()).unwrap();
 
         assert_eq!(retrieved_content, content);
     }
@@ -901,7 +914,7 @@ mod tests {
         let metadata = service.add(&source_file).unwrap();
 
         // Read it back
-        let retrieved_data = service.read(&metadata.hash).unwrap();
+        let retrieved_data = service.read(metadata.hash.as_str()).unwrap();
 
         assert_eq!(retrieved_data, binary_data);
         assert_eq!(retrieved_data.len(), 256);
@@ -930,7 +943,7 @@ mod tests {
             fs::write(&source_file, &content).unwrap();
 
             let metadata = service.add(&source_file).unwrap();
-            let retrieved = service.read(&metadata.hash).unwrap();
+            let retrieved = service.read(metadata.hash.as_str()).unwrap();
 
             assert_eq!(retrieved, content, "Round-trip failed for {}", filename);
         }
