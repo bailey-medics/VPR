@@ -47,7 +47,8 @@
 //! ```
 
 use crate::constants::{CLINICAL_DIR_NAME, DEMOGRAPHICS_DIR_NAME, LATEST_RM};
-use crate::error::{PatientError, PatientResult};
+use crate::error::PatientResult;
+use crate::NonEmptyText;
 use std::path::{Path, PathBuf};
 
 /// Core configuration resolved at startup.
@@ -64,7 +65,7 @@ use std::path::{Path, PathBuf};
 pub struct CoreConfig {
     patient_data_dir: PathBuf,
     rm_system_version: openehr::RmVersion,
-    vpr_namespace: String,
+    vpr_namespace: NonEmptyText,
 }
 
 impl CoreConfig {
@@ -82,14 +83,8 @@ impl CoreConfig {
     pub fn new(
         patient_data_dir: PathBuf,
         rm_system_version: openehr::RmVersion,
-        vpr_namespace: String,
+        vpr_namespace: NonEmptyText,
     ) -> PatientResult<Self> {
-        if vpr_namespace.trim().is_empty() {
-            return Err(PatientError::InvalidInput(
-                "vpr_namespace cannot be empty".into(),
-            ));
-        }
-
         Ok(Self {
             patient_data_dir,
             rm_system_version,
@@ -129,7 +124,7 @@ impl CoreConfig {
     ///
     /// Used to isolate different VPR instances or deployments.
     pub fn vpr_namespace(&self) -> &str {
-        &self.vpr_namespace
+        self.vpr_namespace.as_str()
     }
 }
 
@@ -149,10 +144,10 @@ impl CoreConfig {
 ///
 /// Returns `PatientError` if the version string cannot be parsed.
 pub fn rm_system_version_from_env_value(
-    value: Option<String>,
+    value: Option<NonEmptyText>,
 ) -> PatientResult<openehr::RmVersion> {
     let value = value
-        .map(|v| v.trim().to_string())
+        .map(|v| v.as_str().to_string())
         .filter(|v| !v.is_empty());
     let parsed = value.map(|v| v.parse::<openehr::RmVersion>()).transpose()?;
 

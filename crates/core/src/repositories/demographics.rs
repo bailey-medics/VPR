@@ -397,7 +397,7 @@ mod tests {
             CoreConfig::new(
                 patient_data_dir.to_path_buf(),
                 rm_system_version,
-                "vpr.dev.1".into(),
+                crate::NonEmptyText::new("vpr.dev.1").unwrap(),
             )
             .expect("CoreConfig::new should succeed"),
         )

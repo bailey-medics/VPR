@@ -876,7 +876,7 @@ impl Vpr for VprService {
                             timestamp: msg.metadata.timestamp.to_rfc3339(),
                             corrects: msg.corrects.map(|id| id.to_string()).unwrap_or_default(),
                         }),
-                        body: msg.body,
+                        body: msg.body.to_string(),
                     })
                     .collect(),
             })),

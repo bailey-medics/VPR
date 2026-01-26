@@ -116,13 +116,18 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let rm_system_version = rm_system_version_from_env_value(
-        std::env::var("RM_SYSTEM_VERSION").ok(),
+        std::env::var("RM_SYSTEM_VERSION")
+            .ok()
+            .and_then(|s| vpr_core::NonEmptyText::new(s).ok()),
     )
     .unwrap_or_else(|e| {
         eprintln!("Error: Invalid RM_SYSTEM_VERSION ({})", e);
         std::process::exit(1);
     });
-    let vpr_namespace = std::env::var("VPR_NAMESPACE").unwrap_or_else(|_| "vpr.dev.1".into());
+    let vpr_namespace = std::env::var("VPR_NAMESPACE")
+        .ok()
+        .and_then(|s| vpr_core::NonEmptyText::new(s).ok())
+        .unwrap_or_else(|| vpr_core::NonEmptyText::new("vpr.dev.1").unwrap());
 
     let cfg = Arc::new(
         CoreConfig::new(

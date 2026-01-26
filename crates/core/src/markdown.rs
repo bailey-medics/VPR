@@ -6,6 +6,7 @@
 //! unintended markdown interpretation.
 
 use crate::error::{PatientError, PatientResult};
+use crate::NonEmptyText;
 use chrono::{DateTime, Utc};
 use fhir::{AuthorRole, MessageAuthor};
 use uuid::Uuid;
@@ -22,7 +23,7 @@ pub struct Message {
     /// Strongly-typed message metadata
     pub metadata: MessageMetadata,
     /// Main body content (unescaped)
-    pub body: String,
+    pub body: NonEmptyText,
     /// Optional UUID of message being corrected
     pub corrects: Option<Uuid>,
 }
@@ -77,24 +78,22 @@ impl MarkdownService {
     /// # Arguments
     ///
     /// * `metadata` - Message metadata containing ID, timestamp, and author details
-    /// * `body` - User-provided content with markdown syntax escaped (must not be empty)
+    /// * `body` - User-provided content to be escaped (guaranteed non-empty by type)
     /// * `corrects` - Optional UUID of message being corrected
+    ///
+    /// # Returns
+    ///
+    /// Formatted markdown message with metadata and escaped body content.
     ///
     /// # Errors
     ///
-    /// Returns `PatientError::InvalidInput` if body is empty.
+    /// Returns `PatientError::InvalidInput` if role serialization fails.
     pub fn message_render(
         &self,
         metadata: &MessageMetadata,
-        body: &str,
+        body: &NonEmptyText,
         corrects: Option<Uuid>,
     ) -> PatientResult<String> {
-        if body.trim().is_empty() {
-            return Err(PatientError::InvalidInput(
-                "Body content must not be empty".to_string(),
-            ));
-        }
-
         let mut output = String::new();
 
         // Format metadata as bold key-value pairs
@@ -121,7 +120,7 @@ impl MarkdownService {
         output.push('\n');
 
         // Escape and append body
-        let sanitised_body = self.escape_body(body);
+        let sanitised_body = self.escape_body(body.as_str());
         output.push_str(&sanitised_body);
 
         // Add blank line after body, then separator for message delimiting
@@ -295,13 +294,14 @@ impl MarkdownService {
 
         // Join body lines and unescape
         let body_text = body_lines.join("\n");
-        let body = if body_text.trim().is_empty() {
+        if body_text.trim().is_empty() {
             return Err(PatientError::InvalidInput(
                 "Message must contain body content".to_string(),
             ));
-        } else {
-            self.unescape_body(&body_text)
-        };
+        }
+        let unescaped = self.unescape_body(&body_text);
+        let body = NonEmptyText::new(unescaped)
+            .map_err(|_| PatientError::InvalidInput("Body cannot be empty".to_string()))?;
 
         // Parse variables into MessageMetadata
         let mut message_id = None;
@@ -476,7 +476,7 @@ mod tests {
         };
         let msg = Message {
             metadata,
-            body: "Plain text content".to_string(),
+            body: NonEmptyText::new("Plain text content").unwrap(),
             corrects: None,
         };
         let result = service.thread_render(&[msg]).unwrap();
@@ -487,7 +487,8 @@ mod tests {
     #[test]
     fn test_message_prepare_escapes_hash_in_body() {
         let service = MarkdownService::new();
-        let body = "Patient #12345 has condition\n# This should be escaped";
+        let body =
+            NonEmptyText::new("Patient #12345 has condition\n# This should be escaped").unwrap();
         let metadata = MessageMetadata {
             message_id: Uuid::nil(),
             timestamp: DateTime::parse_from_rfc3339("2026-01-22T10:30:00Z")
@@ -499,14 +500,14 @@ mod tests {
                 role: AuthorRole::Clinician,
             },
         };
-        let result = service.message_render(&metadata, body, None).unwrap();
+        let result = service.message_render(&metadata, &body, None).unwrap();
         assert!(result.contains("Patient #12345 has condition\n\\# This should be escaped"));
     }
 
     #[test]
     fn test_message_prepare_escapes_code_blocks() {
         let service = MarkdownService::new();
-        let body = "Example code: ```python\nprint('hello')\n```";
+        let body = NonEmptyText::new("Example code: ```python\nprint('hello')\n```").unwrap();
         let metadata = MessageMetadata {
             message_id: Uuid::nil(),
             timestamp: DateTime::parse_from_rfc3339("2026-01-22T10:30:00Z")
@@ -518,14 +519,14 @@ mod tests {
                 role: AuthorRole::Clinician,
             },
         };
-        let result = service.message_render(&metadata, body, None).unwrap();
+        let result = service.message_render(&metadata, &body, None).unwrap();
         assert!(result.contains("Example code: \\`\\`\\`python\nprint('hello')\n\\`\\`\\`"));
     }
 
     #[test]
     fn test_message_prepare_escapes_horizontal_rules() {
         let service = MarkdownService::new();
-        let body = "Line 1\n---\nLine 2\n***\nLine 3\n___";
+        let body = NonEmptyText::new("Line 1\n---\nLine 2\n***\nLine 3\n___").unwrap();
         let metadata = MessageMetadata {
             message_id: Uuid::nil(),
             timestamp: DateTime::parse_from_rfc3339("2026-01-22T10:30:00Z")
@@ -537,7 +538,7 @@ mod tests {
                 role: AuthorRole::Clinician,
             },
         };
-        let result = service.message_render(&metadata, body, None).unwrap();
+        let result = service.message_render(&metadata, &body, None).unwrap();
         assert!(result.contains("Line 1\n\\---"));
         assert!(result.contains("Line 2\n\\***"));
         assert!(result.contains("Line 3\n\\___"));
@@ -558,7 +559,7 @@ mod tests {
             },
         };
         let result = service
-            .message_render(&metadata, "Some content", None)
+            .message_render(&metadata, &NonEmptyText::new("Some content").unwrap(), None)
             .unwrap();
         assert!(result.contains("**Message ID:** 550e8400-e29b-41d4-a716-446655440000"));
         assert!(result.contains("**Author name:** Dr Smith"));
@@ -568,27 +569,19 @@ mod tests {
 
     #[test]
     fn test_message_render_empty_body_fails() {
-        let service = MarkdownService::new();
-        let metadata = MessageMetadata {
-            message_id: Uuid::nil(),
-            timestamp: DateTime::parse_from_rfc3339("2026-01-22T10:30:00Z")
-                .unwrap()
-                .with_timezone(&Utc),
-            author: MessageAuthor {
-                id: Uuid::nil(),
-                name: "Test".to_string(),
-                role: AuthorRole::System,
-            },
-        };
-        let result = service.message_render(&metadata, "", None);
+        // NonEmptyText type prevents empty strings at construction time
+        let result = NonEmptyText::new("");
         assert!(result.is_err());
-        let result2 = service.message_render(&metadata, "   ", None);
+        let result2 = NonEmptyText::new("   ");
         assert!(result2.is_err());
     }
     #[test]
     fn test_thread_start_full_example() {
         let service = MarkdownService::new();
-        let body = "Patient #12345 presented with symptoms.\n# Important note\nSee details.";
+        let body = NonEmptyText::new(
+            "Patient #12345 presented with symptoms.\n# Important note\nSee details.",
+        )
+        .unwrap();
         let metadata = MessageMetadata {
             message_id: Uuid::nil(),
             timestamp: DateTime::parse_from_rfc3339("2026-01-22T10:30:00Z")
@@ -603,7 +596,7 @@ mod tests {
 
         let msg = Message {
             metadata,
-            body: body.to_string(),
+            body: body.clone(),
             corrects: None,
         };
         let result = service.thread_render(&[msg]).unwrap();
@@ -658,7 +651,7 @@ mod tests {
         let msg = &messages[0];
         assert_eq!(msg.metadata.author.name, "Dr Smith");
         assert_eq!(msg.metadata.author.role, AuthorRole::Clinician);
-        assert_eq!(msg.body, "Patient presented with symptoms.");
+        assert_eq!(msg.body.as_str(), "Patient presented with symptoms.");
     }
 
     #[test]
@@ -671,7 +664,7 @@ mod tests {
 
         let msg = &messages[0];
         assert_eq!(msg.metadata.author.name, "System");
-        assert_eq!(msg.body, "Simple body content.");
+        assert_eq!(msg.body.as_str(), "Simple body content.");
     }
 
     #[test]
@@ -682,8 +675,8 @@ mod tests {
         let messages = service.thread_parse(content).unwrap();
         assert_eq!(messages.len(), 2);
 
-        assert_eq!(messages[0].body, "First content");
-        assert_eq!(messages[1].body, "Second content");
+        assert_eq!(messages[0].body.as_str(), "First content");
+        assert_eq!(messages[1].body.as_str(), "Second content");
     }
 
     #[test]
@@ -695,7 +688,7 @@ mod tests {
         assert_eq!(messages.len(), 1);
 
         assert_eq!(
-            messages[0].body,
+            messages[0].body.as_str(),
             "Patient presented.\n# Important note\n```code```"
         );
     }
@@ -740,7 +733,7 @@ mod tests {
         };
         let msg = Message {
             metadata,
-            body: body.to_string(),
+            body: NonEmptyText::new(body).unwrap(),
             corrects: None,
         };
         let created = service.thread_render(&[msg]).unwrap();
@@ -752,7 +745,7 @@ mod tests {
         let msg = &parsed[0];
         assert_eq!(msg.metadata.author.name, "Dr Smith");
         assert_eq!(msg.metadata.author.role, AuthorRole::Clinician);
-        assert_eq!(msg.body, body);
+        assert_eq!(msg.body.as_str(), body);
     }
 
     #[test]
@@ -773,7 +766,7 @@ mod tests {
         };
         let msg1 = Message {
             metadata: metadata1,
-            body: "First message content".to_string(),
+            body: NonEmptyText::new("First message content").unwrap(),
             corrects: None,
         };
 
@@ -791,7 +784,7 @@ mod tests {
         };
         let msg2 = Message {
             metadata: metadata2,
-            body: "Second message content".to_string(),
+            body: NonEmptyText::new("Second message content").unwrap(),
             corrects: None,
         };
 
@@ -801,7 +794,7 @@ mod tests {
         // Parse back
         let parsed = service.thread_parse(&thread).unwrap();
         assert_eq!(parsed.len(), 2);
-        assert_eq!(parsed[0].body, "First message content");
-        assert_eq!(parsed[1].body, "Second message content");
+        assert_eq!(parsed[0].body.as_str(), "First message content");
+        assert_eq!(parsed[1].body.as_str(), "Second message content");
     }
 }

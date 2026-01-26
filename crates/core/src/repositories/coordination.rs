@@ -57,6 +57,7 @@ use crate::versioned_files::{
     CoordinationDomain::{Messaging, Record},
     FileToWrite, VersionedFileService, VprCommitAction, VprCommitDomain, VprCommitMessage,
 };
+use crate::NonEmptyText;
 use crate::ShardableUuid;
 use chrono::Utc;
 use fhir::{
@@ -295,7 +296,9 @@ impl CoordinationService<Initialised> {
 
         let initial_message = Message {
             metadata,
-            body: initial_message.body().to_string(),
+            body: NonEmptyText::new(initial_message.body()).map_err(|_| {
+                PatientError::InvalidInput("Message body cannot be empty".to_string())
+            })?,
             corrects: None,
         };
 
@@ -413,7 +416,9 @@ impl CoordinationService<Initialised> {
         // Create new thread with appended message
         let new_message = Message {
             metadata,
-            body: new_message.body().to_string(),
+            body: NonEmptyText::new(new_message.body()).map_err(|_| {
+                PatientError::InvalidInput("Message body cannot be empty".to_string())
+            })?,
             corrects: new_message.corrects(),
         };
         let mut new_thread = old_thread;
@@ -971,7 +976,7 @@ mod tests {
             CoreConfig::new(
                 temp_dir.path().to_path_buf(),
                 openehr::RmVersion::rm_1_1_0,
-                "test-namespace".to_string(),
+                NonEmptyText::new("test-namespace").unwrap(),
             )
             .unwrap(),
         );
@@ -1159,8 +1164,11 @@ mod tests {
         // Read thread and verify both messages
         let thread = service.read_communication(&thread_id).unwrap();
         assert_eq!(thread.messages.len(), 2);
-        assert_eq!(thread.messages[0].body, "First message");
-        assert_eq!(thread.messages[1].body, "Second message from patient");
+        assert_eq!(thread.messages[0].body.as_str(), "First message");
+        assert_eq!(
+            thread.messages[1].body.as_str(),
+            "Second message from patient"
+        );
     }
 
     #[test]
@@ -1527,8 +1535,8 @@ Second message body
         let markdown_service = MarkdownService::new();
         let parsed_messages = markdown_service.thread_parse(content).unwrap();
         assert_eq!(parsed_messages.len(), 2);
-        assert_eq!(parsed_messages[0].body, "First message body");
-        assert_eq!(parsed_messages[1].body, "Second message body");
+        assert_eq!(parsed_messages[0].body.as_str(), "First message body");
+        assert_eq!(parsed_messages[1].body.as_str(), "Second message body");
         assert_eq!(parsed_messages[0].metadata.author.name, "Dr. Smith");
         assert_eq!(parsed_messages[1].metadata.author.name, "Patient John");
     }
