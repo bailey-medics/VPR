@@ -36,6 +36,7 @@ exceptions = [
     { allow = ["AGPL-3.0-or-later"], name = "vpr-run" },
     { allow = ["AGPL-3.0-or-later"], name = "vpr-core" },
     { allow = ["AGPL-3.0-or-later"], name = "vpr-uuid" },
+    { allow = ["AGPL-3.0-or-later"], name = "vpr-types" },
     { allow = ["AGPL-3.0-or-later"], name = "openehr" },
     { allow = ["AGPL-3.0-or-later"], name = "fhir" },
     { allow = ["AGPL-3.0-or-later"], name = "api-shared" },
