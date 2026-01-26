@@ -10,6 +10,7 @@
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
+use vpr_types::NonEmptyText;
 
 use crate::OpenEhrError;
 
@@ -41,7 +42,7 @@ use crate::OpenEhrError;
 #[serde(deny_unknown_fields)]
 pub struct DvText {
     /// The plain text content.
-    pub value: String,
+    pub value: NonEmptyText,
 }
 
 /// Parsed and validated representation of an openEHR archetype identifier.

@@ -236,7 +236,7 @@ impl DemographicsService<Initialised> {
     /// - `patient.yaml` file cannot be read, deserialised, serialised, or written
     pub fn update(
         &self,
-        given_names: Vec<String>,
+        given_names: Vec<NonEmptyText>,
         last_name: &str,
         birth_date: &str,
     ) -> PatientResult<()> {
@@ -252,9 +252,15 @@ impl DemographicsService<Initialised> {
 
         // Update only the specified fields
         patient_data.use_type = Some(NameUse::Official);
-        patient_data.family = Some(last_name.to_string());
+        patient_data.family = Some(
+            NonEmptyText::new(last_name).map_err(|e| PatientError::InvalidInput(e.to_string()))?,
+        );
         patient_data.given = given_names;
-        patient_data.birth_date = Some(birth_date.to_string());
+        patient_data.birth_date = Some(
+            birth_date
+                .parse()
+                .map_err(|e| PatientError::InvalidInput(format!("Invalid birth date: {}", e)))?,
+        );
 
         // Write back the updated YAML
         let yaml = Patient::render(&patient_data)?;
@@ -335,9 +341,16 @@ impl<S> DemographicsService<S> {
                                 let id = patient_data.id.to_string();
 
                                 // Extract name information from flat structure
-                                let first_name =
-                                    patient_data.given.first().cloned().unwrap_or_default();
-                                let last_name = patient_data.family.unwrap_or_default();
+                                let first_name = patient_data
+                                    .given
+                                    .first()
+                                    .map(|n| n.to_string())
+                                    .unwrap_or_else(|| String::from(""));
+                                let last_name = patient_data
+                                    .family
+                                    .as_ref()
+                                    .map(|n| n.to_string())
+                                    .unwrap_or_else(|| String::from(""));
                                 let created_at = patient_data
                                     .last_updated
                                     .map(|dt| dt.to_rfc3339())
@@ -576,7 +589,10 @@ mod tests {
         // Update demographics
         demographics_service
             .update(
-                vec!["John".to_string(), "Paul".to_string()],
+                vec![
+                    NonEmptyText::new("John").unwrap(),
+                    NonEmptyText::new("Paul").unwrap(),
+                ],
                 "Smith",
                 "1990-01-15",
             )
@@ -592,12 +608,21 @@ mod tests {
         let patient_data = Patient::parse(&yaml_content).expect("should parse patient.yaml");
 
         assert_eq!(patient_data.use_type, Some(NameUse::Official));
-        assert_eq!(patient_data.family, Some("Smith".to_string()));
+        assert_eq!(
+            patient_data.family,
+            Some(NonEmptyText::new("Smith").unwrap())
+        );
         assert_eq!(
             patient_data.given,
-            vec!["John".to_string(), "Paul".to_string()]
+            vec![
+                NonEmptyText::new("John").unwrap(),
+                NonEmptyText::new("Paul").unwrap()
+            ]
         );
-        assert_eq!(patient_data.birth_date, Some("1990-01-15".to_string()));
+        assert_eq!(
+            patient_data.birth_date,
+            Some(NaiveDate::from_ymd_opt(1990, 1, 15).unwrap())
+        );
     }
 
     #[test]
@@ -621,7 +646,11 @@ mod tests {
             .initialise(test_author(), NonEmptyText::new("Test Hospital").unwrap())
             .expect("initialise should succeed");
         demographics_service1
-            .update(vec!["Alice".to_string()], "Smith", "1990-01-15")
+            .update(
+                vec![NonEmptyText::new("Alice").unwrap()],
+                "Smith",
+                "1990-01-15",
+            )
             .expect("update should succeed");
 
         // Create second patient
@@ -630,7 +659,11 @@ mod tests {
             .initialise(test_author(), NonEmptyText::new("Test Hospital").unwrap())
             .expect("initialise should succeed");
         demographics_service2
-            .update(vec!["Bob".to_string()], "Jones", "1985-06-20")
+            .update(
+                vec![NonEmptyText::new("Bob").unwrap()],
+                "Jones",
+                "1985-06-20",
+            )
             .expect("update should succeed");
 
         // List all patients
@@ -666,7 +699,11 @@ mod tests {
             .initialise(test_author(), NonEmptyText::new("Test Hospital").unwrap())
             .expect("initialise should succeed");
         demographics_service1
-            .update(vec!["Valid".to_string()], "Patient", "1990-01-15")
+            .update(
+                vec![NonEmptyText::new("Valid").unwrap()],
+                "Patient",
+                "1990-01-15",
+            )
             .expect("update should succeed");
 
         // Create invalid patient.yaml manually

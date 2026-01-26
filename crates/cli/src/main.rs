@@ -6,6 +6,7 @@
 
 #![allow(rustdoc::invalid_html_tags)]
 
+use chrono::NaiveDate;
 use clap::{Parser, Subcommand};
 use fhir::{
     coordination_status::LifecycleState, messaging::SensitivityLevel,

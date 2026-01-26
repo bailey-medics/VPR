@@ -7,8 +7,7 @@
     "target/**",
     "Justfile",
     "**/Justfile",
-    "Dockerfile",
-    "**/*.rs"
+    "Dockerfile"
   ],
   "words": [
     "Adnane",

@@ -93,7 +93,7 @@ impl MarkdownService {
         metadata: &MessageMetadata,
         body: &NonEmptyText,
         corrects: Option<Uuid>,
-    ) -> PatientResult<String> {
+    ) -> PatientResult<NonEmptyText> {
         let mut output = String::new();
 
         // Format metadata as bold key-value pairs
@@ -121,12 +121,12 @@ impl MarkdownService {
 
         // Escape and append body
         let sanitised_body = self.escape_body(body.as_str());
-        output.push_str(&sanitised_body);
+        output.push_str(sanitised_body.as_str());
 
         // Add blank line after body, then separator for message delimiting
         output.push_str("\n\n---\n");
 
-        Ok(output)
+        NonEmptyText::new(output).map_err(|e| PatientError::InvalidInput(e.to_string()))
     }
 
     /// Renders multiple messages into a complete markdown thread.
@@ -146,14 +146,20 @@ impl MarkdownService {
     /// # Errors
     ///
     /// Returns `PatientError::InvalidInput` if any message has an empty body.
-    pub fn thread_render(&self, messages: &[Message]) -> PatientResult<String> {
-        let content = messages
+    pub fn thread_render(&self, messages: &[Message]) -> PatientResult<NonEmptyText> {
+        let rendered_messages = messages
             .iter()
             .map(|msg| self.message_render(&msg.metadata, &msg.body, msg.corrects))
-            .collect::<PatientResult<Vec<String>>>()
-            .map(|rendered| rendered.join(""))?;
+            .collect::<PatientResult<Vec<NonEmptyText>>>()?;
 
-        Ok(format!("{}\n\n{}\n", THREAD_HEADER, content.trim_end()))
+        let content = rendered_messages
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join("");
+
+        NonEmptyText::new(format!("{}\n\n{}\n", THREAD_HEADER, content.trim_end()))
+            .map_err(|e| PatientError::InvalidInput(e.to_string()))
     }
 
     /// Parses a markdown thread file into structured messages.
@@ -238,7 +244,7 @@ impl MarkdownService {
     fn message_parse(&self, section: &str) -> PatientResult<Message> {
         let lines: Vec<&str> = section.lines().collect();
 
-        let mut variables: Vec<(String, String)> = Vec::new();
+        let mut variables: Vec<(NonEmptyText, NonEmptyText)> = Vec::new();
         let mut body_lines: Vec<&str> = Vec::new();
 
         // State tracking: 0 = looking for variables, 1 = in body
@@ -262,8 +268,10 @@ impl MarkdownService {
             if state == 0 {
                 if trimmed.starts_with("**") && trimmed.contains(":**") {
                     if let Some(colon_pos) = trimmed.find(":**") {
-                        let key = trimmed[2..colon_pos].trim().to_string();
-                        let value = trimmed[colon_pos + 3..].trim().to_string();
+                        let key = NonEmptyText::new(trimmed[2..colon_pos].trim())
+                            .map_err(|e| PatientError::InvalidInput(e.to_string()))?;
+                        let value = NonEmptyText::new(trimmed[colon_pos + 3..].trim())
+                            .map_err(|e| PatientError::InvalidInput(e.to_string()))?;
                         variables.push((key, value));
                         i += 1;
                         continue;
@@ -313,27 +321,27 @@ impl MarkdownService {
 
         for (key, value) in &variables {
             match key.as_str() {
-                "Message ID" => message_id = Uuid::parse_str(value).ok(),
+                "Message ID" => message_id = Uuid::parse_str(value.as_str()).ok(),
                 "Timestamp" => {
-                    timestamp = DateTime::parse_from_rfc3339(value)
+                    timestamp = DateTime::parse_from_rfc3339(value.as_str())
                         .ok()
                         .map(|dt| dt.with_timezone(&Utc))
                 }
-                "Author ID" => author_id = Uuid::parse_str(value).ok(),
+                "Author ID" => author_id = Uuid::parse_str(value.as_str()).ok(),
                 "Author name" => author_name = Some(value.clone()),
                 "Author" => author_name = Some(value.clone()), // Legacy support
                 "Author role" => {
-                    author_role = AuthorRole::parse(value)
+                    author_role = AuthorRole::parse(value.as_str())
                         .map_err(|e| PatientError::InvalidInput(e.to_string()))
                         .ok();
                 }
                 "Role" => {
                     // Legacy support
-                    author_role = AuthorRole::parse(value)
+                    author_role = AuthorRole::parse(value.as_str())
                         .map_err(|e| PatientError::InvalidInput(e.to_string()))
                         .ok();
                 }
-                "Corrects" => corrects = Uuid::parse_str(value).ok(),
+                "Corrects" => corrects = Uuid::parse_str(value.as_str()).ok(),
                 _ => {}
             }
         }
@@ -379,7 +387,7 @@ impl MarkdownService {
     /// # Returns
     ///
     /// Escaped body with markdown syntax characters preceded by backslashes.
-    fn escape_body(&self, body: &str) -> String {
+    fn escape_body(&self, body: &str) -> NonEmptyText {
         let mut result = String::new();
         let lines: Vec<&str> = body.lines().collect();
 
@@ -405,7 +413,7 @@ impl MarkdownService {
             }
         }
 
-        result
+        NonEmptyText::new(result).expect("escaped body should be non-empty")
     }
 
     /// Unescapes markdown formatting characters in body content.
@@ -420,7 +428,7 @@ impl MarkdownService {
     /// # Returns
     ///
     /// Unescaped body with backslash escapes removed from markdown syntax.
-    fn unescape_body(&self, body: &str) -> String {
+    fn unescape_body(&self, body: &str) -> NonEmptyText {
         let mut result = String::new();
         let lines: Vec<&str> = body.lines().collect();
 
@@ -446,7 +454,7 @@ impl MarkdownService {
             }
         }
 
-        result
+        NonEmptyText::new(result).expect("unescaped body should be non-empty")
     }
 }
 

@@ -120,6 +120,7 @@ dependencies = [
  "anyhow",
  "api-shared",
  "axum",
+ "chrono",
  "fhir",
  "serde",
  "serde_json",
@@ -700,6 +701,7 @@ dependencies = [
  "serde_yaml",
  "thiserror 1.0.69",
  "uuid",
+ "vpr-types",
  "vpr-uuid",
 ]
 
@@ -1521,6 +1523,7 @@ dependencies = [
  "serde_yaml",
  "thiserror 1.0.69",
  "uuid",
+ "vpr-types",
  "vpr-uuid",
 ]
 
@@ -2938,6 +2941,7 @@ name = "vpr-cli"
 version = "0.1.0"
 dependencies = [
  "base64 0.21.7",
+ "chrono",
  "clap",
  "fhir",
  "uuid",
@@ -3033,6 +3037,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "thiserror 2.0.17",
+ "vpr-types",
  "vpr-uuid",
 ]
 

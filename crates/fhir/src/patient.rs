@@ -14,8 +14,9 @@
 //! - Changes should be git-audited where appropriate
 
 use crate::FhirError;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
+use vpr_types::NonEmptyText;
 use vpr_uuid::ShardableUuid;
 
 // ============================================================================
@@ -84,13 +85,13 @@ pub struct PatientData {
     pub use_type: Option<NameUse>,
 
     /// Family name (surname).
-    pub family: Option<String>,
+    pub family: Option<NonEmptyText>,
 
     /// Given names (first name, middle names).
-    pub given: Vec<String>,
+    pub given: Vec<NonEmptyText>,
 
     /// Patient's date of birth (ISO 8601 date format: YYYY-MM-DD).
-    pub birth_date: Option<String>,
+    pub birth_date: Option<NaiveDate>,
 
     /// Last updated timestamp.
     pub last_updated: Option<DateTime<Utc>>,
@@ -108,7 +109,7 @@ pub struct PatientData {
 struct PatientDataNested {
     pub id: ShardableUuid,
     pub names: Vec<FullName>,
-    pub birth_date: Option<String>,
+    pub birth_date: Option<NaiveDate>,
     pub meta: Option<PatientMeta>,
 }
 
@@ -116,8 +117,8 @@ struct PatientDataNested {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct FullName {
     pub use_type: Option<NameUse>,
-    pub family: Option<String>,
-    pub given: Vec<String>,
+    pub family: Option<NonEmptyText>,
+    pub given: Vec<NonEmptyText>,
 }
 
 /// Patient resource metadata (internal).
@@ -272,10 +273,26 @@ fn wire_to_nested(wire: PatientWire) -> Result<PatientDataNested, FhirError> {
         .into_iter()
         .map(|n| {
             let use_type = n.use_type.as_deref().and_then(NameUse::from_wire);
+
+            let family = n
+                .family
+                .map(|f| NonEmptyText::new(&f))
+                .transpose()
+                .map_err(|e| FhirError::Translation(format!("Invalid family name: {}", e)))?;
+
+            let given = n
+                .given
+                .into_iter()
+                .map(|g| {
+                    NonEmptyText::new(&g)
+                        .map_err(|e| FhirError::Translation(format!("Invalid given name: {}", e)))
+                })
+                .collect::<Result<Vec<_>, FhirError>>()?;
+
             Ok(FullName {
                 use_type,
-                family: n.family,
-                given: n.given,
+                family,
+                given,
             })
         })
         .collect::<Result<Vec<_>, FhirError>>()?;
@@ -288,10 +305,19 @@ fn wire_to_nested(wire: PatientWire) -> Result<PatientDataNested, FhirError> {
         PatientMeta { last_updated }
     });
 
+    let birth_date = wire
+        .birth_date
+        .as_ref()
+        .map(|s| {
+            s.parse::<NaiveDate>()
+                .map_err(|e| FhirError::Translation(format!("Invalid birth date: {e}")))
+        })
+        .transpose()?;
+
     Ok(PatientDataNested {
         id,
         names,
-        birth_date: wire.birth_date,
+        birth_date,
         meta,
     })
 }
@@ -306,11 +332,11 @@ fn nested_to_wire(nested: &PatientDataNested) -> PatientWire {
             .iter()
             .map(|n| FullNameWire {
                 use_type: n.use_type.map(|u| u.to_wire().to_string()),
-                family: n.family.clone(),
-                given: n.given.clone(),
+                family: n.family.as_ref().map(|f| f.to_string()),
+                given: n.given.iter().map(|g| g.to_string()).collect(),
             })
             .collect(),
-        birth_date: nested.birth_date.clone(),
+        birth_date: nested.birth_date.map(|d| d.to_string()),
         meta: nested.meta.as_ref().map(|m| PatientMetaWire {
             last_updated: m.last_updated.map(|dt| dt.to_rfc3339()),
         }),
@@ -336,7 +362,7 @@ fn flat_to_nested(data: &PatientData) -> PatientDataNested {
     PatientDataNested {
         id: data.id.clone(),
         names,
-        birth_date: data.birth_date.clone(),
+        birth_date: data.birth_date,
         meta,
     }
 }
@@ -490,8 +516,11 @@ name:
         let result = Patient::parse(input).expect("should parse multiple names");
         // Flat structure extracts only the first name
         assert_eq!(result.use_type, Some(NameUse::Official));
-        assert_eq!(result.family, Some("Williams".to_string()));
-        assert_eq!(result.given, vec!["Sarah", "Jane"]);
+        assert_eq!(result.family.as_ref().map(|f| f.as_str()), Some("Williams"));
+        assert_eq!(
+            result.given.iter().map(|g| g.as_str()).collect::<Vec<_>>(),
+            vec!["Sarah", "Jane"]
+        );
     }
 
     #[test]
@@ -502,7 +531,10 @@ birthDate: 1992-03-20
 "#;
 
         let result = Patient::parse(input).expect("should parse birth date");
-        assert_eq!(result.birth_date, Some("1992-03-20".to_string()));
+        assert_eq!(
+            result.birth_date,
+            Some(NaiveDate::from_ymd_opt(1992, 3, 20).unwrap())
+        );
     }
 
     #[test]
@@ -531,9 +563,12 @@ meta:
         let data = PatientData {
             id,
             use_type: Some(NameUse::Official),
-            family: Some("Williams".to_string()),
-            given: vec!["Sarah".to_string(), "Jane".to_string()],
-            birth_date: Some("1992-03-20".to_string()),
+            family: Some(NonEmptyText::new("Williams").unwrap()),
+            given: vec![
+                NonEmptyText::new("Sarah").unwrap(),
+                NonEmptyText::new("Jane").unwrap(),
+            ],
+            birth_date: Some(NaiveDate::from_ymd_opt(1992, 3, 20).unwrap()),
             last_updated: Some(last_updated),
         };
 

@@ -15,4 +15,5 @@ serde_yaml = "0.9"
 serde_path_to_error = "0.1"
 thiserror = "1.0"
 uuid = { version = "1", features = ["serde"] }
+vpr-types = { path = "../vpr-types" }
 vpr-uuid = { path = "../uuid" }

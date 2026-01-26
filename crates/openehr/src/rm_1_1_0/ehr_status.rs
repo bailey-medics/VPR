@@ -16,6 +16,7 @@
 use crate::data_types::{ArchetypeId, DvText};
 use crate::{EhrId, ExternalReference, OpenEhrError, RmVersion};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use vpr_types::NonEmptyText;
 
 use super::MODULE_RM_VERSION;
 
@@ -322,7 +323,7 @@ fn ehr_status_init(ehr_id: &EhrId, external_refs: Option<Vec<ExternalReference>>
         },
         archetype_node_id: EhrStatus::default_archetype_node_id().to_string(),
         name: DvText {
-            value: EhrStatus::DEFAULT_NAME.to_string(),
+            value: NonEmptyText::new(EhrStatus::DEFAULT_NAME).expect("DEFAULT_NAME is non-empty"),
         },
         subject: PartySelf {
             external_ref: ExternalRefs(
@@ -622,7 +623,7 @@ is_modifiable: true
             result.archetype_node_id,
             EhrStatus::default_archetype_node_id().to_string()
         );
-        assert_eq!(result.name.value, EhrStatus::DEFAULT_NAME);
+        assert_eq!(result.name.value.as_str(), EhrStatus::DEFAULT_NAME);
         assert!(result.is_queryable);
         assert!(result.is_modifiable);
         assert!(result.other_details.is_none());
@@ -713,7 +714,7 @@ is_modifiable: true
             result.archetype_node_id,
             EhrStatus::default_archetype_node_id().to_string()
         );
-        assert_eq!(result.name.value, EhrStatus::DEFAULT_NAME);
+        assert_eq!(result.name.value.as_str(), EhrStatus::DEFAULT_NAME);
         assert!(result.is_queryable);
         assert!(result.is_modifiable);
         assert!(result.other_details.is_none());

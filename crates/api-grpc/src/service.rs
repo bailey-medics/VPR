@@ -14,6 +14,7 @@
 pub use api_shared::pb;
 
 use api_shared::{auth, HealthService};
+use chrono::NaiveDate;
 use fhir::{
     coordination_status::LifecycleState, messaging::SensitivityLevel,
     messaging::ThreadStatus as FhirThreadStatus, AuthorRole, MessageAuthor as FhirMessageAuthor,
@@ -230,22 +231,43 @@ impl Vpr for VprService {
             .map_err(|e| Status::invalid_argument(format!("Invalid care_location: {}", e)))?;
 
         let patient_service = PatientService::new(self.cfg.clone());
+
+        let given_names: Vec<NonEmptyText> = req
+            .given_names
+            .into_iter()
+            .map(|name| {
+                NonEmptyText::new(name)
+                    .map_err(|e| Status::invalid_argument(format!("Invalid given name: {}", e)))
+            })
+            .collect::<Result<Vec<_>, Status>>()?;
+
+        let last_name = NonEmptyText::new(req.last_name)
+            .map_err(|e| Status::invalid_argument(format!("Invalid last name: {}", e)))?;
+
+        let birth_date = NaiveDate::parse_from_str(&req.birth_date, "%Y-%m-%d")
+            .map_err(|e| Status::invalid_argument(format!("Invalid birth date: {}", e)))?;
+
+        let namespace = if req.namespace.is_empty() {
+            None
+        } else {
+            Some(
+                NonEmptyText::new(req.namespace)
+                    .map_err(|e| Status::invalid_argument(format!("Invalid namespace: {}", e)))?,
+            )
+        };
+
         match patient_service.initialise_full_record(
             author,
             care_location,
-            req.given_names,
-            req.last_name,
-            req.birth_date,
-            if req.namespace.is_empty() {
-                None
-            } else {
-                Some(req.namespace)
-            },
+            given_names,
+            last_name,
+            birth_date,
+            namespace,
         ) {
             Ok(record) => Ok(Response::new(pb::InitialiseFullRecordRes {
-                demographics_uuid: record.demographics_uuid,
-                clinical_uuid: record.clinical_uuid,
-                coordination_uuid: record.coordination_uuid,
+                demographics_uuid: record.demographics_uuid.to_string(),
+                clinical_uuid: record.clinical_uuid.to_string(),
+                coordination_uuid: record.coordination_uuid.to_string(),
             })),
             Err(e) => Err(Status::internal(format!(
                 "Failed to initialise full record: {}",
@@ -306,7 +328,24 @@ impl Vpr for VprService {
                 |e| Status::invalid_argument(format!("Invalid demographics UUID: {}", e)),
             )?;
 
-        match demographics_service.update(req.given_names, &req.last_name, &req.birth_date) {
+        let given_names: Vec<NonEmptyText> = req
+            .given_names
+            .into_iter()
+            .map(|name| {
+                NonEmptyText::new(name)
+                    .map_err(|e| Status::invalid_argument(format!("Invalid given name: {}", e)))
+            })
+            .collect::<Result<Vec<_>, Status>>()?;
+
+        let last_name = NonEmptyText::new(req.last_name)
+            .map_err(|e| Status::invalid_argument(format!("Invalid last name: {}", e)))?;
+
+        let birth_date = NaiveDate::parse_from_str(&req.birth_date, "%Y-%m-%d")
+            .map_err(|e| Status::invalid_argument(format!("Invalid birth date: {}", e)))?;
+
+        let birth_date_str = birth_date.format("%Y-%m-%d").to_string();
+
+        match demographics_service.update(given_names, last_name.as_str(), &birth_date_str) {
             Ok(()) => Ok(Response::new(pb::UpdateDemographicsRes { success: true })),
             Err(e) => Err(Status::internal(format!(
                 "Failed to update demographics: {}",
@@ -378,15 +417,21 @@ impl Vpr for VprService {
             .map_err(|e| Status::invalid_argument(format!("Invalid care_location: {}", e)))?;
 
         let clinical_service = ClinicalService::with_id(self.cfg.clone(), clinical_uuid);
+
+        let namespace = if req.namespace.is_empty() {
+            None
+        } else {
+            Some(
+                NonEmptyText::new(req.namespace)
+                    .map_err(|e| Status::invalid_argument(format!("Invalid namespace: {}", e)))?,
+            )
+        };
+
         match clinical_service.link_to_demographics(
             &author,
             care_location,
             &req.demographics_uuid,
-            if req.namespace.is_empty() {
-                None
-            } else {
-                Some(req.namespace)
-            },
+            namespace,
         ) {
             Ok(()) => Ok(Response::new(pb::LinkToDemographicsRes { success: true })),
             Err(e) => Err(Status::internal(format!(
@@ -424,8 +469,14 @@ impl Vpr for VprService {
             .map_err(|e| Status::invalid_argument(format!("Invalid care_location: {}", e)))?;
 
         let clinical_service = ClinicalService::with_id(self.cfg.clone(), clinical_uuid);
-        match clinical_service.new_letter(&author, care_location, req.content, None) {
-            Ok(timestamp_id) => Ok(Response::new(pb::NewLetterRes { timestamp_id })),
+
+        let content = NonEmptyText::new(req.content)
+            .map_err(|e| Status::invalid_argument(format!("Invalid content: {}", e)))?;
+
+        match clinical_service.new_letter(&author, care_location, content, None) {
+            Ok(timestamp_id) => Ok(Response::new(pb::NewLetterRes {
+                timestamp_id: timestamp_id.to_string(),
+            })),
             Err(e) => Err(Status::internal(format!("Failed to create letter: {}", e))),
         }
     }
@@ -527,7 +578,7 @@ impl Vpr for VprService {
 
         match result {
             Ok(timestamp_id) => Ok(Response::new(pb::NewLetterWithAttachmentsRes {
-                timestamp_id,
+                timestamp_id: timestamp_id.to_string(),
             })),
             Err(e) => Err(Status::internal(format!(
                 "Failed to create letter with attachments: {}",
@@ -583,10 +634,14 @@ impl Vpr for VprService {
             .map_err(|e| Status::invalid_argument(format!("Invalid care_location: {}", e)))?;
 
         let clinical_service = ClinicalService::with_id(self.cfg.clone(), clinical_uuid);
+
+        let content = NonEmptyText::new(req.content)
+            .map_err(|e| Status::invalid_argument(format!("Invalid content: {}", e)))?;
+
         let result = clinical_service.create_letter(
             &author,
             care_location,
-            Some(req.content),
+            Some(content),
             &attachment_paths,
             None,
         );
@@ -595,7 +650,9 @@ impl Vpr for VprService {
         let _ = std::fs::remove_dir_all(&temp_dir);
 
         match result {
-            Ok(timestamp_id) => Ok(Response::new(pb::NewLetterCompleteRes { timestamp_id })),
+            Ok(timestamp_id) => Ok(Response::new(pb::NewLetterCompleteRes {
+                timestamp_id: timestamp_id.to_string(),
+            })),
             Err(e) => Err(Status::internal(format!(
                 "Failed to create complete letter: {}",
                 e
@@ -672,7 +729,11 @@ impl Vpr for VprService {
             .map_err(|e| Status::invalid_argument(format!("Invalid clinical UUID: {}", e)))?;
 
         let coordination_service = CoordinationService::new(self.cfg.clone());
-        match coordination_service.initialise(author, req.care_location, clinical_uuid) {
+
+        let care_location = NonEmptyText::new(req.care_location)
+            .map_err(|e| Status::invalid_argument(format!("Invalid care_location: {}", e)))?;
+
+        match coordination_service.initialise(author, care_location, clinical_uuid) {
             Ok(service) => Ok(Response::new(pb::InitialiseCoordinationRes {
                 coordination_uuid: service.coordination_id().to_string(),
             })),
@@ -715,7 +776,9 @@ impl Vpr for VprService {
                     id: uuid::Uuid::parse_str(&p.id).map_err(|e| {
                         Status::invalid_argument(format!("Invalid participant UUID: {}", e))
                     })?,
-                    name: p.name,
+                    name: NonEmptyText::new(p.name).map_err(|e| {
+                        Status::invalid_argument(format!("Invalid participant name: {}", e))
+                    })?,
                     role: parse_author_role(&p.role)?,
                 })
             })
@@ -725,23 +788,31 @@ impl Vpr for VprService {
             .initial_message_author
             .ok_or_else(|| Status::invalid_argument("Missing initial message author"))?;
 
+        let initial_message_body = NonEmptyText::new(req.initial_message_body).map_err(|e| {
+            Status::invalid_argument(format!("Invalid initial message body: {}", e))
+        })?;
+
         let message = MessageContent::new(
             FhirMessageAuthor {
                 id: uuid::Uuid::parse_str(&initial_message_author.id)
                     .map_err(|e| Status::invalid_argument(format!("Invalid author UUID: {}", e)))?,
-                name: initial_message_author.name,
+                name: NonEmptyText::new(initial_message_author.name)
+                    .map_err(|e| Status::invalid_argument(format!("Invalid author name: {}", e)))?,
                 role: parse_author_role(&initial_message_author.role)?,
             },
-            req.initial_message_body,
+            initial_message_body,
             None,
         )
         .map_err(|e| Status::invalid_argument(format!("Invalid message: {}", e)))?;
+
+        let care_location = NonEmptyText::new(req.care_location)
+            .map_err(|e| Status::invalid_argument(format!("Invalid care_location: {}", e)))?;
 
         let coordination_service =
             CoordinationService::with_id(self.cfg.clone(), coordination_uuid);
         match coordination_service.communication_create(
             &author,
-            req.care_location,
+            care_location,
             participants,
             message,
         ) {
@@ -794,21 +865,28 @@ impl Vpr for VprService {
                 })?)
             };
 
+        let message_body = NonEmptyText::new(req.message_body)
+            .map_err(|e| Status::invalid_argument(format!("Invalid message body: {}", e)))?;
+
         let message = MessageContent::new(
             FhirMessageAuthor {
                 id: uuid::Uuid::parse_str(&message_author.id)
                     .map_err(|e| Status::invalid_argument(format!("Invalid author UUID: {}", e)))?,
-                name: message_author.name,
+                name: NonEmptyText::new(message_author.name)
+                    .map_err(|e| Status::invalid_argument(format!("Invalid author name: {}", e)))?,
                 role: parse_author_role(&message_author.role)?,
             },
-            req.message_body,
+            message_body,
             corrects,
         )
         .map_err(|e| Status::invalid_argument(format!("Invalid message: {}", e)))?;
 
+        let care_location = NonEmptyText::new(req.care_location)
+            .map_err(|e| Status::invalid_argument(format!("Invalid care_location: {}", e)))?;
+
         let coordination_service =
             CoordinationService::with_id(self.cfg.clone(), coordination_uuid);
-        match coordination_service.message_add(&author, req.care_location, &thread_id, message) {
+        match coordination_service.message_add(&author, care_location, &thread_id, message) {
             Ok(message_id) => Ok(Response::new(pb::AddMessageRes {
                 message_id: message_id.to_string(),
             })),
@@ -841,9 +919,9 @@ impl Vpr for VprService {
             CoordinationService::with_id(self.cfg.clone(), coordination_uuid);
         match coordination_service.read_communication(&thread_id) {
             Ok(comm) => Ok(Response::new(pb::ReadCommunicationRes {
-                communication_id: comm.communication_id.clone(),
+                communication_id: comm.communication_id.to_string(),
                 ledger: Some(pb::Ledger {
-                    communication_id: comm.communication_id,
+                    communication_id: comm.communication_id.to_string(),
                     status: format!("{:?}", comm.ledger.status).to_lowercase(),
                     participants: comm
                         .ledger
@@ -851,7 +929,7 @@ impl Vpr for VprService {
                         .into_iter()
                         .map(|p| pb::LedgerParticipant {
                             id: p.id.to_string(),
-                            name: p.name,
+                            name: p.name.to_string(),
                             role: format!("{:?}", p.role).to_lowercase(),
                         })
                         .collect(),
@@ -870,7 +948,7 @@ impl Vpr for VprService {
                             message_id: msg.metadata.message_id.to_string(),
                             author: Some(pb::MessageAuthor {
                                 id: msg.metadata.author.id.to_string(),
-                                name: msg.metadata.author.name,
+                                name: msg.metadata.author.name.to_string(),
                                 role: format!("{:?}", msg.metadata.author.role).to_lowercase(),
                             }),
                             timestamp: msg.metadata.timestamp.to_rfc3339(),
@@ -927,7 +1005,9 @@ impl Vpr for VprService {
                             id: uuid::Uuid::parse_str(&p.id).map_err(|e| {
                                 Status::invalid_argument(format!("Invalid participant UUID: {}", e))
                             })?,
-                            name: p.name,
+                            name: NonEmptyText::new(p.name).map_err(|e| {
+                                Status::invalid_argument(format!("Invalid participant name: {}", e))
+                            })?,
                             role: parse_author_role(&p.role)?,
                         })
                     })
@@ -979,11 +1059,14 @@ impl Vpr for VprService {
             set_policies,
         };
 
+        let care_location = NonEmptyText::new(req.care_location)
+            .map_err(|e| Status::invalid_argument(format!("Invalid care_location: {}", e)))?;
+
         let coordination_service =
             CoordinationService::with_id(self.cfg.clone(), coordination_uuid);
         match coordination_service.update_communication_ledger(
             &author,
-            req.care_location,
+            care_location,
             &thread_id,
             ledger_update,
         ) {
@@ -1034,13 +1117,13 @@ impl Vpr for VprService {
             set_record_modifiable: req.set_record_modifiable,
         };
 
+        let care_location = NonEmptyText::new(req.care_location)
+            .map_err(|e| Status::invalid_argument(format!("Invalid care_location: {}", e)))?;
+
         let coordination_service =
             CoordinationService::with_id(self.cfg.clone(), coordination_uuid);
-        match coordination_service.update_coordination_status(
-            &author,
-            req.care_location,
-            status_update,
-        ) {
+        match coordination_service.update_coordination_status(&author, care_location, status_update)
+        {
             Ok(()) => Ok(Response::new(pb::UpdateCoordinationStatusRes {
                 success: true,
             })),

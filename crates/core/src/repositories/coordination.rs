@@ -145,7 +145,7 @@ impl CoordinationService<Uninitialised> {
     pub fn initialise(
         self,
         commit_author: Author,
-        care_location: String,
+        care_location: NonEmptyText,
         clinical_id: Uuid,
     ) -> PatientResult<CoordinationService<Initialised>> {
         commit_author.validate_commit_author()?;
@@ -161,8 +161,8 @@ impl CoordinationService<Uninitialised> {
         let (coordination_uuid, patient_dir) = create_uuid_and_shard_dir(&coordination_root_dir)?;
 
         let coordination_status = CoordinationStatusData {
-            coordination_id: coordination_uuid.uuid(),
-            clinical_id,
+            coordination_id: coordination_uuid.clone(),
+            clinical_id: ShardableUuid::from_uuid(clinical_id),
             lifecycle_state: LifecycleState::Active,
             record_open: true,
             record_queryable: true,
@@ -267,7 +267,7 @@ impl CoordinationService<Initialised> {
     pub fn communication_create(
         &self,
         commit_author: &Author,
-        care_location: String,
+        care_location: NonEmptyText,
         communication_authors: Vec<MessageAuthor>,
         initial_message: MessageContent,
     ) -> PatientResult<TimestampId> {
@@ -333,7 +333,7 @@ impl CoordinationService<Initialised> {
         let files_to_write = [
             FileToWrite {
                 relative_path: &messages_relative,
-                content: &messages_content_raw,
+                content: messages_content_raw.as_str(),
                 old_content: None,
             },
             FileToWrite {
@@ -367,7 +367,7 @@ impl CoordinationService<Initialised> {
     ///
     /// # Returns
     ///
-    /// The generated message UUID as a string.
+    /// The generated message UUID.
     ///
     /// # Errors
     ///
@@ -379,10 +379,10 @@ impl CoordinationService<Initialised> {
     pub fn message_add(
         &self,
         commit_author: &Author,
-        care_location: String,
+        care_location: NonEmptyText,
         thread_id: &TimestampId,
         new_message: MessageContent,
-    ) -> PatientResult<String> {
+    ) -> PatientResult<Uuid> {
         self.file_exists(&["communications", &thread_id.to_string(), THREAD_FILENAME])?;
         self.file_exists(&[
             "communications",
@@ -411,7 +411,7 @@ impl CoordinationService<Initialised> {
         // Read and parse existing messages
         let old_thread_raw = self.thread_file_read(thread_id, THREAD_FILENAME)?;
         let markdown_service = MarkdownService::new();
-        let old_thread = markdown_service.thread_parse(&old_thread_raw)?;
+        let old_thread = markdown_service.thread_parse(old_thread_raw.as_str())?;
 
         // Create new thread with appended message
         let new_message = Message {
@@ -429,7 +429,7 @@ impl CoordinationService<Initialised> {
 
         // Update ledger last_updated_at
         let old_ledger_raw = self.thread_file_read(thread_id, THREAD_LEDGER_FILENAME)?;
-        let old_ledger = FhirMessaging::ledger_parse(&old_ledger_raw)?;
+        let old_ledger = FhirMessaging::ledger_parse(old_ledger_raw.as_str())?;
         let mut new_ledger = old_ledger;
         new_ledger.last_updated_at = now;
 
@@ -448,13 +448,13 @@ impl CoordinationService<Initialised> {
         let files_to_write = [
             FileToWrite {
                 relative_path: &messages_relative,
-                content: &new_thread_raw,
-                old_content: Some(&old_thread_raw),
+                content: new_thread_raw.as_str(),
+                old_content: Some(old_thread_raw.as_str()),
             },
             FileToWrite {
                 relative_path: &ledger_relative,
                 content: &new_ledger_raw,
-                old_content: Some(&old_ledger_raw),
+                old_content: Some(old_ledger_raw.as_str()),
             },
         ];
 
@@ -465,7 +465,7 @@ impl CoordinationService<Initialised> {
             &files_to_write,
         )?;
 
-        Ok(message_id.to_string())
+        Ok(message_id)
     }
 
     /// Reads an entire thread including messages and metadata.
@@ -493,11 +493,11 @@ impl CoordinationService<Initialised> {
         let ledger_raw = self.thread_file_read(thread_id, THREAD_LEDGER_FILENAME)?;
 
         let markdown_service = MarkdownService::new();
-        let messages = markdown_service.thread_parse(&messages_raw)?;
-        let ledger = FhirMessaging::ledger_parse(&ledger_raw)?;
+        let messages = markdown_service.thread_parse(messages_raw.as_str())?;
+        let ledger = FhirMessaging::ledger_parse(ledger_raw.as_str())?;
 
         Ok(Communication {
-            communication_id: thread_id.to_string(),
+            communication_id: thread_id.clone(),
             ledger,
             messages,
         })
@@ -526,7 +526,7 @@ impl CoordinationService<Initialised> {
     pub fn update_communication_ledger(
         &self,
         commit_author: &Author,
-        care_location: String,
+        care_location: NonEmptyText,
         thread_id: &TimestampId,
         ledger_update: LedgerUpdate,
     ) -> PatientResult<()> {
@@ -547,7 +547,7 @@ impl CoordinationService<Initialised> {
 
         // Read existing ledger
         let old_ledger_raw = self.thread_file_read(thread_id, THREAD_LEDGER_FILENAME)?;
-        let mut ledger_data = FhirMessaging::ledger_parse(&old_ledger_raw)?;
+        let mut ledger_data = FhirMessaging::ledger_parse(old_ledger_raw.as_str())?;
 
         // Apply updates
         if let Some(add_participants) = ledger_update.add_participants {
@@ -584,7 +584,7 @@ impl CoordinationService<Initialised> {
         let files_to_write = [FileToWrite {
             relative_path: &ledger_relative,
             content: &new_ledger_raw,
-            old_content: Some(&old_ledger_raw),
+            old_content: Some(old_ledger_raw.as_str()),
         }];
 
         VersionedFileService::write_and_commit_files(
@@ -618,7 +618,7 @@ impl CoordinationService<Initialised> {
     pub fn update_coordination_status(
         &self,
         commit_author: &Author,
-        care_location: String,
+        care_location: NonEmptyText,
         status_update: CoordinationStatusUpdate,
     ) -> PatientResult<()> {
         commit_author.validate_commit_author()?;
@@ -634,7 +634,7 @@ impl CoordinationService<Initialised> {
 
         // Read existing status
         let old_status_raw = self.coordination_status_file_read()?;
-        let mut status_data = CoordinationStatus::parse(&old_status_raw)?;
+        let mut status_data = CoordinationStatus::parse(old_status_raw.as_str())?;
 
         // Apply updates
         if let Some(lifecycle_state) = status_update.set_lifecycle_state {
@@ -656,7 +656,7 @@ impl CoordinationService<Initialised> {
         let files_to_write = [FileToWrite {
             relative_path: Path::new(CoordinationStatusFile::NAME),
             content: &new_status_raw,
-            old_content: Some(&old_status_raw),
+            old_content: Some(old_status_raw.as_str()),
         }];
 
         VersionedFileService::write_and_commit_files(
@@ -678,7 +678,7 @@ impl CoordinationService<Initialised> {
 #[derive(Clone, Debug)]
 pub struct MessageContent {
     author: MessageAuthor,
-    body: String,
+    body: NonEmptyText,
     corrects: Option<Uuid>, // For correction messages
 }
 
@@ -694,8 +694,12 @@ impl MessageContent {
     /// # Errors
     ///
     /// Returns `PatientError::InvalidInput` if the body is empty or only whitespace.
-    pub fn new(author: MessageAuthor, body: String, corrects: Option<Uuid>) -> PatientResult<Self> {
-        if body.trim().is_empty() {
+    pub fn new(
+        author: MessageAuthor,
+        body: NonEmptyText,
+        corrects: Option<Uuid>,
+    ) -> PatientResult<Self> {
+        if body.as_str().trim().is_empty() {
             return Err(PatientError::InvalidInput(
                 "Message body must not be empty".to_string(),
             ));
@@ -713,7 +717,7 @@ impl MessageContent {
     }
 
     /// Returns the message body as a string slice.
-    pub fn body(&self) -> &str {
+    pub fn body(&self) -> &NonEmptyText {
         &self.body
     }
 
@@ -726,7 +730,7 @@ impl MessageContent {
 /// Complete thread data (messages + ledger).
 #[derive(Clone, Debug)]
 pub struct Communication {
-    pub communication_id: String,
+    pub communication_id: TimestampId,
     pub ledger: LedgerData,
     pub messages: Vec<Message>,
 }
@@ -813,10 +817,15 @@ impl CoordinationService<Initialised> {
     /// # Errors
     ///
     /// Returns `PatientError::FileRead` if the file cannot be read.
-    fn thread_file_read(&self, thread_id: &TimestampId, filename: &str) -> PatientResult<String> {
+    fn thread_file_read(
+        &self,
+        thread_id: &TimestampId,
+        filename: &str,
+    ) -> PatientResult<NonEmptyText> {
         let thread_dir = self.thread_dir(thread_id);
         let file_path = thread_dir.join(filename);
-        fs::read_to_string(&file_path).map_err(PatientError::FileRead)
+        let content = fs::read_to_string(&file_path).map_err(PatientError::FileRead)?;
+        NonEmptyText::new(content).map_err(|e| PatientError::InvalidInput(e.to_string()))
     }
 
     /// Checks if a file exists within the coordination directory.
@@ -882,9 +891,10 @@ impl CoordinationService<Initialised> {
     /// # Errors
     ///
     /// Returns `PatientError::FileRead` if the file cannot be read.
-    fn coordination_status_file_read(&self) -> PatientResult<String> {
+    fn coordination_status_file_read(&self) -> PatientResult<NonEmptyText> {
         let status_path = self.coordination_status_file_path();
-        fs::read_to_string(&status_path).map_err(PatientError::FileRead)
+        let content = fs::read_to_string(&status_path).map_err(PatientError::FileRead)?;
+        NonEmptyText::new(content).map_err(|e| PatientError::InvalidInput(e.to_string()))
     }
 }
 
@@ -948,7 +958,7 @@ fn validate_communication_authors(authors: &[MessageAuthor]) -> PatientResult<()
     }
 
     for author in authors {
-        if author.name.trim().is_empty() {
+        if author.name.as_str().trim().is_empty() {
             return Err(PatientError::InvalidInput(
                 "Author name must not be empty".to_string(),
             ));
@@ -997,12 +1007,12 @@ mod tests {
         vec![
             MessageAuthor {
                 id: Uuid::new_v4(),
-                name: "Dr. Smith".to_string(),
+                name: NonEmptyText::new("Dr. Smith").unwrap(),
                 role: fhir::AuthorRole::Clinician,
             },
             MessageAuthor {
                 id: Uuid::new_v4(),
-                name: "Patient John".to_string(),
+                name: NonEmptyText::new("Patient John").unwrap(),
                 role: fhir::AuthorRole::Patient,
             },
         ]
@@ -1015,7 +1025,7 @@ mod tests {
 
         let result = CoordinationService::new(cfg.clone()).initialise(
             author,
-            "Test Location".to_string(),
+            NonEmptyText::new("Test Location").unwrap(),
             clinical_id,
         );
 
@@ -1043,20 +1053,24 @@ mod tests {
         let clinical_id = Uuid::new_v4();
 
         let service = CoordinationService::new(cfg.clone())
-            .initialise(author.clone(), "Test Location".to_string(), clinical_id)
+            .initialise(
+                author.clone(),
+                NonEmptyText::new("Test Location").unwrap(),
+                clinical_id,
+            )
             .unwrap();
 
         let participants = create_test_participants();
         let initial_message = MessageContent::new(
             participants[0].clone(),
-            "Initial thread message".to_string(),
+            NonEmptyText::new("Initial thread message").unwrap(),
             None,
         )
         .unwrap();
 
         let result = service.communication_create(
             &author,
-            "Test Location".to_string(),
+            NonEmptyText::new("Test Location").unwrap(),
             participants.clone(),
             initial_message,
         );
@@ -1082,13 +1096,17 @@ mod tests {
         let clinical_id = Uuid::new_v4();
 
         let _service = CoordinationService::new(cfg.clone())
-            .initialise(author.clone(), "Test Location".to_string(), clinical_id)
+            .initialise(
+                author.clone(),
+                NonEmptyText::new("Test Location").unwrap(),
+                clinical_id,
+            )
             .unwrap();
 
         let participants = create_test_participants();
         let result = MessageContent::new(
             participants[0].clone(),
-            "   ".to_string(), // Empty after trim
+            NonEmptyText::new("   ").unwrap(), // Empty after trim
             None,
         );
 
@@ -1106,7 +1124,7 @@ mod tests {
     fn test_validate_communication_authors_empty_name() {
         let authors = vec![MessageAuthor {
             id: Uuid::new_v4(),
-            name: "   ".to_string(),
+            name: NonEmptyText::new("   ").unwrap(),
             role: fhir::AuthorRole::Clinician,
         }];
 
@@ -1127,18 +1145,25 @@ mod tests {
         let clinical_id = Uuid::new_v4();
 
         let service = CoordinationService::new(cfg.clone())
-            .initialise(author.clone(), "Test Location".to_string(), clinical_id)
+            .initialise(
+                author.clone(),
+                NonEmptyText::new("Test Location").unwrap(),
+                clinical_id,
+            )
             .unwrap();
 
         let participants = create_test_participants();
-        let initial_message =
-            MessageContent::new(participants[0].clone(), "First message".to_string(), None)
-                .unwrap();
+        let initial_message = MessageContent::new(
+            participants[0].clone(),
+            NonEmptyText::new("First message").unwrap(),
+            None,
+        )
+        .unwrap();
 
         let thread_id = service
             .communication_create(
                 &author,
-                "Test Location".to_string(),
+                NonEmptyText::new("Test Location").unwrap(),
                 participants.clone(),
                 initial_message,
             )
@@ -1147,14 +1172,14 @@ mod tests {
         // Add second message
         let second_message = MessageContent::new(
             participants[1].clone(),
-            "Second message from patient".to_string(),
+            NonEmptyText::new("Second message from patient").unwrap(),
             None,
         )
         .unwrap();
 
         let result = service.message_add(
             &author,
-            "Test Location".to_string(),
+            NonEmptyText::new("Test Location").unwrap(),
             &thread_id,
             second_message,
         );
@@ -1177,13 +1202,17 @@ mod tests {
         let clinical_id = Uuid::new_v4();
 
         let service = CoordinationService::new(cfg.clone())
-            .initialise(author.clone(), "Test Location".to_string(), clinical_id)
+            .initialise(
+                author.clone(),
+                NonEmptyText::new("Test Location").unwrap(),
+                clinical_id,
+            )
             .unwrap();
 
         let participants = create_test_participants();
         let initial_message = MessageContent::new(
             participants[0].clone(),
-            "Original message with typo".to_string(),
+            NonEmptyText::new("Original message with typo").unwrap(),
             None,
         )
         .unwrap();
@@ -1191,7 +1220,7 @@ mod tests {
         let thread_id = service
             .communication_create(
                 &author,
-                "Test Location".to_string(),
+                NonEmptyText::new("Test Location").unwrap(),
                 participants.clone(),
                 initial_message,
             )
@@ -1203,13 +1232,17 @@ mod tests {
         // Add correction message
         let correction = MessageContent::new(
             participants[0].clone(),
-            "Corrected message without typo".to_string(),
+            NonEmptyText::new("Corrected message without typo").unwrap(),
             Some(original_msg_id),
         )
         .unwrap();
 
-        let result =
-            service.message_add(&author, "Test Location".to_string(), &thread_id, correction);
+        let result = service.message_add(
+            &author,
+            NonEmptyText::new("Test Location").unwrap(),
+            &thread_id,
+            correction,
+        );
         assert!(result.is_ok());
 
         // Verify correction is recorded
@@ -1224,21 +1257,25 @@ mod tests {
         let clinical_id = Uuid::new_v4();
 
         let service = CoordinationService::new(cfg.clone())
-            .initialise(author.clone(), "Test Location".to_string(), clinical_id)
+            .initialise(
+                author.clone(),
+                NonEmptyText::new("Test Location").unwrap(),
+                clinical_id,
+            )
             .unwrap();
 
         let fake_thread_id = TimestampIdGenerator::generate(None).unwrap();
         let participants = create_test_participants();
         let message = MessageContent::new(
             participants[0].clone(),
-            "Message to nowhere".to_string(),
+            NonEmptyText::new("Message to nowhere").unwrap(),
             None,
         )
         .unwrap();
 
         let result = service.message_add(
             &author,
-            "Test Location".to_string(),
+            NonEmptyText::new("Test Location").unwrap(),
             &fake_thread_id,
             message,
         );
@@ -1251,17 +1288,25 @@ mod tests {
         let clinical_id = Uuid::new_v4();
 
         let service = CoordinationService::new(cfg.clone())
-            .initialise(author.clone(), "Test Location".to_string(), clinical_id)
+            .initialise(
+                author.clone(),
+                NonEmptyText::new("Test Location").unwrap(),
+                clinical_id,
+            )
             .unwrap();
 
         let participants = create_test_participants();
-        let initial_message =
-            MessageContent::new(participants[0].clone(), "Test message".to_string(), None).unwrap();
+        let initial_message = MessageContent::new(
+            participants[0].clone(),
+            NonEmptyText::new("Test message").unwrap(),
+            None,
+        )
+        .unwrap();
 
         let thread_id = service
             .communication_create(
                 &author,
-                "Test Location".to_string(),
+                NonEmptyText::new("Test Location").unwrap(),
                 participants.clone(),
                 initial_message,
             )
@@ -1269,7 +1314,7 @@ mod tests {
 
         let thread = service.read_communication(&thread_id).unwrap();
 
-        assert_eq!(thread.communication_id, thread_id.to_string());
+        assert_eq!(thread.communication_id, thread_id);
         assert_eq!(thread.ledger.participants.len(), 2);
         assert_eq!(thread.messages.len(), 1);
         assert_eq!(thread.ledger.status, FhirThreadStatus::Open);
@@ -1281,7 +1326,11 @@ mod tests {
         let clinical_id = Uuid::new_v4();
 
         let service = CoordinationService::new(cfg.clone())
-            .initialise(author.clone(), "Test Location".to_string(), clinical_id)
+            .initialise(
+                author.clone(),
+                NonEmptyText::new("Test Location").unwrap(),
+                clinical_id,
+            )
             .unwrap();
 
         let fake_thread_id = TimestampIdGenerator::generate(None).unwrap();
@@ -1295,17 +1344,25 @@ mod tests {
         let clinical_id = Uuid::new_v4();
 
         let service = CoordinationService::new(cfg.clone())
-            .initialise(author.clone(), "Test Location".to_string(), clinical_id)
+            .initialise(
+                author.clone(),
+                NonEmptyText::new("Test Location").unwrap(),
+                clinical_id,
+            )
             .unwrap();
 
         let participants = create_test_participants();
-        let initial_message =
-            MessageContent::new(participants[0].clone(), "Test".to_string(), None).unwrap();
+        let initial_message = MessageContent::new(
+            participants[0].clone(),
+            NonEmptyText::new("Test").unwrap(),
+            None,
+        )
+        .unwrap();
 
         let thread_id = service
             .communication_create(
                 &author,
-                "Test Location".to_string(),
+                NonEmptyText::new("Test Location").unwrap(),
                 participants,
                 initial_message,
             )
@@ -1314,7 +1371,7 @@ mod tests {
         // Add new participant
         let new_participant = MessageAuthor {
             id: Uuid::new_v4(),
-            name: "Nurse Jane".to_string(),
+            name: NonEmptyText::new("Nurse Jane").unwrap(),
             role: fhir::AuthorRole::Clinician,
         };
 
@@ -1325,7 +1382,7 @@ mod tests {
 
         let result = service.update_communication_ledger(
             &author,
-            "Test Location".to_string(),
+            NonEmptyText::new("Test Location").unwrap(),
             &thread_id,
             update,
         );
@@ -1338,7 +1395,7 @@ mod tests {
             .ledger
             .participants
             .iter()
-            .any(|p| p.name == "Nurse Jane"));
+            .any(|p| p.name.as_str() == "Nurse Jane"));
     }
 
     #[test]
@@ -1347,18 +1404,26 @@ mod tests {
         let clinical_id = Uuid::new_v4();
 
         let service = CoordinationService::new(cfg.clone())
-            .initialise(author.clone(), "Test Location".to_string(), clinical_id)
+            .initialise(
+                author.clone(),
+                NonEmptyText::new("Test Location").unwrap(),
+                clinical_id,
+            )
             .unwrap();
 
         let participants = create_test_participants();
         let remove_id = participants[1].id;
-        let initial_message =
-            MessageContent::new(participants[0].clone(), "Test".to_string(), None).unwrap();
+        let initial_message = MessageContent::new(
+            participants[0].clone(),
+            NonEmptyText::new("Test").unwrap(),
+            None,
+        )
+        .unwrap();
 
         let thread_id = service
             .communication_create(
                 &author,
-                "Test Location".to_string(),
+                NonEmptyText::new("Test Location").unwrap(),
                 participants,
                 initial_message,
             )
@@ -1372,7 +1437,7 @@ mod tests {
 
         let result = service.update_communication_ledger(
             &author,
-            "Test Location".to_string(),
+            NonEmptyText::new("Test Location").unwrap(),
             &thread_id,
             update,
         );
@@ -1390,17 +1455,25 @@ mod tests {
         let clinical_id = Uuid::new_v4();
 
         let service = CoordinationService::new(cfg.clone())
-            .initialise(author.clone(), "Test Location".to_string(), clinical_id)
+            .initialise(
+                author.clone(),
+                NonEmptyText::new("Test Location").unwrap(),
+                clinical_id,
+            )
             .unwrap();
 
         let participants = create_test_participants();
-        let initial_message =
-            MessageContent::new(participants[0].clone(), "Test".to_string(), None).unwrap();
+        let initial_message = MessageContent::new(
+            participants[0].clone(),
+            NonEmptyText::new("Test").unwrap(),
+            None,
+        )
+        .unwrap();
 
         let thread_id = service
             .communication_create(
                 &author,
-                "Test Location".to_string(),
+                NonEmptyText::new("Test Location").unwrap(),
                 participants,
                 initial_message,
             )
@@ -1414,7 +1487,7 @@ mod tests {
 
         let result = service.update_communication_ledger(
             &author,
-            "Test Location".to_string(),
+            NonEmptyText::new("Test Location").unwrap(),
             &thread_id,
             update,
         );
@@ -1431,17 +1504,25 @@ mod tests {
         let clinical_id = Uuid::new_v4();
 
         let service = CoordinationService::new(cfg.clone())
-            .initialise(author.clone(), "Test Location".to_string(), clinical_id)
+            .initialise(
+                author.clone(),
+                NonEmptyText::new("Test Location").unwrap(),
+                clinical_id,
+            )
             .unwrap();
 
         let participants = create_test_participants();
-        let initial_message =
-            MessageContent::new(participants[0].clone(), "Test".to_string(), None).unwrap();
+        let initial_message = MessageContent::new(
+            participants[0].clone(),
+            NonEmptyText::new("Test").unwrap(),
+            None,
+        )
+        .unwrap();
 
         let thread_id = service
             .communication_create(
                 &author,
-                "Test Location".to_string(),
+                NonEmptyText::new("Test Location").unwrap(),
                 participants,
                 initial_message,
             )
@@ -1455,7 +1536,7 @@ mod tests {
 
         let result = service.update_communication_ledger(
             &author,
-            "Test Location".to_string(),
+            NonEmptyText::new("Test Location").unwrap(),
             &thread_id,
             update,
         );
@@ -1473,17 +1554,25 @@ mod tests {
         let clinical_id = Uuid::new_v4();
 
         let service = CoordinationService::new(cfg.clone())
-            .initialise(author.clone(), "Test Location".to_string(), clinical_id)
+            .initialise(
+                author.clone(),
+                NonEmptyText::new("Test Location").unwrap(),
+                clinical_id,
+            )
             .unwrap();
 
         let participants = create_test_participants();
-        let initial_message =
-            MessageContent::new(participants[0].clone(), "Test".to_string(), None).unwrap();
+        let initial_message = MessageContent::new(
+            participants[0].clone(),
+            NonEmptyText::new("Test").unwrap(),
+            None,
+        )
+        .unwrap();
 
         let thread_id = service
             .communication_create(
                 &author,
-                "Test Location".to_string(),
+                NonEmptyText::new("Test Location").unwrap(),
                 participants,
                 initial_message,
             )
@@ -1497,7 +1586,7 @@ mod tests {
 
         let result = service.update_communication_ledger(
             &author,
-            "Test Location".to_string(),
+            NonEmptyText::new("Test Location").unwrap(),
             &thread_id,
             update,
         );
@@ -1537,8 +1626,14 @@ Second message body
         assert_eq!(parsed_messages.len(), 2);
         assert_eq!(parsed_messages[0].body.as_str(), "First message body");
         assert_eq!(parsed_messages[1].body.as_str(), "Second message body");
-        assert_eq!(parsed_messages[0].metadata.author.name, "Dr. Smith");
-        assert_eq!(parsed_messages[1].metadata.author.name, "Patient John");
+        assert_eq!(
+            parsed_messages[0].metadata.author.name.as_str(),
+            "Dr. Smith"
+        );
+        assert_eq!(
+            parsed_messages[1].metadata.author.name.as_str(),
+            "Patient John"
+        );
     }
 
     #[test]
